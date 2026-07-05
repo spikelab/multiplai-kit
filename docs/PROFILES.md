@@ -41,7 +41,7 @@ Example below uses `work`. Substitute your own name/email/token.
 ### 1. Create the profile file
 
 ```bash
-cd multiplai-runtime
+cd multiplai-kit
 cp env.example env.work
 ```
 

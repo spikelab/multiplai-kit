@@ -36,7 +36,14 @@ def _effort_tier(effort: str) -> int:
 
 
 def resolve_model(requested: str) -> str:
-    """Return the requested model, or the ceiling model if requested is above it."""
+    """Return the requested model, or the ceiling model if requested is above it.
+
+    The ceiling comes from MULTIPLAI_MODEL, which run-hook-python exports from
+    multiplai.conf (shipped default: claude-opus-4-6 = no ceiling). The
+    hardcoded fallback here is a *conservative* sonnet ceiling for direct
+    importers that run without the conf loaded — it is intentionally stricter
+    than the shipped conf, not a mismatch.
+    """
     ceiling = os.environ.get("MULTIPLAI_MODEL", "claude-sonnet-4-6")
     ceiling_tier = _tier(ceiling)
     requested_tier = _tier(requested)

@@ -15,6 +15,7 @@ Unit tests for the kit's **own live code**. Free, fast, no API key.
 ## What moved out
 
 The memory / context-routing / learnings system is no longer in this repo — it's
-the **`multiplai-context` plugin** (`PROJECTS/multiplai-plugin/plugins/multiplai-context/`).
-Its tests live there (`tests/`, run from the plugin dir). The old in-tree routing /
-extraction / diary evals were removed along with the retired hooks they targeted.
+the **`multiplai-context` plugin** in the marketplace repo (`multiplai-cc-mktplace`,
+under `plugins/multiplai-context/`). Its tests live there (`tests/`). The old
+in-tree routing / extraction / diary evals were removed along with the retired
+hooks they targeted.

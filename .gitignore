@@ -7,6 +7,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 
+# Machine-local settings overlay (written by setup.sh; deep-merged over the
+# tracked settings.json so the tracked file stays clean across `git pull`).
+dotfiles/settings.local.json
+
 # Claude Code runtime state (created when running)
 dotfiles/.workspace
 dotfiles/.credentials.json
@@ -63,22 +67,11 @@ container/.env
 .multiplai/
 captainslog/
 
-# Deep-research skill runtime artifacts (per-research progress/state files)
-dotfiles/skills/deep-research/scripts/*-progress.md
-dotfiles/skills/deep-research/scripts/*-state.json
-
 .last-cleanup
 
-# Private / not shipped publicly (kept on disk for local use, never committed)
-# Dropped skills (retired; kept local but excluded from the public kit).
-dotfiles/skills/kanban/
-dotfiles/skills/prompt-engineer/
-# Project-specific GCP conventions (real infra details) — auto-loaded locally, never shipped.
-dotfiles/skills/devops-gcp/references/conventions/
-# Kit's own buildme change-history (internal dev artifacts, personal refs) — kept local.
+# Local-only skills authored under dotfiles/skills/ are per-user; ignore any
+# that a given machine adds beyond the shipped README.
 specs/
-# deep-research eval dataset = a map of the maintainer's private research corpus — kept local.
-dotfiles/skills/deep-research/scripts/tests/fixtures/eval_dataset.jsonl
 
 # Container tooling — fetched from spikelab/multiplai-container by setup.sh
 container/

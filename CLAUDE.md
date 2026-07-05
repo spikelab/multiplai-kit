@@ -8,7 +8,7 @@ This is a standalone git repo with its own `.git/`. There is a single working tr
 
 **Key distinction:** `dotfiles/CLAUDE.md` is the user-facing global instructions that ship with the kit. This file (`CLAUDE.md` at project root) is for developing the kit.
 
-**Architecture note — the memory system is now a plugin.** The context-routing, diary, and learnings-extraction hooks that used to live in `dotfiles/hooks/` have been extracted into a standalone Claude Code plugin, **`multiplai-context`**, developed in its own repo at `PROJECTS/multiplai-plugin/plugins/multiplai-context/`. The old hooks are retired under `dotfiles/hooks/_retired/`. This kit now only ships the launcher, container, in-tree skills, reference docs, kit config, and the one remaining `validate-syntax` hook — and it *loads* the plugin via `--plugin-dir`. See `README.md` → "The Memory System Is Now a Plugin". When the bug is in routing/diary/learnings, fix it in the **plugin repo**, not here.
+**Architecture note — the memory system is now a plugin.** The context-routing, diary, and learnings-extraction hooks that used to live in `dotfiles/hooks/` have been extracted into a standalone Claude Code plugin, **`multiplai-context`**, published in the marketplace repo (`spikelab/multiplai-cc-mktplace`, under `plugins/multiplai-context/`). Those hooks were removed from this kit entirely — there is no `_retired/` directory. This kit now only ships the launcher, container, in-tree skills, reference docs, kit config, and the one remaining `validate-syntax` hook — and it installs the plugin from the marketplace. See `README.md` → "The Memory System Is Now a Plugin". When the bug is in routing/diary/learnings, fix it in the **marketplace repo**, not here.
 
 ## Git
 
@@ -93,7 +93,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 
 ## Editing Hooks
 
-**The memory/lifecycle hooks moved to the plugin.** Routing (`context_manager.py`), session lifecycle (`session_start.py`, `session_stop.py`, `session_end.py`, `pre_compact.py`), and learnings extraction (`extract_learnings.py`) now live in `PROJECTS/multiplai-plugin/plugins/multiplai-context/scripts/`, registered in that plugin's `hooks/hooks.json`. Edit and test them there.
+**The memory/lifecycle hooks moved to the plugin.** Routing (`context_manager.py`), session lifecycle (`session_start.py`, `session_stop.py`, `session_end.py`, `pre_compact.py`), and learnings extraction (`extract_learnings.py`) now live in the marketplace repo (`multiplai-cc-mktplace`) under `plugins/multiplai-context/scripts/`, registered in that plugin's `hooks/hooks.json`. Edit and test them there.
 
 What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings.json` is just **`validate-syntax.sh`** (PostToolUse on Write|Edit). Everything else in `dotfiles/hooks/` is a live helper: `run-hook-python`, `model_resolver.py`, `log_utils.py`.
 
@@ -143,7 +143,7 @@ Run the kit's unit tests after any change to live kit code:
 | `dotfiles/hooks/validate-syntax.sh` | The one runtime hook still registered (PostToolUse Write\|Edit) |
 | `dotfiles/hooks/model_resolver.py` | Model-ceiling logic for in-tree skills |
 | `dotfiles/hooks/log_utils.py` | Shared logging helper (used via PYTHONPATH by plugin skills — buildme, deep-research) |
-| `PROJECTS/multiplai-plugin/plugins/multiplai-context/` | The memory/context/learning plugin (separate repo) — routing, diary, learnings now live here |
+| `multiplai-cc-mktplace` → `plugins/multiplai-context/` | The memory/context/learning plugin (marketplace repo) — routing, diary, learnings now live here |
 | `evals/conftest.py` | Test infra — `sys.path` wiring + LLM bypass for the kit unit tests |
 | `container/` | Container tooling — fetched at setup from spikelab/multiplai-container |
 | `setup.sh` | First-time setup with prerequisite validation |

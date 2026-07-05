@@ -1,15 +1,23 @@
-# Core — required for hooks to function
-claude-agent-sdk        # Memory retrieval, learnings extraction, commit messages
-pyyaml                  # Config parsing (context-router.py, skill-creator)
+# Dependencies for the shared workspace venv ($CLAUDE_MULTIPLAI_HOME/.venv),
+# created by setup.sh. The kit's own registered hook (validate-syntax.sh) needs
+# only pyyaml; the rest seed the venv that the marketplace skill plugins
+# (multiplai-research/-dev/-media) run against.
 
-# Skills — optional but expected
-yt-dlp                  # youtube-transcript skill
-beautifulsoup4          # Web content parsing (deep-research, extract-insights)
+# Kit hook
+pyyaml                  # JSON/YAML validation in validate-syntax.sh
 
-# Deep Research Pipeline
+# Model access for the plugin skills (host-injected inside Claude Code; pinned
+# here so the skills also run from the plain venv)
+claude-agent-sdk
+
+# Skill helpers
+yt-dlp                  # youtube-transcript skill (multiplai-media)
+beautifulsoup4          # web content parsing (deep-research, extract-insights)
+
+# Deep-research pipeline (multiplai-research)
 httpx                   # async HTTP client for fetching pages
 trafilatura             # article content extraction to markdown
 tavily-python           # Tavily search API SDK (async)
 exa-py                  # Exa search API SDK (async)
-pydantic                # structured data validation for LLM outputs and state
+pydantic                # structured validation for LLM outputs and state
 python-dotenv           # loads .env from project root for secrets

@@ -1,239 +1,113 @@
-"""Unit tests for multiplai.conf loading and environment variable propagation.
+"""Unit tests for multiplai.conf loading via the real run-hook-python.
 
-Tests that run-hook-python correctly sources multiplai.conf and exports
-MULTIPLAI_MODEL and MULTIPLAI_DEBUG as environment variables that Python
-hooks can read.
+These invoke the actual `dotfiles/hooks/run-hook-python` wrapper — not an
+inline re-implementation — so a regression in its (eval-free) conf parser or
+its env-export list is actually caught. run-hook-python reads the conf from
+`$CLAUDE_MULTIPLAI_HOME/multiplai.conf`, parses KEY=value without eval, and
+exports MULTIPLAI_{DEBUG,MODEL,EFFORT,LOG_LEVEL} to the invoked Python process.
 """
 
 import subprocess
 from pathlib import Path
 
+RUN_HOOK_PYTHON = (
+    Path(__file__).resolve().parents[2] / "dotfiles" / "hooks" / "run-hook-python"
+)
+
+
+def _run(home: Path, conf: str | None, var: str) -> str:
+    """Write `conf` (if given) to $home/multiplai.conf, then invoke the real
+    run-hook-python on a script that prints os.environ[var]. Returns stdout."""
+    if conf is not None:
+        (home / "multiplai.conf").write_text(conf)
+    script = home / "print_env.py"
+    script.write_text(f'import os; print(os.environ.get("{var}", "UNSET"))\n')
+    result = subprocess.run(
+        ["bash", str(RUN_HOOK_PYTHON), str(script)],
+        capture_output=True, text=True,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "CLAUDE_MULTIPLAI_HOME": str(home),
+            "CLAUDE_CONFIG_DIR": str(home / "config"),
+        },
+    )
+    return result.stdout.strip()
+
 
 class TestConfigDefaults:
-    """Test default values when multiplai.conf is absent or empty."""
-
     def test_default_model_without_conf(self, tmp_path):
-        """Without multiplai.conf, MULTIPLAI_MODEL defaults to claude-sonnet-4-6."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / ".workspace").write_text(str(tmp_path))
-        (config_dir / "logs").mkdir()
-
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                export MULTIPLAI_DEBUG=false
-                export MULTIPLAI_MODEL="claude-sonnet-4-6"
-                source "{config_dir}/multiplai.conf" 2>/dev/null || true
-                echo "$MULTIPLAI_MODEL"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "claude-sonnet-4-6"
+        assert _run(tmp_path, None, "MULTIPLAI_MODEL") == "claude-sonnet-4-6"
 
     def test_default_debug_without_conf(self, tmp_path):
-        """Without multiplai.conf, MULTIPLAI_DEBUG defaults to false."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
+        assert _run(tmp_path, None, "MULTIPLAI_DEBUG") == "false"
 
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_DEBUG=false
-                source "{config_dir}/multiplai.conf" 2>/dev/null || true
-                echo "$MULTIPLAI_DEBUG"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "false"
+    def test_default_effort_without_conf(self, tmp_path):
+        assert _run(tmp_path, None, "MULTIPLAI_EFFORT") == "high"
 
 
 class TestConfigOverrides:
-    """Test that multiplai.conf values override defaults."""
-
     def test_model_override(self, tmp_path):
-        """MULTIPLAI_MODEL in conf overrides the default."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        (config_dir / "multiplai.conf").write_text(
-            'MULTIPLAI_MODEL="claude-haiku-4-5-20251001"\n'
-        )
-
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_MODEL="claude-sonnet-4-6"
-                source "{config_dir}/multiplai.conf"
-                echo "$MULTIPLAI_MODEL"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "claude-haiku-4-5-20251001"
+        out = _run(tmp_path, 'MULTIPLAI_MODEL="claude-haiku-4-5-20251001"\n',
+                   "MULTIPLAI_MODEL")
+        assert out == "claude-haiku-4-5-20251001"
 
     def test_debug_override(self, tmp_path):
-        """MULTIPLAI_DEBUG=true in conf enables debug mode."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        (config_dir / "multiplai.conf").write_text(
-            'MULTIPLAI_DEBUG=true\n'
-        )
-
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_DEBUG=false
-                source "{config_dir}/multiplai.conf"
-                echo "$MULTIPLAI_DEBUG"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "true"
+        assert _run(tmp_path, "MULTIPLAI_DEBUG=true\n", "MULTIPLAI_DEBUG") == "true"
 
     def test_effort_override(self, tmp_path):
-        """MULTIPLAI_EFFORT in conf overrides default."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        (config_dir / "multiplai.conf").write_text(
-            'MULTIPLAI_EFFORT=medium\n'
-        )
+        assert _run(tmp_path, "MULTIPLAI_EFFORT=medium\n", "MULTIPLAI_EFFORT") == "medium"
 
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_EFFORT=high
-                source "{config_dir}/multiplai.conf"
-                echo "$MULTIPLAI_EFFORT"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "medium"
-
-class TestRunHookPythonExport:
-    """Test that run-hook-python exports conf values to Python processes."""
-
-    def test_model_exported_to_python(self, tmp_path):
-        """run-hook-python exports MULTIPLAI_MODEL so Python hooks can read it."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        workspace = tmp_path / "workspace"
-        workspace.mkdir()
-        (workspace / ".venv" / "bin").mkdir(parents=True)
-
-        (config_dir / ".workspace").write_text(str(workspace))
-        (config_dir / "multiplai.conf").write_text(
-            'MULTIPLAI_MODEL="claude-haiku-4-5-20251001"\n'
-        )
-
-        # Create a tiny Python script that prints the env var
-        script = tmp_path / "print_model.py"
-        script.write_text('import os; print(os.environ.get("MULTIPLAI_MODEL", "UNSET"))\n')
-
-        # run-hook-python will try workspace venv python first, fall back to system.
-        # We test the export logic by sourcing the same conf loading logic.
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_MODEL="claude-sonnet-4-6"
-                [ -f "{config_dir}/multiplai.conf" ] && source "{config_dir}/multiplai.conf"
-                export MULTIPLAI_MODEL
-                python3 "{script}"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "claude-haiku-4-5-20251001"
-
-    def test_debug_exported_to_python(self, tmp_path):
-        """run-hook-python exports MULTIPLAI_DEBUG so Python hooks can read it."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        (config_dir / ".workspace").write_text(str(tmp_path))
-        (config_dir / "multiplai.conf").write_text(
-            'MULTIPLAI_DEBUG=true\n'
-        )
-
-        script = tmp_path / "print_debug.py"
-        script.write_text('import os; print(os.environ.get("MULTIPLAI_DEBUG", "UNSET"))\n')
-
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_DEBUG=false
-                [ -f "{config_dir}/multiplai.conf" ] && source "{config_dir}/multiplai.conf"
-                export MULTIPLAI_DEBUG
-                python3 "{script}"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "true"
+    def test_log_level_is_exported(self, tmp_path):
+        # Regression: MULTIPLAI_LOG_LEVEL was set in conf but not exported, so
+        # the log-level knob silently did nothing for hook-invoked scripts.
+        assert _run(tmp_path, "MULTIPLAI_LOG_LEVEL=DEBUG\n", "MULTIPLAI_LOG_LEVEL") == "DEBUG"
 
 
 class TestConfMalformed:
-    """Test behavior with malformed or partial conf files."""
-
     def test_empty_conf_uses_defaults(self, tmp_path):
-        """Empty conf file doesn't break anything."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        (config_dir / "multiplai.conf").write_text("")
-
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_MODEL="claude-sonnet-4-6"
-                MULTIPLAI_DEBUG=false
-                source "{config_dir}/multiplai.conf"
-                echo "$MULTIPLAI_MODEL:$MULTIPLAI_DEBUG"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "claude-sonnet-4-6:false"
+        assert _run(tmp_path, "", "MULTIPLAI_MODEL") == "claude-sonnet-4-6"
 
     def test_comments_only_conf(self, tmp_path):
-        """Conf with only comments doesn't break anything."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        (config_dir / "multiplai.conf").write_text(
-            "# This is a comment\n"
-            "# Another comment\n"
-        )
+        assert _run(tmp_path, "# a comment\n# another\n", "MULTIPLAI_MODEL") == "claude-sonnet-4-6"
 
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_MODEL="claude-sonnet-4-6"
-                source "{config_dir}/multiplai.conf"
-                echo "$MULTIPLAI_MODEL"
-            """],
-            capture_output=True, text=True,
-        )
-        assert result.stdout.strip() == "claude-sonnet-4-6"
+    def test_inline_comment_stripped(self, tmp_path):
+        out = _run(tmp_path, "MULTIPLAI_EFFORT=medium  # trailing note\n", "MULTIPLAI_EFFORT")
+        assert out == "medium"
 
-    def test_partial_conf_preserves_unset_defaults(self, tmp_path):
-        """Conf that sets only one value doesn't affect others."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        (config_dir / "logs").mkdir()
-        (config_dir / "multiplai.conf").write_text(
-            'MULTIPLAI_DEBUG=true\n'
-        )
 
-        result = subprocess.run(
-            ["bash", "-c", f"""
-                export CLAUDE_CONFIG_DIR="{config_dir}"
-                MULTIPLAI_MODEL="claude-sonnet-4-6"
-                MULTIPLAI_DEBUG=false
-                MULTIPLAI_EFFORT=high
-                source "{config_dir}/multiplai.conf"
-                echo "$MULTIPLAI_MODEL:$MULTIPLAI_DEBUG:$MULTIPLAI_EFFORT"
-            """],
-            capture_output=True, text=True,
+class TestConfSecurity:
+    """The parser must never execute values or subscripts from the conf
+    (CWE-78): a committed/tampered conf is untrusted input."""
+
+    def test_value_is_not_executed(self, tmp_path):
+        # A command-substitution in a value must arrive as literal data.
+        (tmp_path / "canary").unlink(missing_ok=True)
+        out = _run(
+            tmp_path,
+            f'MULTIPLAI_MODEL=$(touch {tmp_path}/canary)\n',
+            "MULTIPLAI_MODEL",
         )
-        assert result.stdout.strip() == "claude-sonnet-4-6:true:high"
+        assert not (tmp_path / "canary").exists(), "conf value was executed"
+        # The literal text is fine; execution is not.
+        assert "canary" in out or out == f"$(touch {tmp_path}/canary)"
+
+    def test_array_subscript_key_is_not_executed(self, tmp_path):
+        # A key like MULTIPLAI_A[$(...)] must be rejected, not fed to printf -v
+        # (which would command-substitute the subscript).
+        (tmp_path / "canary2").unlink(missing_ok=True)
+        _run(
+            tmp_path,
+            f'MULTIPLAI_A[$(touch {tmp_path}/canary2)]=x\n',
+            "MULTIPLAI_MODEL",
+        )
+        assert not (tmp_path / "canary2").exists(), "conf key subscript was executed"
+
+    def test_debug_value_is_not_run_as_command(self, tmp_path):
+        # _debug must compare MULTIPLAI_DEBUG as data, never run it.
+        (tmp_path / "canary3").unlink(missing_ok=True)
+        _run(
+            tmp_path,
+            f'MULTIPLAI_DEBUG=touch {tmp_path}/canary3\n',
+            "MULTIPLAI_DEBUG",
+        )
+        assert not (tmp_path / "canary3").exists(), "MULTIPLAI_DEBUG was executed"

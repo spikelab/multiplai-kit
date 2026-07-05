@@ -1,43 +1,48 @@
 # Hooks Reference
 
-All hooks are in `dotfiles/hooks/`. They're configured in `dotfiles/settings.json` under the `hooks` key.
+The memory/context/lifecycle hooks that used to live here have been extracted
+into the **`multiplai-context`** plugin (installed from the marketplace). This
+kit now ships exactly **one** registered hook plus two live helpers, all in
+`dotfiles/hooks/` and configured in `dotfiles/settings.json` under `hooks`.
 
-## Hook Events
+## Registered hook
 
-| Event | When | Hooks |
-|-------|------|-------|
-| SessionStart | Session begins | session-lifecycle.py |
-| UserPromptSubmit | Every user message | context-router.py |
-| PostToolUse (Write/Edit) | After file changes | validate-syntax.sh |
-| PreCompact | Before context compaction | session-lifecycle.py |
-| Stop | Claude stops responding | session-lifecycle.py |
-| SessionEnd | Session ends | session-lifecycle.py |
+| Event | When | Hook |
+|-------|------|------|
+| PostToolUse (Write\|Edit) | After a file is written/edited | `validate-syntax.sh` |
 
-## Hook Details
+Session lifecycle (SessionStart/Stop/SessionEnd/PreCompact) and per-prompt
+context routing (UserPromptSubmit) are handled by the `multiplai-context`
+plugin, registered in that plugin's own `hooks/hooks.json` — not here. To edit
+or debug them, work in the plugin, not this kit.
 
-### session-lifecycle.py
-Central hook handling four events. On SessionStart, creates diary entry, processes deferred extractions from previous sessions, checks the autodream consolidation gate, and surfaces unseen dream reports. On SessionEnd, saves deferred extraction markers and launches project state synthesis. On Stop, launches fire-and-forget learning extraction. On PreCompact, annotates the diary with a compaction marker.
-
-### context-router.py
-Runs on every user message. Loads a catalog of memory file descriptions, asks a routing model which files are relevant, then injects the full selected files as context. Also manages the nudge system (memory, skill-creation, long-session nudges).
+## Hook details
 
 ### validate-syntax.sh
-Validates YAML and JSON files after they're written/edited.
+PostToolUse hook. After a Write/Edit to a `.json`/`.yaml`/`.yml` file it parses
+the file and, on a syntax error, exits 2 with the error on stderr so Claude
+sees the failure and can self-correct (a trailing comma in `settings.json`
+would otherwise silently break every hook). Valid files exit 0 with no output.
 
-### run-hook-python
-Wrapper script that routes Python hook invocations to the workspace's venv python. Falls back to system python3.
+### run-hook-python (helper, not registered)
+Wrapper that routes a Python hook invocation to the workspace venv's python
+(`$CLAUDE_MULTIPLAI_HOME/.venv/bin/python`), falling back to system `python3`.
+It also parses `multiplai.conf` (without `eval`) and exports the
+`MULTIPLAI_*` config vars for the invoked script.
 
-## Python Hook Dependencies
+### model_resolver.py, log_utils.py (helpers, not registered)
+`model_resolver.py` resolves the model/effort ceiling for the in-tree skills;
+`log_utils.py` is the shared logging helper. Neither is a hook itself.
 
-All Python hooks require these packages (installed by setup.sh):
-- `claude-agent-sdk` — Agent SDK for calling Claude models
-- `pyyaml` — YAML validation
+## Python dependencies
 
-## Adding Custom Hooks
+`validate-syntax.sh` needs only `pyyaml` (for YAML). See `requirements.txt`.
 
-1. Create your hook script in `dotfiles/hooks/`
-2. Register it in `dotfiles/settings.json` under the appropriate event
-3. For Python hooks, use `run-hook-python` as the interpreter:
+## Adding a custom hook
+
+1. Create your hook script in `dotfiles/hooks/`.
+2. Register it in `dotfiles/settings.json` under the appropriate event.
+3. For Python hooks, invoke via `run-hook-python`:
    ```json
    "command": "bash $CLAUDE_CONFIG_DIR/hooks/run-hook-python $CLAUDE_CONFIG_DIR/hooks/my-hook.py"
    ```

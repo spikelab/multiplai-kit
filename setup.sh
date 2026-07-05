@@ -1,9 +1,10 @@
 #!/bin/bash
 # setup.sh — One-time setup for multiplai-kit
 #
-# Creates workspace directories, installs Python dependencies,
-# configures the kit to point at your workspace, personalizes
-# the global CLAUDE.md, and builds the Docker image if Docker is available.
+# Creates workspace directories, installs Python dependencies, configures the
+# kit to point at your workspace (via settings.local.json), installs the
+# Multiplai plugins, and builds the Docker image if Docker is available.
+# Identity is NOT sed'd into shipped files — it lives in the memory profile.
 
 set -euo pipefail
 
@@ -105,7 +106,7 @@ if ! $HAS_DOCKER; then
   echo ""
   echo "  To enable container mode later:"
   echo "    1. Install Docker"
-  echo "    2. Run: cd container && ./build.sh"
+  echo "    2. Re-run ./setup.sh (it fetches container/ and builds the image)"
   echo "================================================================"
   echo ""
 fi
@@ -163,13 +164,14 @@ else
   echo "  Venv already exists at $VENV_DIR"
 fi
 
-# Use uv if available, fall back to pip
+# Use uv if available, fall back to pip. Arrays, not strings, so a venv path
+# with spaces doesn't word-split into broken arguments.
 if command -v uv &>/dev/null; then
-  PIP="uv pip"
-  PIP_ARGS="--python $VENV_DIR/bin/python"
+  PIP=(uv pip)
+  PIP_ARGS=(--python "$VENV_DIR/bin/python")
 elif [ -f "$VENV_DIR/bin/pip" ]; then
-  PIP="$VENV_DIR/bin/pip"
-  PIP_ARGS=""
+  PIP=("$VENV_DIR/bin/pip")
+  PIP_ARGS=()
 else
   echo "  Error: No pip or uv available to install dependencies."
   echo "  Install uv (https://docs.astral.sh/uv/) or ensure pip is in the venv."
@@ -177,12 +179,12 @@ else
 fi
 
 echo "  Installing dependencies from requirements.txt..."
-$PIP install $PIP_ARGS --quiet -r "$SCRIPT_DIR/requirements.txt"
+"${PIP[@]}" install ${PIP_ARGS[@]+"${PIP_ARGS[@]}"} --quiet -r "$SCRIPT_DIR/requirements.txt"
 
 # Optional: mlx-whisper (macOS only, needs Metal GPU)
 if [[ "$(uname)" == "Darwin" ]]; then
   echo "  Attempting mlx-whisper (optional, macOS only)..."
-  $PIP install $PIP_ARGS --quiet mlx-whisper 2>/dev/null || \
+  "${PIP[@]}" install ${PIP_ARGS[@]+"${PIP_ARGS[@]}"} --quiet mlx-whisper 2>/dev/null || \
     echo "  Skipped mlx-whisper (install manually if needed)"
 fi
 
@@ -249,20 +251,23 @@ else
 fi
 
 # --- Step 7: Point the multiplai-context plugin at this workspace ---
-# The shipped settings.json carries empty path placeholders; fill them from
-# .env so the plugin routes memory/skills/resources for THIS machine. Identity
-# lives in the memory profile (never sed'd into shipped files).
+# The shipped settings.json carries empty path placeholders. Rather than
+# rewriting that tracked file (which would leave the tree permanently dirty and
+# make `git pull` updates conflict), write the machine-local paths to
+# settings.local.json — a gitignored overlay Claude Code deep-merges over
+# settings.json. Identity lives in the memory profile (never sed'd in).
 STEP=$((STEP + 1))
 echo "[$STEP/$TOTAL_STEPS] Configuring plugin options for this workspace..."
-SETTINGS="$DOTFILES_DIR/settings.json"
+LOCAL_SETTINGS="$DOTFILES_DIR/settings.local.json"
+[ -f "$LOCAL_SETTINGS" ] || echo '{}' > "$LOCAL_SETTINGS"
 jq --arg ws "$WORKSPACE" \
    --arg skills "$DOTFILES_DIR/skills" \
    --arg res "$WORKSPACE/RESOURCES" \
    '.pluginConfigs["multiplai-context@multiplai"].options.workspace_dir = $ws
     | .pluginConfigs["multiplai-context@multiplai"].options.skills_dir = $skills
     | .pluginConfigs["multiplai-context@multiplai"].options.resources_dir = $res' \
-   "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
-echo "  workspace_dir  = $WORKSPACE"
+   "$LOCAL_SETTINGS" > "$LOCAL_SETTINGS.tmp" && mv "$LOCAL_SETTINGS.tmp" "$LOCAL_SETTINGS"
+echo "  workspace_dir  = $WORKSPACE   (written to settings.local.json)"
 echo "  skills_dir     = $DOTFILES_DIR/skills"
 echo "  resources_dir  = $WORKSPACE/RESOURCES"
 
@@ -291,7 +296,7 @@ else
   echo "    /plugin install multiplai-context@multiplai"
 fi
 
-# --- Step 8: Sync skill model/effort from multiplai.conf ---
+# --- Step 9: Sync skill model/effort from multiplai.conf ---
 STEP=$((STEP + 1))
 echo "[$STEP/$TOTAL_STEPS] Syncing skill config from multiplai.conf..."
 if ! compgen -G "$DOTFILES_DIR/skills/*/SKILL.md" > /dev/null; then
@@ -304,7 +309,7 @@ else
   echo "    CLAUDE_CONFIG_DIR=dotfiles python scripts/sync_skill_config.py"
 fi
 
-# --- Step 9: Build Docker image (if Docker available) ---
+# --- Step 10: Build Docker image (if Docker available) ---
 # Container tooling lives in its own repo (spikelab/multiplai-container),
 # fetched here at a pinned tag. Override CONTAINER_REPO/CONTAINER_REF in .env
 # to track a fork or a different version.

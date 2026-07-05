@@ -55,14 +55,15 @@ Instructions for Claude when this skill is invoked...
 
 ## Container Mode
 
-The `container/` directory provides Docker-based Claude Code:
+The container tooling is fetched into `container/` by `setup.sh` when Docker is
+available (from `spikelab/multiplai-container`). You don't launch it directly —
+`./claude.sh` runs your session inside the image, mounting your workspace and
+using the same `CLAUDE_CONFIG_DIR` approach. To (re)build or reconfigure:
 
-1. `cp container/.env.example container/.env`
-2. Edit `container/.env` with your settings
-3. `./container/build.sh` to build the image
-4. `./container/dclaude.sh` to launch
-
-The container mounts your workspace and uses the same `CLAUDE_CONFIG_DIR` approach.
+1. Put container settings in the kit-root `.env` (see `.env.example`:
+   `WORKSPACE`, `IMAGE_NAME`, `CONTAINER_REF`, host-bridge keys).
+2. Re-run `./setup.sh` (or `cd container && ./build.sh`) to build the image.
+3. `./claude.sh` to launch a containerized session.
 
 ## Settings
 
@@ -70,9 +71,12 @@ Edit `dotfiles/settings.json` to customize:
 - `env` — Environment variables (token limits, timeouts)
 - `permissions.allowedTools` — Auto-approved tools
 - `hooks` — Hook registration
-- `fileSuggestion` — Custom @ file picker
 - `statusLine` — Status bar content
 - `enabledPlugins` — LSP plugins
+
+An optional `@`-file picker script ships at `dotfiles/scripts/file-suggestion.sh`
+but is not registered by default; wire it up under a `fileSuggestion` key in
+`settings.json` if you want it.
 
 ## Reference Docs
 

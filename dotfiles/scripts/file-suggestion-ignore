@@ -32,13 +32,8 @@ Thumbs.db
 ehthumbs.db
 tmp/
 
-# Workspace-specific bulk data
+# Bulk data (add your own large data/transcript dirs here)
 transcripts/audio-files/
-**/ai-news/emails/
-**/ai-news/archive/
-**/ai-news/failed/
-**/ai-news/parsed/
-RESOURCES/Lenny-Podcast-Transcripts-Archive-Jan2026
 
 # Credentials and secrets
 credentials.json

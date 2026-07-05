@@ -17,12 +17,12 @@ The kit is responsible for:
 
 ## The Memory System Is Now a Plugin
 
-Earlier versions of this kit shipped the memory system as in-tree hooks (`context-router.py`, `session-lifecycle.py`, `extract-learnings.py`, `autodream.py`, `synthesize-now.py`) registered in `settings.json`. **Those have been extracted into a standalone plugin** and now live under `dotfiles/hooks/_retired/`. The only hook the kit still registers directly is `validate-syntax.sh`.
+Earlier versions of this kit shipped the memory system as in-tree hooks (`context-router.py`, `session-lifecycle.py`, `extract-learnings.py`, `autodream.py`, `synthesize-now.py`) registered in `settings.json`. **Those have been extracted into a standalone plugin** and removed from this kit entirely. The only hook the kit still registers directly is `validate-syntax.sh`.
 
-The replacement is **`multiplai-context`** (v0.4.0), a normal Claude Code plugin developed in its own repo:
+The replacement is **`multiplai-context`**, a normal Claude Code plugin published in the marketplace repo (`spikelab/multiplai-cc-mktplace`):
 
 ```
-PROJECTS/multiplai-plugin/
+multiplai-cc-mktplace/
 ├── .claude-plugin/marketplace.json     # marketplace "multiplai"
 └── plugins/multiplai-context/
     ├── .claude-plugin/plugin.json       # plugin manifest + userConfig schema
@@ -199,11 +199,10 @@ multiplai-kit/                          # = the "runtime" / kit repo
 ├── dotfiles/              # = CLAUDE_CONFIG_DIR (Claude Code reads everything from here)
 │   ├── CLAUDE.md          # Global instructions (personalized by setup.sh)
 │   ├── settings.json      # Registers validate-syntax hook; pluginConfigs.multiplai; statusline; permissions
-│   ├── hooks/             # validate-syntax.sh, run-hook-python, model_resolver.py, catalog generators
-│   │   └── _retired/      # Old in-tree memory hooks, superseded by the multiplai-context plugin
+│   ├── hooks/             # validate-syntax.sh, run-hook-python, model_resolver.py, log_utils.py
 │   ├── skills/            # Your own local skills (the skill library ships as marketplace plugins)
 │   ├── reference/dev/     # 21 best-practice docs
-│   ├── scripts/           # statusline, file picker, sync_skill_config.py
+│   ├── scripts/           # statusline.sh, file-suggestion.sh
 │   ├── output-styles/     # Output formatting
 │   ├── templates/         # Project templates
 │   ├── plugins/           # Claude Code plugin state (marketplaces, cache) — incl. the loaded plugin
@@ -219,8 +218,8 @@ multiplai-kit/                          # = the "runtime" / kit repo
 │
 ├── docs/                  # SKILLS.md, HOOKS.md, CUSTOMIZATION.md, PROFILES.md
 │
-└── (loaded separately)
-    PROJECTS/multiplai-plugin/plugins/multiplai-context/   # the memory/context/learning plugin
+└── (installed from the marketplace)
+    multiplai-cc-mktplace → plugins/multiplai-context/   # the memory/context/learning plugin
 ```
 
 ## What's Included
@@ -352,7 +351,7 @@ Unit tests at `evals/` (project root) covering the kit's **own live code** — t
 .venv/bin/python -m pytest evals/ -q
 ```
 
-The memory/routing/learnings mechanisms (and their tests) moved to the **`multiplai-context` plugin**, which has its own `tests/` suite run from `PROJECTS/multiplai-plugin/plugins/multiplai-context/`.
+The memory/routing/learnings mechanisms (and their tests) moved to the **`multiplai-context` plugin** in the marketplace repo (`multiplai-cc-mktplace`), which has its own `tests/` suite under `plugins/multiplai-context/`.
 
 ## Container Mode
 

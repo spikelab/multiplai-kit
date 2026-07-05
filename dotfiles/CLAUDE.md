@@ -37,7 +37,7 @@ Before proposing, recommending, or doing ANYTHING, filter through these question
 - You MUST address your human partner by the name in their memory profile at all times
 - **Context anxiety:** Do NOT take shortcuts, skip steps, leave tasks incomplete, or rush when the context window is filling up. If running low on context, compact or ask to start a new session — never degrade quality to save space.
 - **Extraction honesty.** When extracting or summarizing from documents, transcripts, or source material: leave fields blank with a reason rather than guessing; a wrong extraction is worse than a blank; flag what was inferred vs explicitly stated.
-- **Plans go to files, not the console.** Anything the user needs to review — multi-step plans, design proposals, comparisons, decision matrices, recommendations longer than a few lines — write it to a file (workspace routing rules decide where: `PLANS/`, `RESOURCES/`, `INBOX/`). The console reply then points at the file and asks a focused question. Console output is for status updates, single-paragraph answers, and quick Q&A — not for content the user has to scroll back through to evaluate. When in doubt: file first, console second.
+- **Plans go to files, not the console.** Anything the user needs to review — multi-step plans, design proposals, comparisons, decision matrices, recommendations longer than a few lines — write it to a file (workspace routing rules decide where: `PROJECTS/plans/`, `RESOURCES/`, `INBOX/`). The console reply then points at the file and asks a focused question. Console output is for status updates, single-paragraph answers, and quick Q&A — not for content the user has to scroll back through to evaluate. When in doubt: file first, console second.
 
 # Temporal awareness
 - TODAY'S DATE IS YOUR ANCHOR. Before any search, research, or date-sensitive task, consciously check today's date.
@@ -85,7 +85,7 @@ Your workspace root is defined in `$CLAUDE_CONFIG_DIR/.workspace`. If working in
 - **Background agent monitoring:** After launching a background agent with a progress file, proactively check it at the intervals specified in the skill and report status to the user. Do not wait for the user to ask. Surface the progress file path with a `tail -f` hint at launch so the user can monitor independently.
 - **Skill script paths:** Plugin-shipped skills reference their helper scripts via `${CLAUDE_PLUGIN_ROOT}/skills/<skill-name>/scripts/<script>`; user-local skills (in `$CLAUDE_CONFIG_DIR/skills/`) use `$CLAUDE_CONFIG_DIR/skills/<skill-name>/scripts/<script>`. Both keep skills portable across workspaces.
 - **Subagent "why":** When spawning a subagent, always include a specific purpose/why in the subagent prompt. "How auth works for rate limiting" beats "how auth works". This reduces overlap between parallel subagents and improves signal filtering.
-- **Bot-blocked / JS-rendered web pages, or driving the real logged-in Chrome → the `host-browser` skill.** When `WebFetch`/`WebSearch` (or deep-research) hit a 403/bot wall/client-rendered page, OR a task needs the real persistent browser (logins, signups, grabbing a verification email), invoke the **`host-browser`** skill. It drives the real Chrome on the Mac via the `ab` CLI (Vercel `agent-browser` over the SSH bridge), and adds a connect helper (`hb-connect.sh` — asserts `navigator.webdriver=false`) plus human-pacing/anti-detection verbs (`hb humantype/humanclick/think`). Quick path: `ab open <url>` then `ab snapshot -i`; heavy SPAs need a settle delay first (`ab open <url>; sleep 5; ab snapshot`). Prereqs run once on the Mac: `chrome-agent` (Chrome + CDP on 9222) then `ab connect 9222`. Two block classes to recognize: **behavioral/invisible-captcha** walls (genuine fingerprint + human pacing usually passes — validated against Medium's invisible reCAPTCHA) vs **policy** walls — disposable-email blocks (e.g. Canva) and DataDome-class device checks (e.g. leroymerlin.it) — which realism does NOT defeat; stop and change inputs rather than fight them.
+- **Bot-blocked / JS-rendered web pages, or driving the real logged-in Chrome → the `host-browser` skill** (ships with the optional `multiplai-media` pack). When `WebFetch`/`WebSearch` (or deep-research) hit a 403/bot wall/client-rendered page, OR a task needs the real persistent browser (logins, signups, grabbing a verification email), invoke the **`host-browser`** skill if installed. It drives the real host Chrome via the `ab` CLI (Vercel `agent-browser` over the SSH bridge), with human-pacing/anti-detection verbs. Quick path: `ab open <url>` then `ab snapshot -i`; heavy SPAs need a settle delay (`ab open <url>; sleep 5; ab snapshot`). Recognize two block classes: **behavioral/invisible-captcha** walls (genuine fingerprint + human pacing usually passes) vs **policy** walls (disposable-email blocks, DataDome-class device checks) which realism does NOT defeat — change inputs rather than fight them. See the skill's own docs for host prerequisites.
 
 # BuildMe Workflow
 When the user asks to implement something non-trivial (new feature, architectural change, multi-file modification):
@@ -101,7 +101,7 @@ BuildMe is a deterministic Python pipeline shipped by the `multiplai-dev` plugin
 - Scored quality reviews with rubric-based thresholds
 - State checkpointing with crash recovery
 
-**Full workflow details:** See `$CLAUDE_CONFIG_DIR/memory/technical-pref.md` → "OpenSpec for Coding Projects"
+**Full workflow details:** See `$CLAUDE_CONFIG_DIR/memory/technical-pref.md` → "BuildMe for Coding Projects"
 
 # Project version control
 - If the project isn't in a git repo, STOP and ask permission to initialize one.
@@ -120,10 +120,9 @@ BuildMe is a deterministic Python pipeline shipped by the `multiplai-dev` plugin
 - Learnings are auto-captured to `.multiplai/learnings/` and consolidated into memory via `/multiplai-context:dream-remember`.
 
 # Session Lifecycle (Hooks)
-- **Session diary** written to `.multiplai/diary/YYYY-MM-DD/<sessionId>.md` — rich per-session narrative (what happened, decisions, rationale).
-- **Learnings** captured on Stop to `.multiplai/learnings/` — pending insights to be processed into memory files.
-- **Auto-commit** on Stop for any staged changes in the workspace repo.
-- **Two-phase Stop:** first phase commits work + captures diary/learnings, second phase commits those generated files.
+- **Session diary** written to `.multiplai/diary/YYYY-MM-DD.md` — a per-day narrative (what happened, decisions, rationale).
+- **Learnings** captured to `.multiplai/learnings/` — pending insights to be processed into memory files.
+- **Deferred extraction:** `Stop` is a lightweight checkpoint; heavy LLM diary/learnings extraction never runs inside a kill-within-seconds hook. `SessionEnd`/`PreCompact` write a marker, and the next `SessionStart` drains the queue via a detached subprocess.
 - **First reply rule:** If the SessionStart hook reports pending learnings (the "N unprocessed learnings" nudge), mention it to the user in your first response. The nudge lands in a system-reminder that only you see — the user cannot see it, so you must surface it.
 
 # Nudge Protocol

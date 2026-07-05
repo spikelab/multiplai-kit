@@ -26,6 +26,8 @@ Claude Code agents automatically load relevant docs based on task triggers defin
 | [data-pipeline-patterns.md](./data-pipeline-patterns.md) | Chunking, embeddings, batch processing, checkpointing, resumable pipelines |
 | [database-best-practices.md](./database-best-practices.md) | SQLite vs Postgres, SQLAlchemy 2.0, migrations, connection pooling, repository pattern |
 | [authentication-best-practices.md](./authentication-best-practices.md) | Sessions, JWT, OAuth, password handling, RBAC, API keys, frontend integration |
+| [docker-container-patterns.md](./docker-container-patterns.md) | Dockerfiles, layer caching, multi-stage builds, non-root users, compose |
+| [prompt-engineering.md](./prompt-engineering.md) | Prompt structure, few-shot, tool use, evaluation, LLM-judge patterns |
 
 ### Frontend
 
@@ -38,13 +40,24 @@ Claude Code agents automatically load relevant docs based on task triggers defin
 | Document | Topics |
 |----------|--------|
 | [swift-best-practices.md](./swift-best-practices.md) | SwiftUI architecture (MV vs MVVM vs TCA), @Observable, Swift 6.2 concurrency, SwiftData, macOS patterns, SPM |
+| [swift-macos-best-practices.md](./swift-macos-best-practices.md) | macOS-specific app patterns, windows/menus, sandboxing, entitlements |
 | [swift-testing-strategies.md](./swift-testing-strategies.md) | Swift Testing framework, testable architecture, snapshot testing, headless CI, XCUITest, swift-dependencies DI |
+| [swift-autonomous-tdd.md](./swift-autonomous-tdd.md) | Autonomous red-green-refactor loop for Swift, headless build/test |
 
 ### Architecture & Process
 
 | Document | Topics |
 |----------|--------|
 | [stage-appropriate-choices.md](./stage-appropriate-choices.md) | POC vs MVP vs Production, when to upgrade, decision framework, anti-patterns |
+
+### Claude Code Tooling
+
+| Document | Topics |
+|----------|--------|
+| [skill-dev.md](./skill-dev.md) | Building/modifying Claude Code skills — SKILL.md structure, scripts, triggers |
+| [hook-writing-patterns.md](./hook-writing-patterns.md) | Writing hooks — event I/O contract, exit codes, deferred work |
+| [logging-standard.md](./logging-standard.md) | Shared logging conventions for kit/plugin Python |
+| [bruno-api-testing.md](./bruno-api-testing.md) | API testing with Bruno collections, environments, assertions |
 
 ---
 

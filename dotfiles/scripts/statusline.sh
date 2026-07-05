@@ -23,9 +23,10 @@ cost=$(echo "$input" | jq -r '.cost.total_cost_usd // empty')
 
 # Shorten path: replace $HOME with ~
 short_cwd="${cwd/#$HOME/~}"
-# Further shorten: keep last 2 path components if long
+# Further shorten: keep the last two path components if long
 if [ "${#short_cwd}" -gt 40 ]; then
-  short_cwd=".../${short_cwd##*/}"
+  parent="${short_cwd%/*}"
+  short_cwd=".../${parent##*/}/${short_cwd##*/}"
 fi
 
 # Git info
@@ -55,11 +56,14 @@ if [ -n "$used" ] && [ "$used" != "null" ]; then
   ctx_info=" ${SEP} ${ctx_color}${used}%${RST}"
 fi
 
-# Cost (if available)
+# Cost (if available). Round first, then hide a zero cost — comparing the raw
+# value only caught "0", not "0.00"/"0.001".
 cost_info=""
-if [ -n "$cost" ] && [ "$cost" != "null" ] && [ "$cost" != "0" ]; then
-  cost_rounded=$(printf "%.2f" "$cost")
-  cost_info=" ${SEP} \$${cost_rounded}"
+if [ -n "$cost" ] && [ "$cost" != "null" ]; then
+  cost_rounded=$(printf "%.2f" "$cost" 2>/dev/null || echo "0.00")
+  if [ "$cost_rounded" != "0.00" ]; then
+    cost_info=" ${SEP} \$${cost_rounded}"
+  fi
 fi
 
 # Output style (only show if not "default")

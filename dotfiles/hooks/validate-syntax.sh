@@ -31,18 +31,18 @@ fi
 # Get file extension
 EXT="${FILE_PATH##*.}"
 
-# Emit a blocking-error JSON object safely. Never interpolate untrusted text
-# into a shell string — json.dumps handles quoting/escaping of the message.
+# Surface a validation failure to Claude. PostToolUse feedback reaches the
+# model via exit code 2 (stderr is fed back) — a plain stdout JSON `{"error"}`
+# object is ignored, so the old exit-1-with-stdout path was silently inert.
+# The path is passed as argv, never interpolated into the shell/Python source,
+# so a malicious path/basename cannot break out and execute code (CWE-78).
 emit_error() {
     echo "$1" >&2
-    python3 -c 'import json,sys; print(json.dumps({"error": sys.argv[1]}))' "$1"
+    exit 2
 }
 
 case "$EXT" in
     json)
-        # Validate JSON syntax. The file path is passed as argv, never
-        # interpolated into the Python source, so a malicious path/basename
-        # cannot break out of open(...) and execute code (CWE-78).
         if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$FILE_PATH" 2>/dev/null; then
             ERROR=$(python3 -c '
 import json, sys
@@ -52,7 +52,6 @@ except json.JSONDecodeError as e:
     print(f"JSON syntax error in {sys.argv[1]}: {e}")
 ' "$FILE_PATH" 2>&1)
             emit_error "$ERROR"
-            exit 1
         fi
         ;;
     yaml|yml)
@@ -67,7 +66,6 @@ except yaml.YAMLError as e:
     print(f"YAML syntax error in {sys.argv[1]}: {e}")
 ' "$FILE_PATH" 2>&1)
                 emit_error "$ERROR"
-                exit 1
             fi
         fi
         ;;

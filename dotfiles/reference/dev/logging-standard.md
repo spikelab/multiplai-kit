@@ -13,19 +13,21 @@ Every log line follows this pattern:
 | Field | Description |
 |-------|-------------|
 | Timestamp | UTC, ISO 8601, always ends with `Z` |
-| Component | Logger name (e.g., `context-router`, `extract`, `deep-research`, `session-lifecycle`) |
+| Component | Logger name (e.g., `context`, `extract`, `deep-research`, `build-pipeline`) |
 | Session | First 8 chars of the Claude Code session ID. Use `--------` if unknown |
 | Level | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | Message | Freeform text. Use `key=value` pairs for structured data |
 
 **Example lines:**
 ```
-[2026-04-10T00:51:16Z] [context-router] [session:c6a0d827] INFO: RETRIEVE prompt="I was showing..." routing={"memory":["claude-code-tools.md"]} result=13301 chars
-[2026-04-10T00:39:13Z] [context-router] [session:4f869fed] INFO: SKIP reason=short-continuation prompt="yes"
+[2026-04-10T00:51:16Z] [context] [session:c6a0d827] INFO: RETRIEVE prompt="I was showing..." routing={"memory":["claude-code-tools.md"]} result=13301 chars
+[2026-04-10T00:39:13Z] [context] [session:4f869fed] INFO: SKIP reason=short-continuation prompt="yes"
 [2026-04-09T04:35:29Z] [deep-research] [session:abc12345] INFO: SDK call [plan] prompt=3479 bytes tools=none timeout=600s
 [2026-04-09T22:52:00Z] [extract] [session:e15d583c] INFO: DONE status=ok units=2 learnings=1
-[2026-04-07T08:37:42Z] [session-lifecycle] [session:b29efb9c] INFO: SessionEnd saved extraction marker
 ```
+
+> The session-lifecycle/context-router hooks named in older versions of this
+> doc now live in the `multiplai-context` plugin; the format is unchanged.
 
 ## Infrastructure
 
@@ -39,13 +41,16 @@ Every log line follows this pattern:
 
 ## Directory Layout
 
+Current-day logs are undated; the previous day rotates to `<name>-YYYY-MM-DD.log`
+on the first write of a new UTC day (retention via `MULTIPLAI_LOG_RETENTION_DAYS`).
+
 ```
 logs/
-├── context-router.log       # Current day's memory routing log
-├── context-router.log.2026-04-09  # Rotated (7-day retention)
 ├── deep-research.log          # Current day's deep research log
-├── extract.log                # All extraction output (date-appended, all sessions)
-├── session-lifecycle.log      # Session events (append-only)
+├── deep-research-2026-04-09.log  # Rotated (dated)
+├── extract.log                # Extraction output (rotated daily)
+├── activity.log               # Curated human-readable event log
+├── activity.jsonl             # Structured mirror of activity.log
 ├── hook-errors.log            # ERROR+ from all components (append-only)
 ├── state/
 │   ├── nudge-{session_id}.json    # Per-session nudge/dedup state
@@ -70,12 +75,13 @@ logger.warning("Retrying after timeout")
 logger.error("Failed to connect: %s", err)
 ```
 
-`setup_logging()` configures:
-- File handler with `TimedRotatingFileHandler` (midnight UTC, 7-day retention)
+`setup_logging()` (from `multiplai_core.log_utils`) configures:
+- A date-rotated file handler: `<name>.log` current, `<name>-YYYY-MM-DD.log`
+  rotated on UTC day change (retention via `MULTIPLAI_LOG_RETENTION_DAYS`)
 - Error handler writing ERROR+ to shared `hook-errors.log`
 - Standard format with session ID baked in
 
-For scripts that run as subprocesses with shell-level output capture (like `extract-learnings.py`), use a simple stderr logging helper instead:
+For scripts that run as subprocesses with shell-level output capture (like `extract_learnings.py`), use a simple stderr logging helper instead:
 
 ```python
 from datetime import datetime, timezone
@@ -147,7 +153,10 @@ ERROR: FAIL reason=SDK timeout after 30s
 
 ## Rotation & Retention
 
-- **TimedRotatingFileHandler** with `backupCount=7` handles Python log rotation
-- **rotate_logs()** in `context-router.py` cleans up legacy file patterns and truncates oversized append-only logs
-- **Append-only logs** (`hook-errors.log`, `session-lifecycle.log`) are truncated to ~100KB when oversized
-- **Session state files** cleaned up at SessionEnd by `session-lifecycle.py`
+- The date-rotated file handler archives the prior day to `<name>-YYYY-MM-DD.log`
+  on the first write of a new UTC day
+- A directory-wide sweep prunes dated logs older than
+  `MULTIPLAI_LOG_RETENTION_DAYS` (default 7)
+- **Append-only logs** (`hook-errors.log`) are truncated when oversized
+- **Session state files** are cleaned up by the `multiplai-context` plugin's
+  lifecycle hooks

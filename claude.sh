@@ -9,11 +9,13 @@
 #
 # Additional flags:
 #   --profile <name>    Load env.<name> for git identity + GH token (default: .env)
+#   --gcp <name>        Load env.gcp.<name> for GCP credentials
 #   --shell             Container shell (bash instead of claude)
 #
 # Usage:
 #   ./claude.sh                         # container, default profile
 #   ./claude.sh --profile work          # container, work git identity
+#   ./claude.sh --gcp prod              # container, load env.gcp.prod
 #   ./claude.sh --local                 # bare, host permissions apply
 #   ./claude.sh --shell                 # container bash shell
 #   ./claude.sh --profile work --shell  # work profile, bash shell
@@ -91,7 +93,10 @@ if [ -n "$PROFILE" ]; then
     if [ ! -f "$PROFILE_FILE" ]; then
         echo "Error: Profile '$PROFILE' not found at $PROFILE_FILE"
         echo "Available profiles:"
-        ls "$SCRIPT_DIR"/env.* 2>/dev/null | sed 's/.*env\./  /' || echo "  (none)"
+        # Real profiles only — exclude the env.example template and env.gcp.* files.
+        ls "$SCRIPT_DIR"/env.* 2>/dev/null \
+            | grep -vE '/env\.(example|gcp\.)' \
+            | sed 's/.*env\./  /' || echo "  (none)"
         exit 1
     fi
     # shellcheck disable=SC1090
@@ -158,7 +163,7 @@ fi
 if ! command -v docker &>/dev/null; then
     echo "WARNING: Docker not found — running without container sandbox."
     echo "  Host filesystem is NOT isolated. Permission prompts are active."
-    echo "  Install Docker or build the image (cd container && ./build.sh) for sandboxed mode."
+    echo "  Install Docker and re-run ./setup.sh to build the sandbox image."
     echo ""
     export CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
     exec claude "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
@@ -181,13 +186,19 @@ if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     exit 1
 fi
 
-# GH_TOKEN: env var > profile keychain key > default keychain key
+# GH_TOKEN: env var > macOS Keychain key. The Keychain lookup is macOS-only
+# (`security`); on Linux we skip it and point at the env var instead of telling
+# the user to fix a Keychain that can't exist there.
 GH_TOKEN_KEY="${GH_TOKEN_KEYCHAIN:-gh-token}"
-if [ -z "${GH_TOKEN:-}" ]; then
+if [ -z "${GH_TOKEN:-}" ] && [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
     GH_TOKEN=$(security find-generic-password -a "$USER" -s "$GH_TOKEN_KEY" -w 2>/dev/null || true)
 fi
 if [ -z "${GH_TOKEN:-}" ]; then
-    echo "Warning: No '$GH_TOKEN_KEY' found in Keychain. GitHub CLI will not be authenticated."
+    if [ "$(uname)" = "Darwin" ]; then
+        echo "Warning: No '$GH_TOKEN_KEY' in Keychain and \$GH_TOKEN unset. GitHub CLI will not be authenticated."
+    else
+        echo "Warning: \$GH_TOKEN not set. GitHub CLI will not be authenticated (set GH_TOKEN in .env or your profile)."
+    fi
 fi
 
 # --- Ensure kit-venv volume is agent-writable ---

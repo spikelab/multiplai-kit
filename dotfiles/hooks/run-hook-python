@@ -1,0 +1,68 @@
+#!/bin/bash
+# Wrapper to invoke Python hooks with the correct venv.
+# Reads workspace path from $CLAUDE_CONFIG_DIR/.workspace, uses its venv python.
+# Falls back to system python3 if no workspace venv is available.
+# Logs resolution path so failures are diagnosable.
+
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+MULTIPLAI_HOME="${CLAUDE_MULTIPLAI_HOME:-$(dirname "$CONFIG_DIR")}"
+LOGS_DIR="$MULTIPLAI_HOME/runtime/logs"
+VENV_PYTHON="$MULTIPLAI_HOME/.venv/bin/python"
+
+# Load config (debug flag, model, effort, etc.) and export for Python hooks
+MULTIPLAI_DEBUG=false
+MULTIPLAI_MODEL="claude-sonnet-4-6"
+MULTIPLAI_EFFORT="high"
+# multiplai.conf lives at the kit project root, not in dotfiles/
+CONF_FILE="$MULTIPLAI_HOME/multiplai.conf"
+# Parse KEY=value WITHOUT eval. A committed conf (or a tampered one via a
+# malicious PR / prompt-injection) must not be able to execute code — the old
+# `eval "$(grep ...)"` ran `KEY=$(cmd)` values as shell (CWE-78). We accept only
+# bare MULTIPLAI_* identifiers (so PATH/LD_PRELOAD etc. can't be clobbered) and
+# assign the value as literal data via printf -v.
+if [ -f "$CONF_FILE" ]; then
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    _key="${_line%%=*}"
+    case "$_key" in
+      MULTIPLAI_[A-Z_]*) ;;
+      *) continue ;;
+    esac
+    _val="${_line#*=}"
+    _val="${_val%%#*}"                          # drop trailing inline comment
+    _val="${_val%"${_val##*[![:space:]]}"}"     # rstrip whitespace
+    _val="${_val#\"}"; _val="${_val%\"}"         # strip one layer of quotes
+    _val="${_val#\'}"; _val="${_val%\'}"
+    printf -v "$_key" '%s' "$_val"
+  done < "$CONF_FILE"
+  unset _line _key _val
+fi
+export MULTIPLAI_DEBUG MULTIPLAI_MODEL MULTIPLAI_EFFORT
+
+_debug() {
+  $MULTIPLAI_DEBUG && mkdir -p "$LOGS_DIR" 2>/dev/null && \
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [run-hook-python] $*" >> "$LOGS_DIR/hook-debug.log" 2>/dev/null
+  return 0
+}
+
+# Try workspace venv python first
+if [ -n "$VENV_PYTHON" ] && [ -x "$VENV_PYTHON" ]; then
+  _debug "Using venv python: $VENV_PYTHON → $*"
+  exec "$VENV_PYTHON" "$@"
+fi
+
+# Log why venv python wasn't used (always — this is important for diagnosis)
+mkdir -p "$LOGS_DIR" 2>/dev/null || true
+{
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [run-hook-python] Venv python not available, falling back to system python3"
+  if [ ! -d "$MULTIPLAI_HOME/.venv" ]; then
+    echo "  Reason: venv not found at $MULTIPLAI_HOME/.venv"
+    echo "  Fix: run setup.sh to create the kit venv"
+  elif [ ! -x "$VENV_PYTHON" ]; then
+    echo "  Reason: python not executable at $VENV_PYTHON"
+  fi
+} >> "$LOGS_DIR/hook-errors.log" 2>/dev/null || true
+
+_debug "FALLBACK to system python3 → $*"
+
+# Fallback to system python — may lack claude_agent_sdk
+exec python3 "$@"

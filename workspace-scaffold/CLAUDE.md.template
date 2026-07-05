@@ -1,0 +1,54 @@
+# Workspace
+
+## Directory Map
+
+| Directory | Purpose | What goes here |
+|-----------|---------|---------------|
+| `INBOX/` | Landing zone | Unsorted items, screenshots, bookmarks, new research dumps. Temporary — process and move elsewhere. |
+| `PROJECTS/` | Where work happens | Everything you have multiple sessions about — code, job search, relocation, finances, health plans, writing projects. If you're working on it, it's a project. |
+| `RESOURCES/` | Reference material | Research outputs, deep dives, technical references, templates. Pure knowledge, indexed for retrieval. |
+| `PROJECTS/plans/` | Actionable plans | Recommendations, next-steps, and implementation plans extracted from research. Flat directory — no subdirectories. |
+| `.multiplai/memory/` | Claude's context about you | Profile, preferences, career history. Managed by the `multiplai-context` plugin; also reachable via the `dotfiles/memory/` symlink. See `.multiplai/memory/CLAUDE.md` for the index. |
+| `.multiplai/diary/` | Session diary | Auto-generated per-day session logs (`YYYY-MM-DD.md`). Don't edit directly. |
+| `.multiplai/learnings/` | Pending learnings | Auto-captured on session stop. Consolidate via `/multiplai-context:dream-remember`. |
+
+## Routing Rules
+
+When creating or saving files, put them in the right place:
+
+| Content type | Goes to | Example |
+|-------------|---------|---------|
+| Research output (facts only) | `RESOURCES/` | `RESOURCES/topic-name-YYYY-MM-DD.md` |
+| Plans/recommendations | `PROJECTS/plans/` | `PROJECTS/plans/{name}-plan.md` |
+| New unsorted items | `INBOX/` | Screenshots, links, raw notes |
+| Memory updates | `.multiplai/memory/` | Update existing files, don't create new ones without asking |
+
+## Project Registry
+
+Add your projects here as you create them. A project is anything you work on across multiple sessions — code, life tasks, planning, creative work. Creating a directory in `PROJECTS/` is how you tell the system "this is a thing I'm working on." It anchors files, session context, and learnings to a coherent thread.
+
+Projects can be temporary (delete when done — diary and learnings persist regardless) or long-running. Code projects often have their own git repo; non-code projects are tracked by the workspace repo.
+
+| Project | Own Git | Own Venv | Description |
+|---------|---------|----------|-------------|
+| | | | |
+
+**Examples of project types:**
+- Code: `PROJECTS/my-app/` — has its own git, venv, CI
+- Job search: `PROJECTS/jobs/` — applications, resumes, interview notes
+- Life admin: `PROJECTS/relocation/` — visa docs, apartment hunting, checklists
+- Health: `PROJECTS/fitness/` — exercise plans, tracking, meal prep
+- Writing: `PROJECTS/blog/` — drafts, briefs, published posts
+- Financial: `PROJECTS/taxes/` — tax prep, receipts, filing notes
+
+### Venv Rules
+
+If a sub-project has its own venv, ALWAYS use `--directory`:
+```
+uv run --directory PROJECTS/<name> pytest tests/
+```
+
+### Git Rules
+
+- **Projects with own `.git/`:** Commit inside that project directory.
+- **Everything else:** Tracked by the workspace root git repo.

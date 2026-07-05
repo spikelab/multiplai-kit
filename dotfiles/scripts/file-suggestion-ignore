@@ -1,0 +1,59 @@
+# file-suggestion-ignore — patterns excluded from the @ file picker
+# Used by file-suggestion.sh via rg --ignore-file
+# Syntax: .gitignore format
+
+# Virtual environments and package dirs
+.venv/
+node_modules/
+.npm/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# General caches
+.cache/
+
+# Editor/OS junk
+*.swo
+*.swp
+*.temp
+*.tmp
+*~
+.DS_Store
+Thumbs.db
+ehthumbs.db
+tmp/
+
+# Workspace-specific bulk data
+transcripts/audio-files/
+**/ai-news/emails/
+**/ai-news/archive/
+**/ai-news/failed/
+**/ai-news/parsed/
+RESOURCES/Lenny-Podcast-Transcripts-Archive-Jan2026
+
+# Credentials and secrets
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+.env
+.env.*
+!.env.example
+**/secrets/
+**/secret.*
+**/*token*.json
+**/*oauth*.json
+
+# Container artifacts
+.container-requirements.txt

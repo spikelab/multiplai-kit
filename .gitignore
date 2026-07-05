@@ -1,0 +1,84 @@
+.env
+env.*
+!env.example
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Claude Code runtime state (created when running)
+dotfiles/.workspace
+dotfiles/.credentials.json
+dotfiles/.claude.json
+dotfiles/.claude.json.backup
+dotfiles/mcp-needs-auth-cache.json
+dotfiles/memory
+dotfiles/projects/
+dotfiles/sessions/
+dotfiles/backups/
+dotfiles/statsig/
+dotfiles/logs/
+
+# Kit runtime state (hook-managed, not dotfiles)
+runtime/
+dotfiles/cache/
+dotfiles/debug/
+dotfiles/plugins/
+dotfiles/shell-snapshots/
+dotfiles/telemetry/
+dotfiles/todos/
+dotfiles/history.jsonl
+dotfiles/context-router-*.log
+dotfiles/memory-error.log
+dotfiles/file-history/
+dotfiles/paste-cache/
+dotfiles/stats-cache.json
+dotfiles/tasks/
+dotfiles/plans/
+# Agent-supervisor daemon + job runtime state (leaks PIDs/sessionIds/paths/PII — never ship)
+dotfiles/daemon.lock
+dotfiles/daemon.log
+dotfiles/daemon.status.json
+dotfiles/daemon/
+dotfiles/jobs/
+dotfiles/.last-update-result.json
+# Legacy (kept for backward compat during transition)
+dotfiles/hook-sessions/
+dotfiles/session-env/
+
+# Eval runtime artifacts (results change per run, scores tracked separately)
+evals/scores.jsonl
+evals/eval/**/commit-msg-results.json
+evals/eval/**/mechanism-results.json
+evals/eval/**/trigger-results.json
+evals/eval/**/capture-results.json
+
+# Container
+container/.env
+
+# Workspace artifacts (shouldn't be in kit root)
+.captainslog/
+.learnings/
+.multiplai/
+captainslog/
+
+# Deep-research skill runtime artifacts (per-research progress/state files)
+dotfiles/skills/deep-research/scripts/*-progress.md
+dotfiles/skills/deep-research/scripts/*-state.json
+
+.last-cleanup
+
+# Private / not shipped publicly (kept on disk for local use, never committed)
+# Dropped skills (retired; kept local but excluded from the public kit).
+dotfiles/skills/kanban/
+dotfiles/skills/prompt-engineer/
+# Project-specific GCP conventions (real infra details) — auto-loaded locally, never shipped.
+dotfiles/skills/devops-gcp/references/conventions/
+# Kit's own buildme change-history (internal dev artifacts, personal refs) — kept local.
+specs/
+# deep-research eval dataset = a map of the maintainer's private research corpus — kept local.
+dotfiles/skills/deep-research/scripts/tests/fixtures/eval_dataset.jsonl
+
+# Container tooling — fetched from spikelab/multiplai-container by setup.sh
+container/

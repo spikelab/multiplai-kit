@@ -1,0 +1,60 @@
+{
+  "cleanupPeriodDays": 365,
+  "env": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "16384",
+    "BASH_DEFAULT_TIMEOUT_MS": "30000",
+    "BASH_MAX_OUTPUT_LENGTH": "150000",
+    "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "100000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75"
+  },
+  "permissions": {
+    "allowedTools": [
+      "Read",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "WebSearch"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $CLAUDE_CONFIG_DIR/hooks/validate-syntax.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log"
+          }
+        ]
+      }
+    ]
+  },
+  "disableAllHooks": false,
+  "statusLine": {
+    "type": "command",
+    "command": "bash $CLAUDE_CONFIG_DIR/scripts/statusline.sh",
+    "padding": 0
+  },
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true
+  },
+  "spinnerTipsEnabled": false,
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "high",
+  "pluginConfigs": {
+    "multiplai-context@multiplai": {
+      "options": {
+        "workspace_dir": "",
+        "enable_skills": true,
+        "skills_dir": "",
+        "enable_resources": false,
+        "resources_dir": "",
+        "memory_router": "token_overlap",
+        "router_model": "claude-haiku-4-5"
+      }
+    }
+  },
+  "tui": "default",
+  "autoMemoryEnabled": false,
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark"
+}

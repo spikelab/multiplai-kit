@@ -1,0 +1,15 @@
+# Core — required for hooks to function
+claude-agent-sdk        # Memory retrieval, learnings extraction, commit messages
+pyyaml                  # Config parsing (context-router.py, skill-creator)
+
+# Skills — optional but expected
+yt-dlp                  # youtube-transcript skill
+beautifulsoup4          # Web content parsing (deep-research, extract-insights)
+
+# Deep Research Pipeline
+httpx                   # async HTTP client for fetching pages
+trafilatura             # article content extraction to markdown
+tavily-python           # Tavily search API SDK (async)
+exa-py                  # Exa search API SDK (async)
+pydantic                # structured data validation for LLM outputs and state
+python-dotenv           # loads .env from project root for secrets

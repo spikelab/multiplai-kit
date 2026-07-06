@@ -208,12 +208,21 @@ fi
 # New Docker named volumes are root-owned. The venv-sync entrypoint runs as
 # the agent user and can't create the venv on a fresh volume. Fix ownership
 # once (no-op when venv already exists — just a stat check inside the container).
+#
+# --entrypoint is REQUIRED: without it, `bash -c` becomes arguments to the
+# image's venv-sync entrypoint, which exits at once (CLAUDE_MULTIPLAI_HOME
+# unset in this bare run) and the chown never executes — leaving every FRESH
+# volume root-owned and the first launch failing with EACCES in venv-sync.
+# chown by container user name (`agent`, no group — the image has no `agent`
+# group; primary group is the build-time GID) rather than host `id -u`.
 docker run --rm \
+    --entrypoint bash \
     -v "kit-venv:$SCRIPT_DIR/.venv" \
     --user root \
-    "$IMAGE_NAME" bash -c \
-    "[ -x '$SCRIPT_DIR/.venv/bin/python3' ] || chown $(id -u):$(id -g) '$SCRIPT_DIR/.venv'" \
-    >/dev/null 2>&1 || true
+    "$IMAGE_NAME" \
+    -c "[ -x '$SCRIPT_DIR/.venv/bin/python3' ] || chown agent '$SCRIPT_DIR/.venv'" \
+    >/dev/null \
+    || echo "Warning: kit-venv ownership prep failed — a fresh volume may hit 'Permission denied' in venv-sync." >&2
 
 # --- Volume mounts ---
 # Mount the kit root at its own absolute path so the runtime works wherever it

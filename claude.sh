@@ -182,6 +182,19 @@ fi
 
 IMAGE_NAME="${IMAGE_NAME:-claude-multiplai:local}"
 
+# Per-runtime venv volume. Derived from this kit checkout's path so parallel
+# runtimes (e.g. ~/.multiplai-runtimes/{default,test-x}) never share one —
+# a shared volume is broken by construction: the venv bakes in absolute
+# paths, and the volume mounts at a different $SCRIPT_DIR per runtime.
+# basename for readability + path checksum for uniqueness; override with
+# KIT_VENV_VOLUME in .env. NOTE for pre-existing installs: the name changes
+# from the old literal 'kit-venv', so the first launch re-syncs the venv
+# into a fresh volume (a few minutes, self-healing); set
+# KIT_VENV_VOLUME=kit-venv to keep the old volume instead.
+_VOL_SUFFIX=$(basename "$SCRIPT_DIR" | tr -c 'a-zA-Z0-9_.-' '-' | sed 's/-*$//')
+_VOL_HASH=$(printf '%s' "$SCRIPT_DIR" | cksum | cut -d' ' -f1)
+KIT_VENV_VOLUME="${KIT_VENV_VOLUME:-kit-venv-${_VOL_SUFFIX}-${_VOL_HASH}}"
+
 # Verify image exists
 if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     echo "Error: Docker image '$IMAGE_NAME' not found."
@@ -208,24 +221,33 @@ fi
 # New Docker named volumes are root-owned. The venv-sync entrypoint runs as
 # the agent user and can't create the venv on a fresh volume. Fix ownership
 # once (no-op when venv already exists — just a stat check inside the container).
+#
+# --entrypoint is REQUIRED: without it, `bash -c` becomes arguments to the
+# image's venv-sync entrypoint, which exits at once (CLAUDE_MULTIPLAI_HOME
+# unset in this bare run) and the chown never executes — leaving every FRESH
+# volume root-owned and the first launch failing with EACCES in venv-sync.
+# chown by container user name (`agent`, no group — the image has no `agent`
+# group; primary group is the build-time GID) rather than host `id -u`.
 docker run --rm \
-    -v "kit-venv:$SCRIPT_DIR/.venv" \
+    --entrypoint bash \
+    -v "$KIT_VENV_VOLUME:$SCRIPT_DIR/.venv" \
     --user root \
-    "$IMAGE_NAME" bash -c \
-    "[ -x '$SCRIPT_DIR/.venv/bin/python3' ] || chown $(id -u):$(id -g) '$SCRIPT_DIR/.venv'" \
-    >/dev/null 2>&1 || true
+    "$IMAGE_NAME" \
+    -c "[ -x '$SCRIPT_DIR/.venv/bin/python3' ] || chown agent '$SCRIPT_DIR/.venv'" \
+    >/dev/null \
+    || echo "Warning: venv volume ($KIT_VENV_VOLUME) ownership prep failed — a fresh volume may hit 'Permission denied' in venv-sync." >&2
 
 # --- Volume mounts ---
 # Mount the kit root at its own absolute path so the runtime works wherever it
 # lives — inside the workspace (legacy) or a separate dir outside it. Without
 # this, a runtime outside $WORKSPACE loses kit-root files (notably multiplai.conf,
 # read in-container by run-hook-python/log_utils) because only dotfiles/ + the
-# venv were mounted. The kit-venv named volume shadows $SCRIPT_DIR/.venv; the
+# venv were mounted. The per-runtime venv volume shadows $SCRIPT_DIR/.venv; the
 # $WORKSPACE and $DOTFILES_DIR binds are harmless no-ops when nested under the kit.
 MOUNTS=(
     -v "$SCRIPT_DIR:$SCRIPT_DIR"
     -v "$WORKSPACE:$WORKSPACE"
-    -v "kit-venv:$SCRIPT_DIR/.venv"
+    -v "$KIT_VENV_VOLUME:$SCRIPT_DIR/.venv"
     -v "$DOTFILES_DIR:$DOTFILES_DIR"
 )
 

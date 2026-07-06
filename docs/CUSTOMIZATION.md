@@ -10,8 +10,8 @@ Your memory files live under `$WORKSPACE/.multiplai/memory/` (also reachable via
 
 Add new memory files for any topic Claude should remember across sessions (career history, project context, writing style, etc.).
 
-Routing and catalog generation are handled by the **`multiplai-context` plugin** — you don't run a generator by hand. After adding or restructuring memory files, refresh the catalogs with:
-```bash
+Routing and catalog generation are handled by the **`multiplai-context` plugin** — you don't run a generator by hand. After adding or restructuring memory files, refresh the catalogs by running this slash command inside Claude Code:
+```
 /multiplai-context:refresh-catalogs
 ```
 

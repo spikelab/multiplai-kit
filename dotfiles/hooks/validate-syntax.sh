@@ -8,12 +8,25 @@
 
 set -euo pipefail
 
+# Resolve Python via the kit venv (where pyyaml is installed by setup.sh),
+# falling back to system python3 — same resolution as run-hook-python.
+# System python3 typically lacks pyyaml, so without this the YAML branch
+# below would silently skip (the `import yaml` guard fails).
+CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+MULTIPLAI_HOME="${CLAUDE_MULTIPLAI_HOME:-$(dirname "$CONFIG_DIR")}"
+VENV_PYTHON="$MULTIPLAI_HOME/.venv/bin/python"
+if [ -x "$VENV_PYTHON" ]; then
+    PY="$VENV_PYTHON"
+else
+    PY="python3"
+fi
+
 # Read hook input from stdin
 INPUT=$(cat)
 
 # Extract the file path from the hook input
 # PostToolUse provides tool_input which contains the file_path
-FILE_PATH=$(echo "$INPUT" | python3 -c "
+FILE_PATH=$(echo "$INPUT" | "$PY" -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
@@ -43,8 +56,8 @@ emit_error() {
 
 case "$EXT" in
     json)
-        if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$FILE_PATH" 2>/dev/null; then
-            ERROR=$(python3 -c '
+        if ! "$PY" -c 'import json,sys; json.load(open(sys.argv[1]))' "$FILE_PATH" 2>/dev/null; then
+            ERROR=$("$PY" -c '
 import json, sys
 try:
     json.load(open(sys.argv[1]))
@@ -56,9 +69,9 @@ except json.JSONDecodeError as e:
         ;;
     yaml|yml)
         # Validate YAML syntax (if pyyaml available)
-        if python3 -c "import yaml" 2>/dev/null; then
-            if ! python3 -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))' "$FILE_PATH" 2>/dev/null; then
-                ERROR=$(python3 -c '
+        if "$PY" -c "import yaml" 2>/dev/null; then
+            if ! "$PY" -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))' "$FILE_PATH" 2>/dev/null; then
+                ERROR=$("$PY" -c '
 import yaml, sys
 try:
     yaml.safe_load(open(sys.argv[1]))

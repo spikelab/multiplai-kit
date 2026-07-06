@@ -11,7 +11,7 @@ Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching 
 The kit is responsible for:
 - **Launcher** (`claude.sh`) — container/local/shell modes, git-identity profiles, GCP overlays.
 - **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely.
-- **Reference docs** (21) — prescriptive best-practice docs loaded per coding task.
+- **Reference docs** (20) — prescriptive best-practice docs loaded per coding task.
 - **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
 - **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
 
@@ -198,10 +198,10 @@ multiplai-kit/                          # = the "runtime" / kit repo
 │
 ├── dotfiles/              # = CLAUDE_CONFIG_DIR (Claude Code reads everything from here)
 │   ├── CLAUDE.md          # Global instructions (personalized by setup.sh)
-│   ├── settings.json      # Registers validate-syntax hook; pluginConfigs.multiplai; statusline; permissions
+│   ├── settings.json      # Registers validate-syntax hook; pluginConfigs["multiplai-context@multiplai"]; statusline; permissions
 │   ├── hooks/             # validate-syntax.sh, run-hook-python, model_resolver.py, log_utils.py
 │   ├── skills/            # Your own local skills (the skill library ships as marketplace plugins)
-│   ├── reference/dev/     # 21 best-practice docs
+│   ├── reference/dev/     # 20 best-practice docs (+ README index)
 │   ├── scripts/           # statusline.sh, file-suggestion.sh
 │   ├── output-styles/     # Output formatting
 │   ├── templates/         # Project templates
@@ -316,7 +316,7 @@ Memory files are the one thing worth version-controlling. The plugin's `/multipl
 
 ### Plugin Configuration
 
-Set via `settings.json → pluginConfigs.multiplai.options` (and/or forwarded `CLAUDE_PLUGIN_OPTION_*` env vars). The options you'll actually touch:
+Set via `settings.json → pluginConfigs["multiplai-context@multiplai"].options` (and/or forwarded `CLAUDE_PLUGIN_OPTION_*` env vars). The options you'll actually touch:
 
 | Option | Default | Purpose |
 |--------|---------|---------|

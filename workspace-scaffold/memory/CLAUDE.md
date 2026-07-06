@@ -11,9 +11,9 @@ This directory contains Claude's persistent context about you. Each file serves 
 
 ## Adding Memory Files
 
-Add new `.md` files here for any topic Claude should remember across sessions. After adding or restructuring files, refresh the catalogs:
+Add new `.md` files here for any topic Claude should remember across sessions. After adding or restructuring files, refresh the catalogs by running this slash command inside Claude Code:
 
-```bash
+```
 /multiplai-context:refresh-catalogs
 ```
 

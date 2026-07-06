@@ -6,6 +6,9 @@
 # Kit hook
 pyyaml                  # JSON/YAML validation in validate-syntax.sh
 
+# Eval suite (see evals/README.md — `python -m pytest evals/`)
+pytest
+
 # Model access for the plugin skills (host-injected inside Claude Code; pinned
 # here so the skills also run from the plain venv)
 claude-agent-sdk

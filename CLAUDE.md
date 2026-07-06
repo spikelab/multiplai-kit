@@ -138,7 +138,7 @@ Run the kit's unit tests after any change to live kit code:
 
 | File | Purpose |
 |------|---------|
-| `dotfiles/settings.json` | Registers the `validate-syntax` hook; `pluginConfigs.multiplai`; statusline; permissions |
+| `dotfiles/settings.json` | Registers the `validate-syntax` hook; `pluginConfigs["multiplai-context@multiplai"]`; statusline; permissions |
 | `multiplai.conf` | Kit config (model/effort ceiling, per-skill overrides) — at project root, NOT in dotfiles/ |
 | `dotfiles/hooks/validate-syntax.sh` | The one runtime hook still registered (PostToolUse Write\|Edit) |
 | `dotfiles/hooks/model_resolver.py` | Model-ceiling logic for in-tree skills |

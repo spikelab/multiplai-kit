@@ -24,13 +24,22 @@ fi
 source "$ENV_FILE"
 
 # Expand ~ and $HOME in WORKSPACE, strip trailing slash
-WORKSPACE=$(eval echo "$WORKSPACE")
+WORKSPACE=$(eval echo "${WORKSPACE:-}")
 WORKSPACE="${WORKSPACE%/}"
 
 if [ -z "${WORKSPACE:-}" ]; then
   echo "Error: WORKSPACE not set in .env"
   exit 1
 fi
+
+# Catch the shipped placeholder before mkdir fails with a raw permission error.
+case "$WORKSPACE" in
+  */youruser/*|/Users/youruser*)
+    echo "Error: WORKSPACE still points at the placeholder ($WORKSPACE)."
+    echo "  Edit WORKSPACE in .env to your real workspace path first."
+    exit 1
+    ;;
+esac
 
 if [ -z "${GIT_AUTHOR_NAME:-}" ]; then
   echo "Error: GIT_AUTHOR_NAME not set in .env"
@@ -196,8 +205,14 @@ mkdir -p "$SCRIPT_DIR/runtime/logs/state"
 
 # Create symlink: dotfiles/memory/ → $WORKSPACE/.multiplai/memory/
 # (compat shim for docs/skills that reference $CLAUDE_CONFIG_DIR/memory/)
-if [ -L "$DOTFILES_DIR/memory" ] || [ -e "$DOTFILES_DIR/memory" ]; then
-  rm -rf "$DOTFILES_DIR/memory"
+# Migration-safe (same idea as the cc-state links below): a stale symlink is
+# dropped, but a REAL directory from an older install is MOVED aside rather
+# than rm -rf'd — it may hold the user's memory files.
+if [ -L "$DOTFILES_DIR/memory" ]; then
+  rm -f "$DOTFILES_DIR/memory"
+elif [ -e "$DOTFILES_DIR/memory" ]; then
+  mv "$DOTFILES_DIR/memory" "$DOTFILES_DIR/memory.pre-link-backup"
+  echo "  Note: moved existing dotfiles/memory → dotfiles/memory.pre-link-backup"
 fi
 ln -s "$MEMORY_DIR" "$DOTFILES_DIR/memory"
 echo "  Linked dotfiles/memory → $MEMORY_DIR"
@@ -339,7 +354,12 @@ if $HAS_DOCKER; then
     echo "  NOTE: container/ exists but is not a git checkout — leaving as-is."
     echo "  For managed updates: rm -rf container && re-run setup.sh"
   fi
-  if [ -f "$SCRIPT_DIR/container/build.sh" ] && bash "$SCRIPT_DIR/container/build.sh"; then
+  if [ ! -f "$SCRIPT_DIR/container/build.sh" ]; then
+    # The clone/fetch above failed — there's nothing to build. Don't mislead
+    # the user into debugging a "build failure" that never started.
+    echo "  WARNING: container tooling not present (fetch failed above). Container mode disabled."
+    echo "  Fetch manually: git clone $CONTAINER_REPO container   # then re-run ./setup.sh"
+  elif bash "$SCRIPT_DIR/container/build.sh"; then
     echo "  Image built successfully."
   else
     echo "  WARNING: Docker build failed. Container mode will not work."

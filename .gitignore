@@ -33,7 +33,6 @@ dotfiles/shell-snapshots/
 dotfiles/telemetry/
 dotfiles/todos/
 dotfiles/history.jsonl
-dotfiles/context-router-*.log
 dotfiles/memory-error.log
 dotfiles/file-history/
 dotfiles/paste-cache/
@@ -51,13 +50,6 @@ dotfiles/.last-update-result.json
 dotfiles/hook-sessions/
 dotfiles/session-env/
 
-# Eval runtime artifacts (results change per run, scores tracked separately)
-evals/scores.jsonl
-evals/eval/**/commit-msg-results.json
-evals/eval/**/mechanism-results.json
-evals/eval/**/trigger-results.json
-evals/eval/**/capture-results.json
-
 # Container
 container/.env
 
@@ -71,6 +63,10 @@ captainslog/
 
 # Local-only skills authored under dotfiles/skills/ are per-user; ignore any
 # that a given machine adds beyond the shipped README.
+dotfiles/skills/*
+!dotfiles/skills/README.md
+
+# BuildMe/OpenSpec change proposals (per-project working state, not shipped)
 specs/
 
 # Container tooling — fetched from spikelab/multiplai-container by setup.sh

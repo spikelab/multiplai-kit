@@ -38,6 +38,7 @@ CLAUDE_ONLY_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --profile)
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
             PROFILE="$2"
             shift 2
             ;;
@@ -46,6 +47,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --gcp)
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
             GCP_NAME="$2"
             shift 2
             ;;
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --plugin-dir|--add-dir)
             # claude-only flags: must not leak into `bash` in --shell mode
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
             CLAUDE_ONLY_ARGS+=("$1" "$2")
             shift 2
             ;;
@@ -327,7 +330,11 @@ CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
 WORKDIR_ARG="$WORKSPACE"
 case "$PWD/" in "$WORKSPACE/"*) WORKDIR_ARG="$PWD" ;; esac
 
-docker run --rm -it \
+# Allocate a TTY only when stdin is one — `docker run -it` fails with
+# "the input device is not a TTY" under pipes/CI/non-interactive shells.
+if [ -t 0 ]; then TTY_ARGS=(-it); else TTY_ARGS=(-i); fi
+
+docker run --rm "${TTY_ARGS[@]}" \
     --name "$CONTAINER_NAME" \
     --hostname "$CONTAINER_NAME" \
     --workdir "$WORKDIR_ARG" \

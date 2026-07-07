@@ -157,6 +157,9 @@ ERROR: FAIL reason=SDK timeout after 30s
   on the first write of a new UTC day
 - A directory-wide sweep prunes dated logs older than
   `MULTIPLAI_LOG_RETENTION_DAYS` (default 7)
-- **Append-only logs** (`hook-errors.log`) are truncated when oversized
+- **Append-only logs** (`hook-errors.log`) are truncated to their most
+  recent ~50KB tail once they exceed 100KB. Enforced by `setup_logging()`
+  in `log_utils` (both the kit's `dotfiles/hooks/log_utils.py` and
+  `multiplai_core.log_utils`) before the error handler binds
 - **Session state files** are cleaned up by the `multiplai-context` plugin's
   lifecycle hooks

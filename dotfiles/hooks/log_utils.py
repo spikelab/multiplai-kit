@@ -33,6 +33,35 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 # Default retention — overridden by MULTIPLAI_LOG_RETENTION_DAYS in multiplai.conf
 _DEFAULT_RETENTION_DAYS = 7
 
+# Oversize ceiling for append-only logs (hook-errors.log), per the logging
+# standard: "truncated to ~100KB when oversized".
+_ERROR_LOG_MAX_BYTES = 100 * 1024
+
+
+def _truncate_oversized(path: Path, max_bytes: int = _ERROR_LOG_MAX_BYTES) -> None:
+    """Truncate an append-only log to its most recent tail when oversized.
+
+    Keeps roughly half of *max_bytes* so truncation runs infrequently.
+    Rewrites in place (same inode) so concurrent O_APPEND writers keep
+    working; a few lines may interleave during the rewrite — acceptable
+    for a best-effort error sink. Never raises.
+    """
+    try:
+        if not path.exists() or path.stat().st_size <= max_bytes:
+            return
+        keep = max_bytes // 2
+        with path.open("r+b") as f:
+            f.seek(-keep, os.SEEK_END)
+            tail = f.read()
+            nl = tail.find(b"\n")
+            if nl != -1:
+                tail = tail[nl + 1:]
+            f.seek(0)
+            f.write(b"[truncated: exceeded %d bytes]\n" % max_bytes + tail)
+            f.truncate()
+    except OSError:
+        pass
+
 
 def _get_retention_days() -> int:
     """Read log retention from multiplai.conf. 0 = keep forever. Default 7."""
@@ -194,7 +223,10 @@ def setup_logging(
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    # Error handler — also write ERROR+ to shared hook-errors.log
+    # Error handler — also write ERROR+ to shared hook-errors.log.
+    # Enforce the oversize ceiling before binding — nothing else ever
+    # truncates this file.
+    _truncate_oversized(log_dir / "hook-errors.log")
     err_handler = logging.FileHandler(log_dir / "hook-errors.log")
     err_handler.setLevel(logging.ERROR)
     err_handler.setFormatter(formatter)

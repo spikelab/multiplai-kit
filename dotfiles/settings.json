@@ -16,6 +16,16 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gh auth setup-git 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",

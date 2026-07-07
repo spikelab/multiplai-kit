@@ -75,6 +75,7 @@ If still unclear, ask the user.
 Your workspace root is defined in `$CLAUDE_CONFIG_DIR/.workspace`. If working inside it, read the `CLAUDE.md` at the workspace root for the full directory map, project registry (which projects have their own git/venv), routing rules, and key file locations. Use `git -C PROJECTS/<name>` for sub-projects with their own repos. Never `cd` into a sub-project — stay at root and use paths.
 
 # Tool usage
+- **Markdown → PDF: `md2pdf file.md`** (wraps `pandoc --pdf-engine=typst`; both baked into the container image as static binaries). Handles GFM tables and highlighted code out of the box. NEVER install weasyprint, LaTeX, md-to-pdf, or other converters — and never run bare `pandoc -o x.pdf` (defaults to pdflatex, which is not installed). Extra pandoc flags pass through: `md2pdf in.md out.pdf --toc`.
 - NEVER use Bash commands for file operations. Use the dedicated tools:
   - Use Grep tool for searching file contents (NOT `grep` or `rg` via Bash)
   - Use Glob tool for finding files by pattern (NOT `find` or `ls` via Bash)

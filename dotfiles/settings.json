@@ -45,7 +45,8 @@
     "padding": 0
   },
   "enabledPlugins": {
-    "pyright-lsp@claude-plugins-official": true
+    "pyright-lsp@claude-plugins-official": true,
+    "multiplai-context@multiplai": true
   },
   "spinnerTipsEnabled": false,
   "alwaysThinkingEnabled": true,

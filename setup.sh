@@ -245,9 +245,13 @@ link_cc_state todos
 link_cc_state history.jsonl file
 echo "  Linked sessions/history/todos → $CC_STATE_DIR"
 
-# Never commit session transcripts to the workspace repo (bulky + may hold PII).
+# Never commit session transcripts or skill runtime state to the workspace repo
+# (bulky + may hold PII / message content / tokens). The data bucket also
+# self-protects — multiplai-core drops a `*` .gitignore at .multiplai/data/ on
+# first use — but add a workspace-level rule too (belt and braces).
 WS_GITIGNORE="$WORKSPACE/.gitignore"
 grep -qxF ".multiplai/cc-state/" "$WS_GITIGNORE" 2>/dev/null || echo ".multiplai/cc-state/" >> "$WS_GITIGNORE"
+grep -qxF ".multiplai/data/" "$WS_GITIGNORE" 2>/dev/null || echo ".multiplai/data/" >> "$WS_GITIGNORE"
 
 # --- Step 6: Seed .claude.json (onboarding state) ---
 STEP=$((STEP + 1))

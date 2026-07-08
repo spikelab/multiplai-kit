@@ -87,8 +87,16 @@ if [ ! -f "$SCRIPT_DIR/.env" ]; then
     exit 1
 fi
 
+# Export everything sourced from the user env files (`set -a`) so it reaches
+# the exec'd `claude` and its child skill scripts in bare/--local modes, which
+# run on the host with NO container `-e` forwarding. Previously only vars named
+# explicitly below were forwarded (container only); a plain `source` leaves the
+# rest as un-exported shell vars, invisible to skills in --local. .env / profile
+# / gcp overlays are user config by definition — all meant to become environment.
 # shellcheck disable=SC1091
+set -a
 source "$SCRIPT_DIR/.env"
+set +a
 
 # --- Load profile overlay (if specified) ---
 if [ -n "$PROFILE" ]; then
@@ -103,7 +111,9 @@ if [ -n "$PROFILE" ]; then
         exit 1
     fi
     # shellcheck disable=SC1090
+    set -a
     source "$PROFILE_FILE"
+    set +a
     echo "[claude] Profile: $PROFILE"
 fi
 
@@ -117,7 +127,9 @@ if [ -n "$GCP_NAME" ]; then
         exit 1
     fi
     # shellcheck disable=SC1090
+    set -a
     source "$GCP_FILE"
+    set +a
     echo "[claude] GCP: $GCP_NAME"
 fi
 
@@ -309,10 +321,6 @@ ENV_ARGS=(
     -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-}}"
     -e TERM
     -e GH_TOKEN="${GH_TOKEN:-}"
-    -e SLACK_TOKEN="${SLACK_TOKEN:-}"
-    -e GMAIL_CLIENT_ID="${GMAIL_CLIENT_ID:-}"
-    -e GMAIL_CLIENT_SECRET="${GMAIL_CLIENT_SECRET:-}"
-    -e GMAIL_REFRESH_TOKEN="${GMAIL_REFRESH_TOKEN:-}"
     -e SSH_BUILD_USER="${SSH_BUILD_USER:-}"
     -e WORKSPACE="$WORKSPACE"
     -e HOST_HOME="$HOME"
@@ -324,6 +332,13 @@ ENV_ARGS=(
     # from pre-fix images are covered without a rebuild.
     -e DISABLE_AUTOUPDATER=1
 )
+
+# Messaging plugin (multiplai-messaging) credentials — one allowlist to extend
+# for the next plugin, instead of hand-enumerating an -e line per var. `-e
+# NAME=VALUE` (indirect ${!v}) forwards each, empty when unset.
+for v in SLACK_TOKEN GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET GMAIL_REFRESH_TOKEN GMAIL_TOKEN_URI GMAIL_TOKEN_FILE; do
+    ENV_ARGS+=(-e "$v=${!v:-}")
+done
 
 # Forward any CLAUDE_PLUGIN_OPTION_* vars set by the caller into the container.
 # Sideloaded (--plugin-dir) plugins don't get pluginConfigs applied, so their

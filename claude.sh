@@ -290,6 +290,11 @@ elif [ -n "${GCP_NAME:-}" ]; then
     exit 1
 fi
 
+# Gmail (multiplai-messaging skill): credential is three env vars from .env,
+# forwarded below like SLACK_TOKEN — GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET /
+# GMAIL_REFRESH_TOKEN (minted once on the host by the skill's get_token.py).
+# No mount, no token file. (A JSON file via GMAIL_TOKEN_FILE is an optional fallback.)
+
 # Optional: SSH agent forwarding
 SSH_MOUNT=()
 if [ -n "${SSH_AUTH_SOCK:-}" ]; then
@@ -304,6 +309,10 @@ ENV_ARGS=(
     -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-}}"
     -e TERM
     -e GH_TOKEN="${GH_TOKEN:-}"
+    -e SLACK_TOKEN="${SLACK_TOKEN:-}"
+    -e GMAIL_CLIENT_ID="${GMAIL_CLIENT_ID:-}"
+    -e GMAIL_CLIENT_SECRET="${GMAIL_CLIENT_SECRET:-}"
+    -e GMAIL_REFRESH_TOKEN="${GMAIL_REFRESH_TOKEN:-}"
     -e SSH_BUILD_USER="${SSH_BUILD_USER:-}"
     -e WORKSPACE="$WORKSPACE"
     -e HOST_HOME="$HOME"

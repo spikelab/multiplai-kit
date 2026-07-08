@@ -5,8 +5,7 @@
     "BASH_DEFAULT_TIMEOUT_MS": "30000",
     "BASH_MAX_OUTPUT_LENGTH": "150000",
     "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "100000",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "90"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75"
   },
   "permissions": {
     "allowedTools": [
@@ -16,7 +15,6 @@
       "WebSearch"
     ]
   },
-  "model": "opus[1m]",
   "hooks": {
     "SessionStart": [
       {
@@ -47,23 +45,7 @@
     "padding": 0
   },
   "enabledPlugins": {
-    "pyright-lsp@claude-plugins-official": true,
-    "multiplai-context@multiplai": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "multiplai-dev@multiplai": true,
-    "multiplai-media@multiplai": true,
-    "multiplai-pm@multiplai": true,
-    "multiplai-research@multiplai": true,
-    "multiplai-writing@multiplai": true
-  },
-  "extraKnownMarketplaces": {
-    "multiplai": {
-      "source": {
-        "source": "github",
-        "repo": "spikelab/multiplai-cc-mktplace"
-      },
-      "autoUpdate": true
-    }
+    "pyright-lsp@claude-plugins-official": true
   },
   "spinnerTipsEnabled": false,
   "alwaysThinkingEnabled": true,
@@ -71,15 +53,13 @@
   "pluginConfigs": {
     "multiplai-context@multiplai": {
       "options": {
-        "workspace_dir": "/Users/spike/Documents/knowhere",
+        "workspace_dir": "",
         "enable_skills": true,
-        "skills_dir": "/Users/spike/.multiplai-runtimes/default/dotfiles/skills",
-        "enable_resources": true,
-        "resources_dir": "/Users/spike/Documents/knowhere/RESOURCES",
-        "memory_router": "llm",
-        "router_model": "claude-haiku-4-5",
-        "resources_retrieval": "qmd",
-        "qmd_mode": "ssh"
+        "skills_dir": "",
+        "enable_resources": false,
+        "resources_dir": "",
+        "memory_router": "token_overlap",
+        "router_model": "claude-haiku-4-5"
       }
     }
   },

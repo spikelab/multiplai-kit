@@ -361,19 +361,6 @@ if [ -n "${GCP_KEY_FILE:-}" ] && [ -f "$GCP_KEY_FILE" ]; then
     [ -n "${GCP_PROJECT:-}" ] && ENV_ARGS+=(-e CLOUDSDK_CORE_PROJECT="$GCP_PROJECT")
 fi
 
-# Container name — used by OrbStack for DNS (<name>.orb.local).
-# All container ports are reachable from macOS at that hostname, no -p mapping needed.
-# Each instance gets a unique suffix so multiple containers don't clash.
-SUFFIX=$(date +%d%H%M%S)
-CONTAINER_NAME="claude"
-if [ -n "$PROFILE" ]; then
-    CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE}"
-fi
-if [ -n "$GCP_NAME" ]; then
-    CONTAINER_NAME="${CONTAINER_NAME}-gcp${GCP_NAME}"
-fi
-CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
-
 # Propagate the launcher's cwd into the container so `./claude.sh <subproject>`
 # lands in the subproject. The whole workspace is bind-mounted at the same path,
 # so $PWD is valid inside the container as long as it's under $WORKSPACE.
@@ -385,13 +372,80 @@ case "$PWD/" in "$WORKSPACE/"*) WORKDIR_ARG="$PWD" ;; esac
 # "the input device is not a TTY" under pipes/CI/non-interactive shells.
 if [ -t 0 ]; then TTY_ARGS=(-it); else TTY_ARGS=(-i); fi
 
-docker run --rm "${TTY_ARGS[@]}" \
-    --name "$CONTAINER_NAME" \
-    --hostname "$CONTAINER_NAME" \
-    --workdir "$WORKDIR_ARG" \
-    "${MOUNTS[@]}" \
-    "${SSH_MOUNT[@]+"${SSH_MOUNT[@]}"}" \
-    "${ENV_ARGS[@]}" \
-    --cap-drop=ALL \
-    --security-opt=no-new-privileges \
-    "$IMAGE_NAME" "${CONTAINER_ARGS[@]}" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+# --- Run, with the hub adoption take-back loop ---
+# The multiplai hub (multiplai-gui) can adopt a terminal-born session: it
+# writes <sid>.adopt beside the session registry entry the multiplai-context
+# hooks maintain under $WORKSPACE/.multiplai/data/sessions/ (the entry's
+# hostname equals this container's name — that is the sid discovery key).
+# When claude exits and a marker addressed at this container exists, offer to
+# take the session back: ask the hub to release the driver seat, delete the
+# marker, and relaunch with `claude --resume <sid>`. With no marker (no hub,
+# plugin absent, plain exit) this is a single pass that ends with the docker
+# run's own exit status — the flow is unchanged.
+SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"
+RESUME_ARGS=()
+DOCKER_STATUS=0
+while :; do
+    # Container name — used by OrbStack for DNS (<name>.orb.local).
+    # All container ports are reachable from macOS at that hostname, no -p
+    # mapping needed. Each instance gets a unique suffix so multiple
+    # containers don't clash; recomputed per pass so a take-back relaunch
+    # never races the previous container's --rm cleanup over the name.
+    SUFFIX=$(date +%d%H%M%S)
+    CONTAINER_NAME="claude"
+    if [ -n "$PROFILE" ]; then
+        CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE}"
+    fi
+    if [ -n "$GCP_NAME" ]; then
+        CONTAINER_NAME="${CONTAINER_NAME}-gcp${GCP_NAME}"
+    fi
+    CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
+
+    DOCKER_STATUS=0
+    docker run --rm "${TTY_ARGS[@]}" \
+        --name "$CONTAINER_NAME" \
+        --hostname "$CONTAINER_NAME" \
+        --workdir "$WORKDIR_ARG" \
+        "${MOUNTS[@]}" \
+        "${SSH_MOUNT[@]+"${SSH_MOUNT[@]}"}" \
+        "${ENV_ARGS[@]}" \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        "$IMAGE_NAME" "${CONTAINER_ARGS[@]}" \
+        "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}" \
+        "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" \
+        || DOCKER_STATUS=$?
+
+    # Shell mode runs bash — there is no claude session to adopt.
+    [[ "$MODE" == "shell" ]] && break
+
+    # Map this container back to its session via the registry, then look for
+    # an adoption marker. Every step is best-effort: no registry (plugin not
+    # installed), no entry, or no marker all mean "normal exit".
+    ENTRY=$(grep -ls "\"hostname\": \"$CONTAINER_NAME\"" "$SESSIONS_DIR"/*.json 2>/dev/null | head -n 1) || true
+    [ -n "$ENTRY" ] || break
+    SID=$(basename "$ENTRY" .json)
+    MARKER="$SESSIONS_DIR/$SID.adopt"
+    [ -f "$MARKER" ] || break
+
+    echo "Session adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
+    read -r || break
+
+    # Ask the hub to release the driver seat. Best-effort — a dead or
+    # unreachable hub must not block the terminal from resuming its own
+    # session (the hub's SDK client is gone with the hub anyway).
+    # Env (.env is exported above) wins over multiplai.conf; the conf is
+    # parsed KEY=value (grep, not source) because it contains INI sections.
+    HUB_URL="${MULTIPLAI_HUB_URL:-$(sed -n 's/^MULTIPLAI_HUB_URL=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    HUB_TOKEN="${MULTIPLAI_HUB_TOKEN:-$(sed -n 's/^MULTIPLAI_HUB_TOKEN=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    if [ -n "$HUB_URL" ]; then
+        HUB_AUTH_ARGS=()
+        [ -n "$HUB_TOKEN" ] && HUB_AUTH_ARGS=(-H "Authorization: Bearer $HUB_TOKEN")
+        curl -fsS -m 5 -X POST "${HUB_URL%/}/v1/sessions/$SID/release" \
+            "${HUB_AUTH_ARGS[@]+"${HUB_AUTH_ARGS[@]}"}" \
+            >/dev/null 2>&1 || true
+    fi
+    rm -f "$MARKER"
+    RESUME_ARGS=(--resume "$SID")
+done
+exit "$DOCKER_STATUS"

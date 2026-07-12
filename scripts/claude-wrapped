@@ -1,0 +1,79 @@
+#!/bin/bash
+# claude-wrapped — host-run claude with the hub adoption take-back loop
+#
+# No-Docker parity for the loop in claude.sh: runs `claude "$@"` on the host,
+# and when the multiplai hub (multiplai-gui) adopted the session while it ran,
+# offers to take it back (release the hub driver, delete the marker, relaunch
+# with `claude --resume <sid>`).
+#
+# Host adoption is COOPERATIVE: without a container there is nothing for the
+# hub to kill, so it can only adopt a host session that is idle or ended —
+# in practice, after you exit claude. This wrapper is the take-back half of
+# that handshake. The multiplai-context plugin's hooks write the session
+# registry either way (hostname = machine name on the host).
+#
+# Usage: scripts/claude-wrapped [claude args...]
+#   e.g. alias claude-w="$HOME/multiplai-kit/scripts/claude-wrapped"
+#
+# Sid discovery differs from claude.sh: every host session shares one
+# hostname, so the container-name key is ambiguous here. Instead, look for
+# adoption markers whose registry entry carries our hostname, newest entry
+# first — the session that just ended is the most recently updated one.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# WORKSPACE: environment wins; else load the kit .env like claude.sh does.
+if [ -z "${WORKSPACE:-}" ] && [ -f "$SCRIPT_DIR/.env" ]; then
+    # shellcheck disable=SC1091
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+WORKSPACE=$(eval echo "${WORKSPACE:-}")
+WORKSPACE="${WORKSPACE%/}"
+
+SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"
+HOST_NAME="${HOSTNAME:-$(hostname)}"
+
+RESUME_ARGS=()
+CLAUDE_STATUS=0
+while :; do
+    CLAUDE_STATUS=0
+    claude "$@" "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" || CLAUDE_STATUS=$?
+
+    [ -n "$WORKSPACE" ] || break
+
+    # Adoption markers addressed at a session of THIS host, newest registry
+    # entry first. Best-effort at every step: no registry (plugin not
+    # installed), no match, or no marker all mean "normal exit".
+    SID=""
+    while IFS= read -r ENTRY; do
+        grep -qs "\"hostname\": \"$HOST_NAME\"" "$ENTRY" || continue
+        CAND=$(basename "$ENTRY" .json)
+        if [ -f "$SESSIONS_DIR/$CAND.adopt" ]; then
+            SID="$CAND"
+            break
+        fi
+    done < <(ls -t "$SESSIONS_DIR"/*.json 2>/dev/null || true)
+    [ -n "$SID" ] || break
+    MARKER="$SESSIONS_DIR/$SID.adopt"
+
+    echo "Session adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
+    read -r || break
+
+    # Ask the hub to release the driver seat — best-effort, like claude.sh.
+    HUB_URL="${MULTIPLAI_HUB_URL:-$(sed -n 's/^MULTIPLAI_HUB_URL=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    HUB_TOKEN="${MULTIPLAI_HUB_TOKEN:-$(sed -n 's/^MULTIPLAI_HUB_TOKEN=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    if [ -n "$HUB_URL" ]; then
+        HUB_AUTH_ARGS=()
+        [ -n "$HUB_TOKEN" ] && HUB_AUTH_ARGS=(-H "Authorization: Bearer $HUB_TOKEN")
+        curl -fsS -m 5 -X POST "${HUB_URL%/}/v1/sessions/$SID/release" \
+            "${HUB_AUTH_ARGS[@]+"${HUB_AUTH_ARGS[@]}"}" \
+            >/dev/null 2>&1 || true
+    fi
+    rm -f "$MARKER"
+    RESUME_ARGS=(--resume "$SID")
+done
+exit "$CLAUDE_STATUS"

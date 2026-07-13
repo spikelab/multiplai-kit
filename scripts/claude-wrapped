@@ -35,12 +35,20 @@ export CLAUDE_MULTIPLAI_HOME="$SCRIPT_DIR"
 # Same MCP isolation as every claude.sh mode — see claude.sh for rationale.
 MCP_ISOLATION=(--strict-mcp-config)
 
-# WORKSPACE: environment wins; else load the kit .env like claude.sh does.
-if [ -z "${WORKSPACE:-}" ] && [ -f "$SCRIPT_DIR/.env" ]; then
+# Always load the kit .env (like claude.sh does) — it carries WORKSPACE
+# *and* MULTIPLAI_HUB_URL/TOKEN. Gating the source on WORKSPACE being unset
+# meant a profile-exported WORKSPACE silently dropped the hub credentials
+# and the release POST was skipped. Shell env still wins: snapshot the
+# caller's exported vars and re-apply them after sourcing.
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    # (filter bash's readonly specials — re-declaring them would error)
+    _PRE_ENV=$(export -p | grep -vE '^declare -x (SHELLOPTS|BASHOPTS|BASH_VERSINFO|UID|EUID|PPID)($|=)' || true)
     # shellcheck disable=SC1091
     set -a
     source "$SCRIPT_DIR/.env"
     set +a
+    eval "$_PRE_ENV"
+    unset _PRE_ENV
 fi
 WORKSPACE=$(eval echo "${WORKSPACE:-}")
 WORKSPACE="${WORKSPACE%/}"

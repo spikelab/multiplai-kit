@@ -361,19 +361,6 @@ if [ -n "${GCP_KEY_FILE:-}" ] && [ -f "$GCP_KEY_FILE" ]; then
     [ -n "${GCP_PROJECT:-}" ] && ENV_ARGS+=(-e CLOUDSDK_CORE_PROJECT="$GCP_PROJECT")
 fi
 
-# Container name — used by OrbStack for DNS (<name>.orb.local).
-# All container ports are reachable from macOS at that hostname, no -p mapping needed.
-# Each instance gets a unique suffix so multiple containers don't clash.
-SUFFIX=$(date +%d%H%M%S)
-CONTAINER_NAME="claude"
-if [ -n "$PROFILE" ]; then
-    CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE}"
-fi
-if [ -n "$GCP_NAME" ]; then
-    CONTAINER_NAME="${CONTAINER_NAME}-gcp${GCP_NAME}"
-fi
-CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
-
 # Propagate the launcher's cwd into the container so `./claude.sh <subproject>`
 # lands in the subproject. The whole workspace is bind-mounted at the same path,
 # so $PWD is valid inside the container as long as it's under $WORKSPACE.
@@ -385,13 +372,157 @@ case "$PWD/" in "$WORKSPACE/"*) WORKDIR_ARG="$PWD" ;; esac
 # "the input device is not a TTY" under pipes/CI/non-interactive shells.
 if [ -t 0 ]; then TTY_ARGS=(-it); else TTY_ARGS=(-i); fi
 
-docker run --rm "${TTY_ARGS[@]}" \
-    --name "$CONTAINER_NAME" \
-    --hostname "$CONTAINER_NAME" \
-    --workdir "$WORKDIR_ARG" \
-    "${MOUNTS[@]}" \
-    "${SSH_MOUNT[@]+"${SSH_MOUNT[@]}"}" \
-    "${ENV_ARGS[@]}" \
-    --cap-drop=ALL \
-    --security-opt=no-new-privileges \
-    "$IMAGE_NAME" "${CONTAINER_ARGS[@]}" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+# --- Run, with the hub adoption take-back loop ---
+# The multiplai hub (multiplai-gui) can adopt a terminal-born session: it
+# writes <sid>.adopt beside the session registry entry the multiplai-context
+# hooks maintain under $WORKSPACE/.multiplai/data/sessions/ (the entry's
+# hostname equals this container's name — that is the sid discovery key).
+# When claude exits and a marker addressed at this container exists, offer to
+# take the session back: ask the hub to release the driver seat, delete the
+# marker, and relaunch with `claude --resume <sid>`. With no marker (no hub,
+# plugin absent, plain exit) this is a single pass that ends with the docker
+# run's own exit status — the flow is unchanged.
+SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"
+RESUME_ARGS=()
+DOCKER_STATUS=0
+while :; do
+    # Container name — used by OrbStack for DNS (<name>.orb.local).
+    # All container ports are reachable from macOS at that hostname, no -p
+    # mapping needed. Each instance gets a unique suffix so multiple
+    # containers don't clash; recomputed per pass so a take-back relaunch
+    # never races the previous container's --rm cleanup over the name.
+    SUFFIX=$(date +%d%H%M%S)
+    CONTAINER_NAME="claude"
+    if [ -n "$PROFILE" ]; then
+        CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE}"
+    fi
+    if [ -n "$GCP_NAME" ]; then
+        CONTAINER_NAME="${CONTAINER_NAME}-gcp${GCP_NAME}"
+    fi
+    CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
+
+    DOCKER_STATUS=0
+    docker run --rm "${TTY_ARGS[@]}" \
+        --name "$CONTAINER_NAME" \
+        --hostname "$CONTAINER_NAME" \
+        --workdir "$WORKDIR_ARG" \
+        "${MOUNTS[@]}" \
+        "${SSH_MOUNT[@]+"${SSH_MOUNT[@]}"}" \
+        "${ENV_ARGS[@]}" \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        "$IMAGE_NAME" "${CONTAINER_ARGS[@]}" \
+        "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}" \
+        "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" \
+        || DOCKER_STATUS=$?
+
+    # Shell mode runs bash — there is no claude session to adopt.
+    [[ "$MODE" == "shell" ]] && break
+
+    # Map this container back to its session via the registry, then look for
+    # an adoption marker. Every step is best-effort: no registry (plugin not
+    # installed), no entry, or no marker all mean "normal exit".
+    # Newest entry by mtime wins (the registry refreshes hostname on every
+    # event, so the just-ended session is the most recently updated match);
+    # the hostname match is whitespace-tolerant, not coupled to the plugin's
+    # JSON formatting. Registry filenames are UUIDs — no spaces to trip ls -t.
+    ENTRY=""
+    while IFS= read -r CAND_ENTRY; do
+        if command -v jq >/dev/null 2>&1; then
+            jq -e --arg h "$CONTAINER_NAME" '.hostname == $h' "$CAND_ENTRY" >/dev/null 2>&1 || continue
+        else
+            grep -qsE "\"hostname\"[[:space:]]*:[[:space:]]*\"$CONTAINER_NAME\"" "$CAND_ENTRY" || continue
+        fi
+        ENTRY="$CAND_ENTRY"
+        break
+    done < <(ls -t "$SESSIONS_DIR"/*.json 2>/dev/null || true)
+    [ -n "$ENTRY" ] || break
+    SID=$(basename "$ENTRY" .json)
+    # SID is a filename from a container-writable dir and is interpolated
+    # into the hub URL and `--resume` — accept only canonical UUIDs.
+    [[ "$SID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || break
+    MARKER="$SESSIONS_DIR/$SID.adopt"
+    [ -f "$MARKER" ] || break
+
+    # Non-interactive stdin (pipes, CI): a read here would swallow a line of
+    # piped input as "Enter" (unwanted release+resume) or block forever.
+    # Skip the take-back and leave the marker — the hub keeps the seat.
+    [ -t 0 ] || break
+
+    echo "Session $SID adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
+    # Ctrl-C here means "leave it with the hub" — trap INT so we fall through
+    # to `exit $DOCKER_STATUS` instead of dying with 130 and breaking the
+    # documented exit-status preservation. read returns >128 on the signal.
+    trap : INT
+    if ! read -r; then
+        trap - INT
+        echo ""
+        break
+    fi
+    trap - INT
+
+    # Ask the hub to release the driver seat — fail CLOSED. Resuming while
+    # the hub's SDK client still drives the session puts two drivers on one
+    # session. Proceed only when the release is confirmed (2xx), moot
+    # (404/409 — unknown / not driven), or the hub is provably dead
+    # (connection refused / unresolvable). Timeout, 5xx, auth failure, or a
+    # missing curl leave the marker in place and skip the resume.
+    # Env (.env is exported above) wins over multiplai.conf; the conf is
+    # parsed KEY=value (grep, not source) because it contains INI sections.
+    HUB_URL="${MULTIPLAI_HUB_URL:-$(sed -n 's/^MULTIPLAI_HUB_URL=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    HUB_TOKEN="${MULTIPLAI_HUB_TOKEN:-$(sed -n 's/^MULTIPLAI_HUB_TOKEN=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    RELEASED=""
+    if [ -z "$HUB_URL" ]; then
+        echo "No MULTIPLAI_HUB_URL configured — cannot ask the hub to release; leaving the session with the hub." >&2
+    elif ! command -v curl >/dev/null 2>&1; then
+        echo "curl not found — cannot ask the hub to release; leaving the session with the hub." >&2
+    else
+        # Token stays off argv (visible in ps) — the header arrives on stdin
+        # via `-H @-`. An empty herestring (no token) is a no-op for curl.
+        HUB_AUTH_HEADER=""
+        [ -n "$HUB_TOKEN" ] && HUB_AUTH_HEADER="Authorization: Bearer $HUB_TOKEN"
+        CURL_EXIT=0
+        HTTP_CODE=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
+            -H @- \
+            "${HUB_URL%/}/v1/sessions/$SID/release" \
+            2>/dev/null <<<"$HUB_AUTH_HEADER") || CURL_EXIT=$?
+        case "$CURL_EXIT:$HTTP_CODE" in
+            0:2??|0:404|0:409) RELEASED=1 ;;  # released, or not hub-driven
+            6:*|7:*)           RELEASED=1 ;;  # hub dead: unresolvable / refused
+            *)
+                echo "Hub did not confirm release (curl exit $CURL_EXIT, HTTP ${HTTP_CODE:-n/a}) — not resuming; the hub keeps the session. Marker kept: $MARKER" >&2
+                ;;
+        esac
+    fi
+    [ -n "$RELEASED" ] || break
+    rm -f "$MARKER"
+
+    # One-shot -p/--print (and the prompt that follows it) must not replay
+    # on the resumed session — `./claude.sh -p "deploy prod"` would re-run
+    # the side-effectful prompt. Strip them from the relaunch args.
+    FILTERED_ARGS=()
+    _i=0
+    _n=${#PASSTHROUGH_ARGS[@]}
+    while [ "$_i" -lt "$_n" ]; do
+        _a="${PASSTHROUGH_ARGS[$_i]}"
+        case "$_a" in
+            -p|--print)
+                _i=$((_i + 1))
+                # consume the trailing prompt argument, if present
+                if [ "$_i" -lt "$_n" ]; then
+                    case "${PASSTHROUGH_ARGS[$_i]}" in
+                        -*) ;;
+                        *) _i=$((_i + 1)) ;;
+                    esac
+                fi
+                continue
+                ;;
+        esac
+        FILTERED_ARGS+=("$_a")
+        _i=$((_i + 1))
+    done
+    PASSTHROUGH_ARGS=("${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}")
+
+    RESUME_ARGS=(--resume "$SID")
+done
+exit "$DOCKER_STATUS"

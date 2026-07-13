@@ -135,6 +135,31 @@ The plugin's routing is project-aware. When you start a session and mention a pr
 
 `claude.sh` also passes through `--plugin-dir` / `--add-dir` to the underlying `claude` invocation (and keeps them out of `bash` in `--shell` mode), plus `--strict-mcp-config` to isolate account-level MCP integrations.
 
+### Hub adoption take-back (optional)
+
+If you run the multiplai hub (multiplai-gui), it can **adopt** a session you
+started from a terminal — e.g. you walk away and continue it from your phone.
+The multiplai-context plugin's hooks keep a session registry under
+`$WORKSPACE/.multiplai/data/sessions/`; the hub drops a `<session-id>.adopt`
+marker there when it takes the driver seat. When claude exits and a marker
+addressed at your container exists, `claude.sh` offers:
+
+```
+Session adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it.
+```
+
+Enter asks the hub to release the session (`POST /v1/sessions/<id>/release`,
+hub URL/token from the environment or `multiplai.conf`, silently skipped if
+the hub is unreachable), deletes the marker, and relaunches the container
+with `claude --resume <session-id>`. Without a hub, a marker, or the plugin,
+nothing changes — the launcher behaves exactly as before.
+
+**No-Docker parity:** running claude bare on the host? `scripts/claude-wrapped`
+wraps `claude "$@"` in the same take-back loop (`alias claude-w=".../scripts/claude-wrapped"`).
+Host adoption is *cooperative*: with no container to kill, the hub only adopts
+host sessions that are idle or ended — in practice, after you exit claude —
+and the wrapper handles the take-back half of that handshake.
+
 ## Environment Configuration
 
 The kit uses **two kinds of env files** with similar names — intentional but confusing at first glance:

@@ -1,0 +1,171 @@
+#!/bin/bash
+# claude-wrapped — host-run claude with the hub adoption take-back loop
+#
+# No-Docker parity for the loop in claude.sh: runs `claude "$@"` on the host,
+# and when the multiplai hub (multiplai-gui) adopted the session while it ran,
+# offers to take it back (release the hub driver, delete the marker, relaunch
+# with `claude --resume <sid>`).
+#
+# Host adoption is COOPERATIVE: without a container there is nothing for the
+# hub to kill, so it can only adopt a host session that is idle or ended —
+# in practice, after you exit claude. This wrapper is the take-back half of
+# that handshake. The multiplai-context plugin's hooks write the session
+# registry either way (hostname = machine name on the host).
+#
+# Usage: scripts/claude-wrapped [claude args...]
+#   e.g. alias claude-w="$HOME/multiplai-kit/scripts/claude-wrapped"
+#
+# Sid discovery differs from claude.sh: every host session shares one
+# hostname, so the container-name key is ambiguous here. Instead, look for
+# adoption markers whose registry entry carries our hostname, newest entry
+# first — the session that just ended is the most recently updated one.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+DOTFILES_DIR="$SCRIPT_DIR/dotfiles"
+
+# Match claude.sh's bare-mode environment (claude.sh:166-184). Without
+# CLAUDE_CONFIG_DIR the host claude runs against ~/.claude, where the
+# multiplai-context plugin isn't installed — no registry entry is ever
+# written and the take-back loop below is silently dead.
+export CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
+export CLAUDE_MULTIPLAI_HOME="$SCRIPT_DIR"
+
+# Same MCP isolation as every claude.sh mode — see claude.sh for rationale.
+MCP_ISOLATION=(--strict-mcp-config)
+
+# Always load the kit .env (like claude.sh does) — it carries WORKSPACE
+# *and* MULTIPLAI_HUB_URL/TOKEN. Gating the source on WORKSPACE being unset
+# meant a profile-exported WORKSPACE silently dropped the hub credentials
+# and the release POST was skipped. Shell env still wins: snapshot the
+# caller's exported vars and re-apply them after sourcing.
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    # (filter bash's readonly specials — re-declaring them would error)
+    _PRE_ENV=$(export -p | grep -vE '^declare -x (SHELLOPTS|BASHOPTS|BASH_VERSINFO|UID|EUID|PPID)($|=)' || true)
+    # shellcheck disable=SC1091
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+    eval "$_PRE_ENV"
+    unset _PRE_ENV
+fi
+WORKSPACE=$(eval echo "${WORKSPACE:-}")
+WORKSPACE="${WORKSPACE%/}"
+
+SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"
+HOST_NAME="${HOSTNAME:-$(hostname)}"
+
+# Launch-timestamp reference: every host session shares one hostname, so
+# hostname alone can't tell "the session that just ran" from an older,
+# possibly phone-driven one. Only registry entries updated at/after this
+# pass's launch qualify (the registry refreshes the entry on every event).
+LAUNCH_REF=$(mktemp "${TMPDIR:-/tmp}/claude-wrapped-launch.XXXXXX")
+trap 'rm -f "$LAUNCH_REF"' EXIT
+
+RESUME_ARGS=()
+CLAUDE_STATUS=0
+while :; do
+    touch "$LAUNCH_REF"
+    CLAUDE_STATUS=0
+    claude "${MCP_ISOLATION[@]}" "$@" "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" || CLAUDE_STATUS=$?
+
+    [ -n "$WORKSPACE" ] || break
+
+    # Adoption markers addressed at a session of THIS host that was active
+    # during THIS run (entry mtime >= launch ref), newest registry entry
+    # first. Best-effort at every step: no registry (plugin not installed),
+    # no match, or no marker all mean "normal exit".
+    SID=""
+    while IFS= read -r ENTRY; do
+        # Skip entries untouched since this pass launched — they belong to
+        # other/older sessions and must not be released from here.
+        [ "$LAUNCH_REF" -nt "$ENTRY" ] && continue
+        if command -v jq >/dev/null 2>&1; then
+            jq -e --arg h "$HOST_NAME" '.hostname == $h' "$ENTRY" >/dev/null 2>&1 || continue
+        else
+            grep -qsE "\"hostname\"[[:space:]]*:[[:space:]]*\"$HOST_NAME\"" "$ENTRY" || continue
+        fi
+        CAND=$(basename "$ENTRY" .json)
+        if [ -f "$SESSIONS_DIR/$CAND.adopt" ]; then
+            SID="$CAND"
+            break
+        fi
+    done < <(ls -t "$SESSIONS_DIR"/*.json 2>/dev/null || true)
+    [ -n "$SID" ] || break
+    # SID is a filename from a shared registry dir and is interpolated into
+    # the hub URL and `--resume` — accept only canonical UUIDs.
+    [[ "$SID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || break
+    MARKER="$SESSIONS_DIR/$SID.adopt"
+
+    # Non-interactive stdin (pipes, CI): a read here would swallow a line of
+    # piped input as "Enter" (unwanted release+resume) or block forever.
+    # Skip the take-back and leave the marker — the hub keeps the seat.
+    [ -t 0 ] || break
+
+    echo "Session $SID adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
+    # Ctrl-C here means "leave it with the hub" — trap INT so we fall through
+    # to `exit $CLAUDE_STATUS` instead of dying with 130 and breaking the
+    # documented exit-status preservation. read returns >128 on the signal.
+    trap : INT
+    if ! read -r; then
+        trap - INT
+        echo ""
+        break
+    fi
+    trap - INT
+
+    # Ask the hub to release the driver seat — fail CLOSED, like claude.sh.
+    # Proceed only when the release is confirmed (2xx), moot (404/409), or
+    # the hub is provably dead (connection refused / unresolvable). Timeout,
+    # 5xx, auth failure, or a missing curl leave the marker and skip resume.
+    HUB_URL="${MULTIPLAI_HUB_URL:-$(sed -n 's/^MULTIPLAI_HUB_URL=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    HUB_TOKEN="${MULTIPLAI_HUB_TOKEN:-$(sed -n 's/^MULTIPLAI_HUB_TOKEN=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
+    RELEASED=""
+    if [ -z "$HUB_URL" ]; then
+        echo "No MULTIPLAI_HUB_URL configured — cannot ask the hub to release; leaving the session with the hub." >&2
+    elif ! command -v curl >/dev/null 2>&1; then
+        echo "curl not found — cannot ask the hub to release; leaving the session with the hub." >&2
+    else
+        # Token stays off argv (visible in ps) — the header arrives on stdin
+        # via `-H @-`. An empty herestring (no token) is a no-op for curl.
+        HUB_AUTH_HEADER=""
+        [ -n "$HUB_TOKEN" ] && HUB_AUTH_HEADER="Authorization: Bearer $HUB_TOKEN"
+        CURL_EXIT=0
+        HTTP_CODE=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
+            -H @- \
+            "${HUB_URL%/}/v1/sessions/$SID/release" \
+            2>/dev/null <<<"$HUB_AUTH_HEADER") || CURL_EXIT=$?
+        case "$CURL_EXIT:$HTTP_CODE" in
+            0:2??|0:404|0:409) RELEASED=1 ;;  # released, or not hub-driven
+            6:*|7:*)           RELEASED=1 ;;  # hub dead: unresolvable / refused
+            *)
+                echo "Hub did not confirm release (curl exit $CURL_EXIT, HTTP ${HTTP_CODE:-n/a}) — not resuming; the hub keeps the session. Marker kept: $MARKER" >&2
+                ;;
+        esac
+    fi
+    [ -n "$RELEASED" ] || break
+    rm -f "$MARKER"
+
+    # One-shot -p/--print (and the prompt that follows it) must not replay
+    # on the resumed session — strip them from the relaunch args.
+    FILTERED_ARGS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p|--print)
+                shift
+                # consume the trailing prompt argument, if present
+                if [ $# -gt 0 ]; then
+                    case "$1" in -*) ;; *) shift ;; esac
+                fi
+                continue
+                ;;
+        esac
+        FILTERED_ARGS+=("$1")
+        shift
+    done
+    set -- "${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}"
+
+    RESUME_ARGS=(--resume "$SID")
+done
+exit "$CLAUDE_STATUS"

@@ -23,6 +23,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+DOTFILES_DIR="$SCRIPT_DIR/dotfiles"
+
+# Match claude.sh's bare-mode environment (claude.sh:166-184). Without
+# CLAUDE_CONFIG_DIR the host claude runs against ~/.claude, where the
+# multiplai-context plugin isn't installed — no registry entry is ever
+# written and the take-back loop below is silently dead.
+export CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
+export CLAUDE_MULTIPLAI_HOME="$SCRIPT_DIR"
+
+# Same MCP isolation as every claude.sh mode — see claude.sh for rationale.
+MCP_ISOLATION=(--strict-mcp-config)
 
 # WORKSPACE: environment wins; else load the kit .env like claude.sh does.
 if [ -z "${WORKSPACE:-}" ] && [ -f "$SCRIPT_DIR/.env" ]; then
@@ -41,7 +52,7 @@ RESUME_ARGS=()
 CLAUDE_STATUS=0
 while :; do
     CLAUDE_STATUS=0
-    claude "$@" "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" || CLAUDE_STATUS=$?
+    claude "${MCP_ISOLATION[@]}" "$@" "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" || CLAUDE_STATUS=$?
 
     [ -n "$WORKSPACE" ] || break
 

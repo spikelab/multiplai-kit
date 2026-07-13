@@ -496,6 +496,33 @@ while :; do
     fi
     [ -n "$RELEASED" ] || break
     rm -f "$MARKER"
+
+    # One-shot -p/--print (and the prompt that follows it) must not replay
+    # on the resumed session — `./claude.sh -p "deploy prod"` would re-run
+    # the side-effectful prompt. Strip them from the relaunch args.
+    FILTERED_ARGS=()
+    _i=0
+    _n=${#PASSTHROUGH_ARGS[@]}
+    while [ "$_i" -lt "$_n" ]; do
+        _a="${PASSTHROUGH_ARGS[$_i]}"
+        case "$_a" in
+            -p|--print)
+                _i=$((_i + 1))
+                # consume the trailing prompt argument, if present
+                if [ "$_i" -lt "$_n" ]; then
+                    case "${PASSTHROUGH_ARGS[$_i]}" in
+                        -*) ;;
+                        *) _i=$((_i + 1)) ;;
+                    esac
+                fi
+                continue
+                ;;
+        esac
+        FILTERED_ARGS+=("$_a")
+        _i=$((_i + 1))
+    done
+    PASSTHROUGH_ARGS=("${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}")
+
     RESUME_ARGS=(--resume "$SID")
 done
 exit "$DOCKER_STATUS"

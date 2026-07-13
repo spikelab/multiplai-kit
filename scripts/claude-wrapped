@@ -146,6 +146,26 @@ while :; do
     fi
     [ -n "$RELEASED" ] || break
     rm -f "$MARKER"
+
+    # One-shot -p/--print (and the prompt that follows it) must not replay
+    # on the resumed session — strip them from the relaunch args.
+    FILTERED_ARGS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p|--print)
+                shift
+                # consume the trailing prompt argument, if present
+                if [ $# -gt 0 ]; then
+                    case "$1" in -*) ;; *) shift ;; esac
+                fi
+                continue
+                ;;
+        esac
+        FILTERED_ARGS+=("$1")
+        shift
+    done
+    set -- "${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}"
+
     RESUME_ARGS=(--resume "$SID")
 done
 exit "$CLAUDE_STATUS"

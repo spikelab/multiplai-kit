@@ -447,7 +447,16 @@ while :; do
     [ -t 0 ] || break
 
     echo "Session $SID adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
-    read -r || break
+    # Ctrl-C here means "leave it with the hub" — trap INT so we fall through
+    # to `exit $DOCKER_STATUS` instead of dying with 130 and breaking the
+    # documented exit-status preservation. read returns >128 on the signal.
+    trap : INT
+    if ! read -r; then
+        trap - INT
+        echo ""
+        break
+    fi
+    trap - INT
 
     # Ask the hub to release the driver seat. Best-effort — a dead or
     # unreachable hub must not block the terminal from resuming its own

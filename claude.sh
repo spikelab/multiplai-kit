@@ -461,20 +461,38 @@ while :; do
     fi
     trap - INT
 
-    # Ask the hub to release the driver seat. Best-effort — a dead or
-    # unreachable hub must not block the terminal from resuming its own
-    # session (the hub's SDK client is gone with the hub anyway).
+    # Ask the hub to release the driver seat — fail CLOSED. Resuming while
+    # the hub's SDK client still drives the session puts two drivers on one
+    # session. Proceed only when the release is confirmed (2xx), moot
+    # (404/409 — unknown / not driven), or the hub is provably dead
+    # (connection refused / unresolvable). Timeout, 5xx, auth failure, or a
+    # missing curl leave the marker in place and skip the resume.
     # Env (.env is exported above) wins over multiplai.conf; the conf is
     # parsed KEY=value (grep, not source) because it contains INI sections.
     HUB_URL="${MULTIPLAI_HUB_URL:-$(sed -n 's/^MULTIPLAI_HUB_URL=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
     HUB_TOKEN="${MULTIPLAI_HUB_TOKEN:-$(sed -n 's/^MULTIPLAI_HUB_TOKEN=//p' "$SCRIPT_DIR/multiplai.conf" 2>/dev/null | tail -n 1 | tr -d '"')}"
-    if [ -n "$HUB_URL" ]; then
+    RELEASED=""
+    if [ -z "$HUB_URL" ]; then
+        echo "No MULTIPLAI_HUB_URL configured — cannot ask the hub to release; leaving the session with the hub." >&2
+    elif ! command -v curl >/dev/null 2>&1; then
+        echo "curl not found — cannot ask the hub to release; leaving the session with the hub." >&2
+    else
         HUB_AUTH_ARGS=()
         [ -n "$HUB_TOKEN" ] && HUB_AUTH_ARGS=(-H "Authorization: Bearer $HUB_TOKEN")
-        curl -fsS -m 5 -X POST "${HUB_URL%/}/v1/sessions/$SID/release" \
+        CURL_EXIT=0
+        HTTP_CODE=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
+            "${HUB_URL%/}/v1/sessions/$SID/release" \
             "${HUB_AUTH_ARGS[@]+"${HUB_AUTH_ARGS[@]}"}" \
-            >/dev/null 2>&1 || true
+            2>/dev/null) || CURL_EXIT=$?
+        case "$CURL_EXIT:$HTTP_CODE" in
+            0:2??|0:404|0:409) RELEASED=1 ;;  # released, or not hub-driven
+            6:*|7:*)           RELEASED=1 ;;  # hub dead: unresolvable / refused
+            *)
+                echo "Hub did not confirm release (curl exit $CURL_EXIT, HTTP ${HTTP_CODE:-n/a}) — not resuming; the hub keeps the session. Marker kept: $MARKER" >&2
+                ;;
+        esac
     fi
+    [ -n "$RELEASED" ] || break
     rm -f "$MARKER"
     RESUME_ARGS=(--resume "$SID")
 done

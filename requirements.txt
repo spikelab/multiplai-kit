@@ -13,6 +13,10 @@ pytest
 # here so the skills also run from the plain venv)
 claude-agent-sdk
 
+# Driver-mode runner (multiplai-gui hub, ADR 0002): WS server the hub proxies
+# session frames through. >=14 for the modern asyncio API.
+websockets>=14
+
 # Skill helpers
 yt-dlp                  # youtube-transcript skill (multiplai-media)
 beautifulsoup4          # web content parsing (deep-research, extract-insights)

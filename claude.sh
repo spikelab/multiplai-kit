@@ -441,7 +441,7 @@ while :; do
     MARKER="$SESSIONS_DIR/$SID.adopt"
     [ -f "$MARKER" ] || break
 
-    echo "Session adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
+    echo "Session $SID adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
     read -r || break
 
     # Ask the hub to release the driver seat. Best-effort — a dead or

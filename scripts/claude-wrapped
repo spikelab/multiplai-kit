@@ -56,20 +56,36 @@ WORKSPACE="${WORKSPACE%/}"
 SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"
 HOST_NAME="${HOSTNAME:-$(hostname)}"
 
+# Launch-timestamp reference: every host session shares one hostname, so
+# hostname alone can't tell "the session that just ran" from an older,
+# possibly phone-driven one. Only registry entries updated at/after this
+# pass's launch qualify (the registry refreshes the entry on every event).
+LAUNCH_REF=$(mktemp "${TMPDIR:-/tmp}/claude-wrapped-launch.XXXXXX")
+trap 'rm -f "$LAUNCH_REF"' EXIT
+
 RESUME_ARGS=()
 CLAUDE_STATUS=0
 while :; do
+    touch "$LAUNCH_REF"
     CLAUDE_STATUS=0
     claude "${MCP_ISOLATION[@]}" "$@" "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" || CLAUDE_STATUS=$?
 
     [ -n "$WORKSPACE" ] || break
 
-    # Adoption markers addressed at a session of THIS host, newest registry
-    # entry first. Best-effort at every step: no registry (plugin not
-    # installed), no match, or no marker all mean "normal exit".
+    # Adoption markers addressed at a session of THIS host that was active
+    # during THIS run (entry mtime >= launch ref), newest registry entry
+    # first. Best-effort at every step: no registry (plugin not installed),
+    # no match, or no marker all mean "normal exit".
     SID=""
     while IFS= read -r ENTRY; do
-        grep -qs "\"hostname\": \"$HOST_NAME\"" "$ENTRY" || continue
+        # Skip entries untouched since this pass launched — they belong to
+        # other/older sessions and must not be released from here.
+        [ "$LAUNCH_REF" -nt "$ENTRY" ] && continue
+        if command -v jq >/dev/null 2>&1; then
+            jq -e --arg h "$HOST_NAME" '.hostname == $h' "$ENTRY" >/dev/null 2>&1 || continue
+        else
+            grep -qsE "\"hostname\"[[:space:]]*:[[:space:]]*\"$HOST_NAME\"" "$ENTRY" || continue
+        fi
         CAND=$(basename "$ENTRY" .json)
         if [ -f "$SESSIONS_DIR/$CAND.adopt" ]; then
             SID="$CAND"
@@ -79,7 +95,7 @@ while :; do
     [ -n "$SID" ] || break
     MARKER="$SESSIONS_DIR/$SID.adopt"
 
-    echo "Session adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
+    echo "Session $SID adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
     read -r || break
 
     # Ask the hub to release the driver seat — best-effort, like claude.sh.

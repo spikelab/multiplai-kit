@@ -93,6 +93,9 @@ while :; do
         fi
     done < <(ls -t "$SESSIONS_DIR"/*.json 2>/dev/null || true)
     [ -n "$SID" ] || break
+    # SID is a filename from a shared registry dir and is interpolated into
+    # the hub URL and `--resume` — accept only canonical UUIDs.
+    [[ "$SID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || break
     MARKER="$SESSIONS_DIR/$SID.adopt"
 
     # Non-interactive stdin (pipes, CI): a read here would swallow a line of

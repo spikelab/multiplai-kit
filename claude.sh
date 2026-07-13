@@ -438,6 +438,9 @@ while :; do
     done < <(ls -t "$SESSIONS_DIR"/*.json 2>/dev/null || true)
     [ -n "$ENTRY" ] || break
     SID=$(basename "$ENTRY" .json)
+    # SID is a filename from a container-writable dir and is interpolated
+    # into the hub URL and `--resume` — accept only canonical UUIDs.
+    [[ "$SID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || break
     MARKER="$SESSIONS_DIR/$SID.adopt"
     [ -f "$MARKER" ] || break
 

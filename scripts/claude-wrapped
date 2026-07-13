@@ -127,13 +127,15 @@ while :; do
     elif ! command -v curl >/dev/null 2>&1; then
         echo "curl not found — cannot ask the hub to release; leaving the session with the hub." >&2
     else
-        HUB_AUTH_ARGS=()
-        [ -n "$HUB_TOKEN" ] && HUB_AUTH_ARGS=(-H "Authorization: Bearer $HUB_TOKEN")
+        # Token stays off argv (visible in ps) — the header arrives on stdin
+        # via `-H @-`. An empty herestring (no token) is a no-op for curl.
+        HUB_AUTH_HEADER=""
+        [ -n "$HUB_TOKEN" ] && HUB_AUTH_HEADER="Authorization: Bearer $HUB_TOKEN"
         CURL_EXIT=0
         HTTP_CODE=$(curl -sS -m 5 -o /dev/null -w '%{http_code}' -X POST \
+            -H @- \
             "${HUB_URL%/}/v1/sessions/$SID/release" \
-            "${HUB_AUTH_ARGS[@]+"${HUB_AUTH_ARGS[@]}"}" \
-            2>/dev/null) || CURL_EXIT=$?
+            2>/dev/null <<<"$HUB_AUTH_HEADER") || CURL_EXIT=$?
         case "$CURL_EXIT:$HTTP_CODE" in
             0:2??|0:404|0:409) RELEASED=1 ;;  # released, or not hub-driven
             6:*|7:*)           RELEASED=1 ;;  # hub dead: unresolvable / refused

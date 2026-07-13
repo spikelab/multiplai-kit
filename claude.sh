@@ -441,6 +441,11 @@ while :; do
     MARKER="$SESSIONS_DIR/$SID.adopt"
     [ -f "$MARKER" ] || break
 
+    # Non-interactive stdin (pipes, CI): a read here would swallow a line of
+    # piped input as "Enter" (unwanted release+resume) or block forever.
+    # Skip the take-back and leave the marker — the hub keeps the seat.
+    [ -t 0 ] || break
+
     echo "Session $SID adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it."
     read -r || break
 

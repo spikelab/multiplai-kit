@@ -422,7 +422,20 @@ while :; do
     # Map this container back to its session via the registry, then look for
     # an adoption marker. Every step is best-effort: no registry (plugin not
     # installed), no entry, or no marker all mean "normal exit".
-    ENTRY=$(grep -ls "\"hostname\": \"$CONTAINER_NAME\"" "$SESSIONS_DIR"/*.json 2>/dev/null | head -n 1) || true
+    # Newest entry by mtime wins (the registry refreshes hostname on every
+    # event, so the just-ended session is the most recently updated match);
+    # the hostname match is whitespace-tolerant, not coupled to the plugin's
+    # JSON formatting. Registry filenames are UUIDs — no spaces to trip ls -t.
+    ENTRY=""
+    while IFS= read -r CAND_ENTRY; do
+        if command -v jq >/dev/null 2>&1; then
+            jq -e --arg h "$CONTAINER_NAME" '.hostname == $h' "$CAND_ENTRY" >/dev/null 2>&1 || continue
+        else
+            grep -qsE "\"hostname\"[[:space:]]*:[[:space:]]*\"$CONTAINER_NAME\"" "$CAND_ENTRY" || continue
+        fi
+        ENTRY="$CAND_ENTRY"
+        break
+    done < <(ls -t "$SESSIONS_DIR"/*.json 2>/dev/null || true)
     [ -n "$ENTRY" ] || break
     SID=$(basename "$ENTRY" .json)
     MARKER="$SESSIONS_DIR/$SID.adopt"

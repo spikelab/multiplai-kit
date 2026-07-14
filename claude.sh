@@ -56,6 +56,7 @@ DRV_RUNNER=""
 DRV_PROJECT_DIR=""
 DRV_PERMISSION_MODE="prompt"
 DRV_MODEL=""
+DRV_FOREGROUND=0
 
 # --- Parse flags (extract ours, pass the rest through) ---
 PROFILE=""
@@ -78,6 +79,14 @@ while [[ $# -gt 0 ]]; do
                 --model) DRV_MODEL="$2" ;;
             esac
             shift 2
+            ;;
+        --foreground)
+            # debug: run the driver container attached (logs on this terminal)
+            # instead of detached — a --rm container that dies at startup
+            # otherwise destroys its own logs before they can be read.
+            [ "$DRIVER_MODE" -eq 1 ] || { echo "Error: $1 is only valid after the 'driver' subcommand" >&2; exit 1; }
+            DRV_FOREGROUND=1
+            shift
             ;;
         --profile)
             [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
@@ -501,9 +510,11 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
         RUNNER_CMD+=(--sid "$DRV_SID")
     fi
     [ -n "$DRV_MODEL" ] && RUNNER_CMD+=(--model "$DRV_MODEL")
+    DRV_DETACH_ARGS=(-d)
+    [ "$DRV_FOREGROUND" -eq 1 ] && DRV_DETACH_ARGS=()
     # -e MULTIPLAI_DRIVER_TOKEN (no value) forwards the token from this
     # process's environment without exposing it on argv (ps-safe).
-    exec docker run -d --rm \
+    exec docker run "${DRV_DETACH_ARGS[@]+"${DRV_DETACH_ARGS[@]}"}" --rm \
         --name "$DRV_NAME" \
         --hostname "$DRV_NAME" \
         --workdir "$DRV_PROJECT_DIR" \

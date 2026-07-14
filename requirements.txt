@@ -10,8 +10,12 @@ pyyaml                  # JSON/YAML validation in validate-syntax.sh
 pytest
 
 # Model access for the plugin skills (host-injected inside Claude Code; pinned
-# here so the skills also run from the plain venv)
-claude-agent-sdk
+# here so the skills also run from the plain venv). >=0.2.116: the hub's driver
+# runner (multiplai-gui ADR 0002) needs the init system message to carry the
+# session id — on 0.1.x it never does, so commissioned sessions hang at start
+# and die on the init timeout. An already-provisioned venv volume holding 0.1.x
+# "satisfies" a bare requirement and never upgrades; the floor forces the sync.
+claude-agent-sdk>=0.2.116
 
 # Driver-mode runner (multiplai-gui hub, ADR 0002): WS server the hub proxies
 # session frames through. >=14 for the modern asyncio API.

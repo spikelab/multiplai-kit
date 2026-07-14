@@ -273,8 +273,15 @@ fi
 # The shipped settings.json carries empty path placeholders. Rather than
 # rewriting that tracked file (which would leave the tree permanently dirty and
 # make `git pull` updates conflict), write the machine-local paths to
-# settings.local.json — a gitignored overlay Claude Code deep-merges over
-# settings.json. Identity lives in the memory profile (never sed'd in).
+# settings.local.json — a gitignored overlay. Identity lives in the memory
+# profile (never sed'd in).
+#
+# CAUTION: at the user level (CLAUDE_CONFIG_DIR), Claude Code does NOT apply
+# the `env` block from settings.local.json — only settings.json's env lands
+# (verified empirically on CLI 2.1.207, 2026-07-14; settings.local.json is a
+# project-level overlay for env). Anything that must reach the process
+# environment (e.g. CLAUDE_CODE_AUTO_COMPACT_WINDOW steering) belongs in the
+# tracked settings.json. Only pluginConfigs paths go here.
 STEP=$((STEP + 1))
 echo "[$STEP/$TOTAL_STEPS] Configuring plugin options for this workspace..."
 LOCAL_SETTINGS="$DOTFILES_DIR/settings.local.json"

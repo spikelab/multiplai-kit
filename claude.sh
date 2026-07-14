@@ -67,7 +67,14 @@ CLAUDE_ONLY_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --sid|--port|--name|--runner|--project-dir|--permission-mode|--model)
-            [ "$DRIVER_MODE" -eq 1 ] || { echo "Error: $1 is only valid after the 'driver' subcommand" >&2; exit 1; }
+            # Driver-mode flags ONLY when the subcommand is active. Outside it,
+            # fall through to passthrough — --model/--permission-mode are real
+            # claude CLI flags and hijacking them breaks interactive launches.
+            if [ "$DRIVER_MODE" -eq 0 ]; then
+                PASSTHROUGH_ARGS+=("$1")
+                shift
+                continue
+            fi
             [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
             case "$1" in
                 --sid) DRV_SID="$2" ;;

@@ -12,6 +12,21 @@
 #   --gcp <name>        Load env.gcp.<name> for GCP credentials
 #   --shell             Container shell (bash instead of claude)
 #
+# Subcommand:
+#   driver              Non-interactive driver container for the multiplai hub
+#                       (ADR 0002 in multiplai-gui): runs the hub's driver
+#                       runner on the kit venv python instead of interactive
+#                       claude. Detached (docker run -d), no TTY, no take-back
+#                       loop — the hub owns the container's lifecycle.
+#                       Flags: --sid <uuid|new> --port <n> --runner <path>
+#                              [--name <container>] [--project-dir <dir>]
+#                              [--permission-mode prompt|acceptEdits|bypass]
+#                              [--model <model>] [--foreground]
+#                       --foreground runs the container attached (debug: a
+#                       --rm container that dies at startup keeps its logs).
+#                       Requires MULTIPLAI_DRIVER_TOKEN in the environment
+#                       (forwarded to the container via -e passthrough, never argv).
+#
 # Usage:
 #   ./claude.sh                         # container, default profile
 #   ./claude.sh --profile work          # container, work git identity
@@ -19,6 +34,7 @@
 #   ./claude.sh --local                 # bare, host permissions apply
 #   ./claude.sh --shell                 # container bash shell
 #   ./claude.sh --profile work --shell  # work profile, bash shell
+#   ./claude.sh driver --sid new --port 8765 --runner <path>  # hub driver container
 
 set -euo pipefail
 
@@ -29,6 +45,21 @@ DOTFILES_DIR="$SCRIPT_DIR/dotfiles"
 # Distinct from CLAUDE_CONFIG_DIR (dotfiles/) which is purely Claude Code's domain.
 export CLAUDE_MULTIPLAI_HOME="$SCRIPT_DIR"
 
+# --- Driver subcommand: `claude.sh driver ...` (hub-launched, non-interactive) ---
+DRIVER_MODE=0
+if [[ "${1:-}" == "driver" ]]; then
+    DRIVER_MODE=1
+    shift
+fi
+DRV_SID=""
+DRV_PORT=""
+DRV_NAME=""
+DRV_RUNNER=""
+DRV_PROJECT_DIR=""
+DRV_PERMISSION_MODE="prompt"
+DRV_MODEL=""
+DRV_FOREGROUND=0
+
 # --- Parse flags (extract ours, pass the rest through) ---
 PROFILE=""
 GCP_NAME=""
@@ -37,6 +68,35 @@ PASSTHROUGH_ARGS=()
 CLAUDE_ONLY_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --sid|--port|--name|--runner|--project-dir|--permission-mode|--model)
+            # Driver-mode flags ONLY when the subcommand is active. Outside it,
+            # fall through to passthrough — --model/--permission-mode are real
+            # claude CLI flags and hijacking them breaks interactive launches.
+            if [ "$DRIVER_MODE" -eq 0 ]; then
+                PASSTHROUGH_ARGS+=("$1")
+                shift
+                continue
+            fi
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
+            case "$1" in
+                --sid) DRV_SID="$2" ;;
+                --port) DRV_PORT="$2" ;;
+                --name) DRV_NAME="$2" ;;
+                --runner) DRV_RUNNER="$2" ;;
+                --project-dir) DRV_PROJECT_DIR="$2" ;;
+                --permission-mode) DRV_PERMISSION_MODE="$2" ;;
+                --model) DRV_MODEL="$2" ;;
+            esac
+            shift 2
+            ;;
+        --foreground)
+            # debug: run the driver container attached (logs on this terminal)
+            # instead of detached — a --rm container that dies at startup
+            # otherwise destroys its own logs before they can be read.
+            [ "$DRIVER_MODE" -eq 1 ] || { echo "Error: $1 is only valid after the 'driver' subcommand" >&2; exit 1; }
+            DRV_FOREGROUND=1
+            shift
+            ;;
         --profile)
             [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
             PROFILE="$2"
@@ -79,6 +139,15 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [ "$DRIVER_MODE" -eq 1 ] && [ -n "$MODE" ]; then
+    echo "Error: driver mode cannot combine with --local/--shell." >&2
+    exit 1
+fi
+if [ "$DRIVER_MODE" -eq 1 ] && [ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]; then
+    echo "Error: unknown driver-mode arguments: ${PASSTHROUGH_ARGS[*]}" >&2
+    exit 1
+fi
 
 # --- Load .env (base config) ---
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
@@ -139,10 +208,78 @@ WORKSPACE="${WORKSPACE%/}"
 : "${WORKSPACE:?WORKSPACE must be set in .env}"
 : "${GIT_AUTHOR_NAME:?GIT_AUTHOR_NAME must be set in .env}"
 
+# --- Driver mode validations (container-only; the hub owns this container) ---
+if [ "$DRIVER_MODE" -eq 1 ]; then
+    if [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
+        echo "Error: driver mode launches a container — run it on the host." >&2
+        exit 1
+    fi
+    if ! command -v docker &>/dev/null; then
+        echo "Error: driver mode requires Docker (no bare fallback)." >&2
+        exit 1
+    fi
+    if [ "$DRV_SID" != "new" ] && ! [[ "$DRV_SID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+        echo "Error: driver mode requires --sid <uuid|new> (got: '${DRV_SID:-<unset>}')" >&2
+        exit 1
+    fi
+    if ! [[ "$DRV_PORT" =~ ^[0-9]+$ ]] || [ "$DRV_PORT" -lt 1 ] || [ "$DRV_PORT" -gt 65535 ]; then
+        echo "Error: driver mode requires --port <1-65535> (got: '${DRV_PORT:-<unset>}')" >&2
+        exit 1
+    fi
+    if [ -z "$DRV_RUNNER" ] || [ ! -f "$DRV_RUNNER" ]; then
+        echo "Error: driver mode requires --runner <path to driver_runner.py> (got: '${DRV_RUNNER:-<unset>}')" >&2
+        exit 1
+    fi
+    case "$DRV_RUNNER" in
+        "$WORKSPACE"/*|"$SCRIPT_DIR"/*) ;;
+        *)
+            echo "Error: --runner must live under \$WORKSPACE or the kit root (it reaches the container via the bind mounts): $DRV_RUNNER" >&2
+            exit 1
+            ;;
+    esac
+    DRV_PROJECT_DIR="${DRV_PROJECT_DIR:-$WORKSPACE}"
+    if [ ! -d "$DRV_PROJECT_DIR" ]; then
+        echo "Error: --project-dir is not a directory: $DRV_PROJECT_DIR" >&2
+        exit 1
+    fi
+    case "$DRV_PROJECT_DIR/" in
+        "$WORKSPACE/"*) ;;
+        *)
+            echo "Error: --project-dir must be inside \$WORKSPACE: $DRV_PROJECT_DIR" >&2
+            exit 1
+            ;;
+    esac
+    case "$DRV_PERMISSION_MODE" in
+        prompt|acceptEdits|bypass) ;;
+        *)
+            echo "Error: --permission-mode must be prompt|acceptEdits|bypass (got: '$DRV_PERMISSION_MODE')" >&2
+            exit 1
+            ;;
+    esac
+    if [ -z "${MULTIPLAI_DRIVER_TOKEN:-}" ]; then
+        echo "Error: driver mode requires MULTIPLAI_DRIVER_TOKEN in the environment." >&2
+        exit 1
+    fi
+    if [ -z "$DRV_NAME" ]; then
+        if [ "$DRV_SID" = "new" ]; then
+            # $RANDOM suffix: two manual same-second launches must not collide
+            # (the hub always passes --name, so this is the CLI-only fallback)
+            DRV_NAME="claude-drv-new-$(date +%d%H%M%S)-$RANDOM"
+        else
+            DRV_NAME="claude-drv-${DRV_SID:0:8}"
+        fi
+    fi
+    if ! [[ "$DRV_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+        echo "Error: invalid container name: '$DRV_NAME'" >&2
+        exit 1
+    fi
+fi
+
 # --- Nag until the Multiplai plugins are installed ---
 # setup.sh installs them when the host has the claude CLI; when it doesn't,
 # this banner repeats at every launch until the one-time in-session install.
-if ! grep -qs '"multiplai-context@multiplai"' "$DOTFILES_DIR/plugins/installed_plugins.json" 2>/dev/null; then
+# Skipped in driver mode: non-interactive, nothing to run /plugin in.
+if [ "$DRIVER_MODE" -eq 0 ] && ! grep -qs '"multiplai-context@multiplai"' "$DOTFILES_DIR/plugins/installed_plugins.json" 2>/dev/null; then
     echo "================================================================"
     echo "  Multiplai plugins are NOT installed yet."
     echo "  Run these once inside the session that's about to start:"
@@ -367,6 +504,43 @@ fi
 # Fall back to $WORKSPACE (the Dockerfile WORKDIR) if cwd is outside it.
 WORKDIR_ARG="$WORKSPACE"
 case "$PWD/" in "$WORKSPACE/"*) WORKDIR_ARG="$PWD" ;; esac
+
+# --- Driver mode: detached runner container for the multiplai hub ---
+# Reuses the exact MOUNTS/ENV_ARGS/hardening of interactive container mode,
+# but runs the hub's driver runner on the kit venv python instead of
+# interactive claude: no TTY, detached, and NO take-back loop — the hub owns
+# this container (release = shutdown frame -> exit --rm).
+# The venv python MUST be addressed explicitly (same rule as run-hook-python):
+# the image's PATH only fronts the legacy $WORKSPACE/multiplai-runtime venv
+# path, so a bare `python3` is the system interpreter when the kit lives
+# elsewhere (e.g. ~/.multiplai-runtimes/<name>) — no websockets, no SDK.
+# venv-sync (the entrypoint) creates/updates this venv before CMD runs.
+if [ "$DRIVER_MODE" -eq 1 ]; then
+    RUNNER_CMD=("$SCRIPT_DIR/.venv/bin/python3" "$DRV_RUNNER"
+        --port "$DRV_PORT"
+        --project-dir "$DRV_PROJECT_DIR"
+        --permission-mode "$DRV_PERMISSION_MODE")
+    if [ "$DRV_SID" = "new" ]; then
+        RUNNER_CMD+=(--new)
+    else
+        RUNNER_CMD+=(--sid "$DRV_SID")
+    fi
+    [ -n "$DRV_MODEL" ] && RUNNER_CMD+=(--model "$DRV_MODEL")
+    DRV_DETACH_ARGS=(-d)
+    [ "$DRV_FOREGROUND" -eq 1 ] && DRV_DETACH_ARGS=()
+    # -e MULTIPLAI_DRIVER_TOKEN (no value) forwards the token from this
+    # process's environment without exposing it on argv (ps-safe).
+    exec docker run "${DRV_DETACH_ARGS[@]+"${DRV_DETACH_ARGS[@]}"}" --rm \
+        --name "$DRV_NAME" \
+        --hostname "$DRV_NAME" \
+        --workdir "$DRV_PROJECT_DIR" \
+        "${MOUNTS[@]}" \
+        "${ENV_ARGS[@]}" \
+        -e MULTIPLAI_DRIVER_TOKEN \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        "$IMAGE_NAME" "${RUNNER_CMD[@]}"
+fi
 
 # Allocate a TTY only when stdin is one — `docker run -it` fails with
 # "the input device is not a TTY" under pipes/CI/non-interactive shells.

@@ -471,10 +471,13 @@ ENV_ARGS=(
 )
 
 # Messaging plugin (multiplai-messaging) credentials — one allowlist to extend
-# for the next plugin, instead of hand-enumerating an -e line per var. `-e
-# NAME=VALUE` (indirect ${!v}) forwards each, empty when unset.
+# for the next plugin, instead of hand-enumerating an -e line per var. Only
+# forward vars that are actually set: `-e NAME=` (empty) makes the var *present
+# but empty* in the container, which defeats a script's `os.environ.get(NAME,
+# default)` fallback (the empty string wins over the default). Skipping unset
+# vars keeps optional ones (e.g. GMAIL_TOKEN_URI) truly absent.
 for v in SLACK_TOKEN GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET GMAIL_REFRESH_TOKEN GMAIL_TOKEN_URI GMAIL_TOKEN_FILE; do
-    ENV_ARGS+=(-e "$v=${!v:-}")
+    [ -n "${!v:-}" ] && ENV_ARGS+=(-e "$v=${!v}")
 done
 
 # Forward any CLAUDE_PLUGIN_OPTION_* vars set by the caller into the container.

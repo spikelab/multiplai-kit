@@ -108,11 +108,14 @@ BuildMe is a deterministic Python pipeline shipped by the `multiplai-dev` plugin
 - If the project isn't in a git repo, STOP and ask permission to initialize one.
 - YOU MUST STOP and ask how to handle uncommitted changes or untracked files when starting work. Suggest committing existing work first.
 - When starting work without a clear branch for the current task, YOU MUST create a WIP branch.
+- **Worktrees by default.** For ANY non-trivial change (new feature, refactor, multi-file edit), YOU MUST work in a dedicated branch inside a git worktree by default, not in the main checkout. Skip only for trivial one-offs (typo, config tweak, single-line fix) or when the user says otherwise.
+- **Worktree location.** ALL worktrees live under `$WORKSPACE/.worktrees/` (e.g. `$WORKSPACE/.worktrees/<branch-name>`). Never scatter worktrees inside project dirs or elsewhere. Create with `git -C <project> worktree add $WORKSPACE/.worktrees/<name> -b <branch>`.
+- **Worktree safety:** Agents working in worktrees should never self-cleanup the worktree while inside the worktree. Claude is by definition started in $WORKSPACE and you should change $CWD to workspace before deleting the worktree.
+- **Create a PR per branch**. Any time you create a branch to do some work, create a PR when work is completed for the user to review. Offer to merge after review or when told so.
 - YOU MUST TRACK all non-trivial changes in git.
 - YOU MUST commit frequently throughout the development process, even if your high-level tasks are not yet done.
 - NEVER SKIP, EVADE OR DISABLE A PRE-COMMIT HOOK
 - NEVER use `git add -A` unless you've just done a `git status` - Don't add random test files to the repo.
-- **Worktree safety:** Agents working in worktrees should never self-cleanup the worktree. Hand off worktree removal and branch deletion commands to the user to run from a different terminal. Removing a worktree from a session whose cwd is inside it bricks the shell — every subsequent bash command fails with ENOENT.
 
 # Memory System
 - Context routing is **automatic** — the `multiplai-context` plugin's `UserPromptSubmit` hook (`context_manager.py`) routes each prompt and injects only the relevant memory from `$CLAUDE_CONFIG_DIR/memory/` (→ `.multiplai/memory/`). No manual loading needed.

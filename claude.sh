@@ -496,11 +496,16 @@ case "$PWD/" in "$WORKSPACE/"*) WORKDIR_ARG="$PWD" ;; esac
 
 # --- Driver mode: detached runner container for the multiplai hub ---
 # Reuses the exact MOUNTS/ENV_ARGS/hardening of interactive container mode,
-# but runs the hub's driver runner on the kit venv python (PATH-first in the
-# image) instead of interactive claude: no TTY, detached, and NO take-back
-# loop — the hub owns this container (release = shutdown frame -> exit --rm).
+# but runs the hub's driver runner on the kit venv python instead of
+# interactive claude: no TTY, detached, and NO take-back loop — the hub owns
+# this container (release = shutdown frame -> exit --rm).
+# The venv python MUST be addressed explicitly (same rule as run-hook-python):
+# the image's PATH only fronts the legacy $WORKSPACE/multiplai-runtime venv
+# path, so a bare `python3` is the system interpreter when the kit lives
+# elsewhere (e.g. ~/.multiplai-runtimes/<name>) — no websockets, no SDK.
+# venv-sync (the entrypoint) creates/updates this venv before CMD runs.
 if [ "$DRIVER_MODE" -eq 1 ]; then
-    RUNNER_CMD=(python3 "$DRV_RUNNER"
+    RUNNER_CMD=("$SCRIPT_DIR/.venv/bin/python3" "$DRV_RUNNER"
         --port "$DRV_PORT"
         --project-dir "$DRV_PROJECT_DIR"
         --permission-mode "$DRV_PERMISSION_MODE")

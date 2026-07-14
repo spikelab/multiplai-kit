@@ -21,7 +21,9 @@
 #                       Flags: --sid <uuid|new> --port <n> --runner <path>
 #                              [--name <container>] [--project-dir <dir>]
 #                              [--permission-mode prompt|acceptEdits|bypass]
-#                              [--model <model>]
+#                              [--model <model>] [--foreground]
+#                       --foreground runs the container attached (debug: a
+#                       --rm container that dies at startup keeps its logs).
 #                       Requires MULTIPLAI_DRIVER_TOKEN in the environment
 #                       (forwarded to the container via -e passthrough, never argv).
 #
@@ -220,8 +222,8 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
         echo "Error: driver mode requires --sid <uuid|new> (got: '${DRV_SID:-<unset>}')" >&2
         exit 1
     fi
-    if ! [[ "$DRV_PORT" =~ ^[0-9]+$ ]]; then
-        echo "Error: driver mode requires --port <n> (got: '${DRV_PORT:-<unset>}')" >&2
+    if ! [[ "$DRV_PORT" =~ ^[0-9]+$ ]] || [ "$DRV_PORT" -lt 1 ] || [ "$DRV_PORT" -gt 65535 ]; then
+        echo "Error: driver mode requires --port <1-65535> (got: '${DRV_PORT:-<unset>}')" >&2
         exit 1
     fi
     if [ -z "$DRV_RUNNER" ] || [ ! -f "$DRV_RUNNER" ]; then
@@ -260,7 +262,9 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
     fi
     if [ -z "$DRV_NAME" ]; then
         if [ "$DRV_SID" = "new" ]; then
-            DRV_NAME="claude-drv-new-$(date +%d%H%M%S)"
+            # $RANDOM suffix: two manual same-second launches must not collide
+            # (the hub always passes --name, so this is the CLI-only fallback)
+            DRV_NAME="claude-drv-new-$(date +%d%H%M%S)-$RANDOM"
         else
             DRV_NAME="claude-drv-${DRV_SID:0:8}"
         fi

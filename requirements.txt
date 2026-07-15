@@ -14,7 +14,9 @@ pytest
 # runner (multiplai-gui ADR 0002) needs the init system message to carry the
 # session id — on 0.1.x it never does, so commissioned sessions hang at start
 # and die on the init timeout. An already-provisioned venv volume holding 0.1.x
-# "satisfies" a bare requirement and never upgrades; the floor forces the sync.
+# "satisfies" a bare requirement and never upgrades; editing this file triggers
+# the re-sync, and the floor makes that sync actually upgrade. 0.2.116 is the
+# version the docker e2e was verified against, not necessarily the minimal fix.
 claude-agent-sdk>=0.2.116
 
 # Driver-mode runner (multiplai-gui hub, ADR 0002): WS server the hub proxies

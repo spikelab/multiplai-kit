@@ -343,7 +343,7 @@ if $HAS_DOCKER; then
   STEP=$((STEP + 1))
   IMAGE_NAME="${IMAGE_NAME:-claude-multiplai:local}"
   CONTAINER_REPO="${CONTAINER_REPO:-https://github.com/spikelab/multiplai-container}"
-  CONTAINER_REF="${CONTAINER_REF:-v0.4}"
+  CONTAINER_REF="${CONTAINER_REF:-v0.5}"
   echo "[$STEP/$TOTAL_STEPS] Building Docker image ($IMAGE_NAME)..."
   if [ ! -f "$SCRIPT_DIR/container/build.sh" ]; then
     echo "  Fetching container tooling ($CONTAINER_REPO @ $CONTAINER_REF)..."

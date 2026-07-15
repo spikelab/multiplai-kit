@@ -368,8 +368,10 @@ if $HAS_DOCKER; then
   # Heads-up if a newer container release exists than we're pinned to. The pin
   # (CONTAINER_REF) advances when you pull a kit that bumped it — release.sh in
   # multiplai-container does that bump. Cheap remote query; skipped if offline.
+  # `|| true` keeps this non-fatal under `set -euo pipefail`: an offline or
+  # transient ls-remote failure must skip the heads-up, not abort setup.
   NEWEST_REF=$(git ls-remote --tags --refs "$CONTAINER_REPO" 'v*' 2>/dev/null \
-    | awk -F/ '{print $NF}' | sort -V | tail -1)
+    | awk -F/ '{print $NF}' | sort -V | tail -1 || true)
   if [ -n "$NEWEST_REF" ] && [ "$NEWEST_REF" != "$CONTAINER_REF" ] \
      && [ "$(printf '%s\n%s\n' "$CONTAINER_REF" "$NEWEST_REF" | sort -V | tail -1)" = "$NEWEST_REF" ]; then
     echo "  NOTE: newer container release available: $NEWEST_REF (pinned: $CONTAINER_REF)."

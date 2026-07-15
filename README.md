@@ -461,8 +461,9 @@ it from in-flight `main` changes. The delivery chain, end to end:
    gateway the bridge invokes) is reinstalled from it.
 
 > **Never hand-edit `container/`.** It's a pinned, detached-HEAD checkout that
-> `setup.sh` re-aligns to `CONTAINER_REF` — a manual edit is transient
-> (silently reverted next setup) and invisible to everyone else. To change
+> `setup.sh` re-aligns to `CONTAINER_REF` — a manual edit is transient (reverted
+> the next time the pin advances and `setup.sh` re-checks out `container/`) and
+> invisible to everyone else. To change
 > container tooling, PR `multiplai-container` and cut a release.
 
 Pin an exact version or roll back by setting `CONTAINER_REF` in `.env` (e.g.

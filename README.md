@@ -401,8 +401,12 @@ Container mode is the default. `claude.sh` launches Docker with:
 - `--cap-drop=ALL --security-opt=no-new-privileges`
 - `CLAUDE_PLUGIN_OPTION_*` env forwarded for the sideloaded plugin
 
+`container/` is a **pinned checkout** managed by `setup.sh` (see [How the
+pieces fit together](#how-the-pieces-fit-together--and-stay-current)) — to
+*update* the container, `git pull && ./setup.sh`, not the manual build below.
+
 ```bash
-# Build the image (one-time, also done by setup.sh)
+# Manually rebuild the current pinned image (setup.sh does this for you)
 cd container && ./build.sh && cd ..
 
 # Run
@@ -412,16 +416,65 @@ cd container && ./build.sh && cd ..
 ./claude.sh --shell
 ```
 
-## Updating
+## How the pieces fit together — and stay current
 
-Pull the latest from upstream and rebuild the container if the Dockerfile changed:
+The system is **three independently-versioned parts**. Knowing which is which
+tells you how each updates:
+
+| Part | Source | Pinned by | You update it with |
+|------|--------|-----------|--------------------|
+| **Kit** — launcher, `setup.sh`, `dotfiles/`, reference docs, and the container pin | this repo (`multiplai-kit`) | your local clone's `main` | `git pull` |
+| **Container** — the Docker image + host SSH gateway | `multiplai-container`, fetched into `container/` | an **immutable tag**, `CONTAINER_REF` in `setup.sh` | `./setup.sh` (re-pins + rebuilds) |
+| **Plugins** — `multiplai-context` + the themed skill packs | marketplace (`multiplai-cc-mktplace`) | plugin versions in the marketplace | the `/plugin` menu |
+
+They version independently on purpose: a container rebuild, a kit config
+change, and a plugin skill fix are separate concerns on their own cadence.
+
+### The one-liner (kit + container)
 
 ```bash
-git pull
-cd container && ./build.sh && cd ..   # only if the Dockerfile changed
+git pull && ./setup.sh
 ```
 
-**What's safe:** all your data (`.multiplai/`, `.env`, sessions) lives in your workspace or is gitignored — updates never touch it.
+`git pull` advances the **kit** — including the `CONTAINER_REF` pin, if a new
+container release bumped it. `./setup.sh` then re-aligns `container/` to that
+pin, rebuilds the image, and reinstalls the host gateway. It also prints a
+**NOTE** when a newer container tag exists than you're pinned to.
+
+**What's safe:** your data (`.multiplai/`, `.env`, sessions, memory) lives in
+your workspace or is gitignored — updates never touch it.
+
+### How the container stays current (the tag-pin model)
+
+The container is **not** tracked from `main`. `setup.sh` fetches it at an
+**immutable tag** (`CONTAINER_REF`, e.g. `v0.4`) into a shallow `container/`
+checkout — giving every install a reproducible, known-good image and shielding
+it from in-flight `main` changes. The delivery chain, end to end:
+
+1. A fix merges to `multiplai-container` `main`. **This alone changes nothing
+   for you** — the runtime consumes tags, not `main`.
+2. A maintainer runs `multiplai-container/release.sh`: build-gated, it cuts a
+   new tag **and** bumps `CONTAINER_REF` here in the kit.
+3. You `git pull` the kit → your pin advances.
+4. You `./setup.sh` → `container/` is re-checked-out to the new tag, the image
+   rebuilds, and `~/.local/bin/container-build-gateway.sh` (the host SSH
+   gateway the bridge invokes) is reinstalled from it.
+
+> **Never hand-edit `container/`.** It's a pinned, detached-HEAD checkout that
+> `setup.sh` re-aligns to `CONTAINER_REF` — a manual edit is transient
+> (silently reverted next setup) and invisible to everyone else. To change
+> container tooling, PR `multiplai-container` and cut a release.
+
+Pin an exact version or roll back by setting `CONTAINER_REF` in `.env` (e.g.
+`CONTAINER_REF=v0.4`); it overrides the kit default.
+
+### Updating the plugins
+
+The memory/context plugin and skill packs come from the marketplace and update
+separately from the kit. Run `/plugin`, refresh the marketplace
+(`multiplai-cc-mktplace`), then update the installed plugins from the menu.
+Because `CLAUDE_CONFIG_DIR` points at the kit's `dotfiles/`, updates land in
+`dotfiles/plugins/` — nothing touches `~/.claude/`.
 
 ## Customization
 

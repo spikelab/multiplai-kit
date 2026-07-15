@@ -365,6 +365,29 @@ if $HAS_DOCKER; then
     echo "  NOTE: container/ exists but is not a git checkout — leaving as-is."
     echo "  For managed updates: rm -rf container && re-run setup.sh"
   fi
+  # Heads-up if a newer container release exists than we're pinned to. The pin
+  # (CONTAINER_REF) advances when you pull a kit that bumped it — release.sh in
+  # multiplai-container does that bump. Cheap remote query; skipped if offline.
+  NEWEST_REF=$(git ls-remote --tags --refs "$CONTAINER_REPO" 'v*' 2>/dev/null \
+    | awk -F/ '{print $NF}' | sort -V | tail -1)
+  if [ -n "$NEWEST_REF" ] && [ "$NEWEST_REF" != "$CONTAINER_REF" ] \
+     && [ "$(printf '%s\n%s\n' "$CONTAINER_REF" "$NEWEST_REF" | sort -V | tail -1)" = "$NEWEST_REF" ]; then
+    echo "  NOTE: newer container release available: $NEWEST_REF (pinned: $CONTAINER_REF)."
+    echo "        Update the kit to move the pin: git pull && ./setup.sh"
+  fi
+  # Install the host-side SSH gateway from the pinned checkout so the live copy
+  # the bridge invokes always matches the released tooling — never hand-copied
+  # (a stale hand-copy once stranded a security fix on the host). macOS-only:
+  # the bridge is the Mac host bridge (Xcode, mlx-whisper, real Chrome).
+  GATEWAY_SRC="$SCRIPT_DIR/container/container-build-gateway.sh"
+  if [ "$(uname -s)" = "Darwin" ] && [ -f "$GATEWAY_SRC" ]; then
+    mkdir -p "$HOME/.local/bin"
+    if ! cmp -s "$GATEWAY_SRC" "$HOME/.local/bin/container-build-gateway.sh" 2>/dev/null; then
+      cp "$GATEWAY_SRC" "$HOME/.local/bin/container-build-gateway.sh"
+      chmod +x "$HOME/.local/bin/container-build-gateway.sh"
+      echo "  Installed host SSH gateway → ~/.local/bin/container-build-gateway.sh ($CONTAINER_REF)"
+    fi
+  fi
   if [ ! -f "$SCRIPT_DIR/container/build.sh" ]; then
     # The clone/fetch above failed — there's nothing to build. Don't mislead
     # the user into debugging a "build failure" that never started.

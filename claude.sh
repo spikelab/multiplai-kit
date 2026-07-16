@@ -549,6 +549,62 @@ fi
 # "the input device is not a TTY" under pipes/CI/non-interactive shells.
 if [ -t 0 ]; then TTY_ARGS=(-it); else TTY_ARGS=(-i); fi
 
+# Take-back relaunch arg filter: a resume must never replay the one-shot
+# prompt. Drops -p/--print and EVERY positional — the claude CLI accepts the
+# prompt as a positional anywhere on the line, not just after -p, and a
+# resume never needs the original prompt. Flags survive, and a value-taking
+# flag keeps its value(s) so they are never mistaken for positionals. The
+# three flag lists mirror `claude --help` (CLI 2.1.207): mandatory-value,
+# variadic (<...> consumes values until the next flag, matching commander),
+# and optional-value ([value] consumes one following non-dash token). An
+# unknown future value-flag degrades safely: the flag survives, its value is
+# dropped as a positional — a visible CLI error on relaunch, never a
+# replayed prompt. Result lands in FILTERED_ARGS.
+# (Same function in scripts/claude-wrapped — keep the two in sync.)
+filter_resume_args() {
+    FILTERED_ARGS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p|--print)
+                # one-shot print mode: drop
+                shift; continue ;;
+            --)
+                # everything after -- is positional: drop it all
+                break ;;
+            --agent|--append-system-prompt|--debug-file|--effort|--fallback-model|\
+--input-format|--json-schema|--max-budget-usd|--model|-n|--name|\
+--output-format|--permission-mode|--plugin-dir|--plugin-url|\
+--remote-control-session-name-prefix|--session-id|--setting-sources|\
+--settings|--system-prompt)
+                # mandatory-value flag: keep flag + its value
+                FILTERED_ARGS+=("$1"); shift
+                if [ $# -gt 0 ]; then FILTERED_ARGS+=("$1"); shift; fi
+                continue ;;
+            --add-dir|--allowedTools|--allowed-tools|--disallowedTools|\
+--disallowed-tools|--betas|--file|--mcp-config|--tools)
+                # variadic flag: keep flag + every following non-dash value
+                FILTERED_ARGS+=("$1"); shift
+                while [ $# -gt 0 ]; do
+                    case "$1" in -*) break ;; *) FILTERED_ARGS+=("$1"); shift ;; esac
+                done
+                continue ;;
+            -d|--debug|--from-pr|--prompt-suggestions|--remote-control|-r|--resume|-w|--worktree)
+                # optional-value flag: keep flag + one following non-dash value
+                FILTERED_ARGS+=("$1"); shift
+                if [ $# -gt 0 ]; then
+                    case "$1" in -*) ;; *) FILTERED_ARGS+=("$1"); shift ;; esac
+                fi
+                continue ;;
+            -*)
+                # boolean flag or --flag=value form: keep as-is
+                FILTERED_ARGS+=("$1"); shift; continue ;;
+            *)
+                # positional (the prompt can be one, anywhere): drop
+                shift; continue ;;
+        esac
+    done
+}
+
 # --- Run, with the hub adoption take-back loop ---
 # The multiplai hub (multiplai-gui) can adopt a terminal-born session: it
 # writes <sid>.adopt beside the session registry entry the multiplai-context
@@ -674,30 +730,11 @@ while :; do
     [ -n "$RELEASED" ] || break
     rm -f "$MARKER"
 
-    # One-shot -p/--print (and the prompt that follows it) must not replay
-    # on the resumed session — `./claude.sh -p "deploy prod"` would re-run
-    # the side-effectful prompt. Strip them from the relaunch args.
-    FILTERED_ARGS=()
-    _i=0
-    _n=${#PASSTHROUGH_ARGS[@]}
-    while [ "$_i" -lt "$_n" ]; do
-        _a="${PASSTHROUGH_ARGS[$_i]}"
-        case "$_a" in
-            -p|--print)
-                _i=$((_i + 1))
-                # consume the trailing prompt argument, if present
-                if [ "$_i" -lt "$_n" ]; then
-                    case "${PASSTHROUGH_ARGS[$_i]}" in
-                        -*) ;;
-                        *) _i=$((_i + 1)) ;;
-                    esac
-                fi
-                continue
-                ;;
-        esac
-        FILTERED_ARGS+=("$_a")
-        _i=$((_i + 1))
-    done
+    # One-shot prompts must not replay on the resumed session —
+    # `./claude.sh "deploy prod" -p` (or the prompt as a bare positional
+    # anywhere) would re-run the side-effectful prompt. filter_resume_args
+    # (above) drops -p/--print and all positionals from the relaunch args.
+    filter_resume_args "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
     PASSTHROUGH_ARGS=("${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}")
 
     RESUME_ARGS=(--resume "$SID")

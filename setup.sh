@@ -345,9 +345,15 @@ if $HAS_DOCKER; then
   CONTAINER_REPO="${CONTAINER_REPO:-https://github.com/spikelab/multiplai-container}"
   CONTAINER_REF="${CONTAINER_REF:-v0.5}"
   echo "[$STEP/$TOTAL_STEPS] Building Docker image ($IMAGE_NAME)..."
+  # CONTAINER_AT_PIN tracks whether container/ is verifiably a git checkout at
+  # $CONTAINER_REF — the gateway install below is gated on it, so an offline
+  # or failed re-pin can never silently ship a version-skewed host gateway.
+  CONTAINER_AT_PIN=false
   if [ ! -f "$SCRIPT_DIR/container/build.sh" ]; then
     echo "  Fetching container tooling ($CONTAINER_REPO @ $CONTAINER_REF)..."
-    if ! git clone --quiet --depth 1 --branch "$CONTAINER_REF" "$CONTAINER_REPO" "$SCRIPT_DIR/container"; then
+    if git clone --quiet --depth 1 --branch "$CONTAINER_REF" "$CONTAINER_REPO" "$SCRIPT_DIR/container"; then
+      CONTAINER_AT_PIN=true
+    else
       echo "  WARNING: could not fetch multiplai-container. Container mode disabled."
       echo "  Fetch manually: git clone $CONTAINER_REPO container"
     fi
@@ -355,11 +361,16 @@ if $HAS_DOCKER; then
     # Already fetched — re-running setup.sh aligns it to the pinned ref (the
     # kit's update path: git pull + ./setup.sh).
     CURRENT_REF=$(git -C "$SCRIPT_DIR/container" describe --tags --exact-match 2>/dev/null || echo "")
-    if [ "$CURRENT_REF" != "$CONTAINER_REF" ]; then
+    if [ "$CURRENT_REF" = "$CONTAINER_REF" ]; then
+      CONTAINER_AT_PIN=true
+    else
       echo "  Updating container tooling ($CURRENT_REF → $CONTAINER_REF)..."
-      git -C "$SCRIPT_DIR/container" fetch --quiet --tags origin \
-        && git -C "$SCRIPT_DIR/container" checkout --quiet "$CONTAINER_REF" \
-        || echo "  WARNING: container update failed — still on $CURRENT_REF."
+      if git -C "$SCRIPT_DIR/container" fetch --quiet --tags origin \
+         && git -C "$SCRIPT_DIR/container" checkout --quiet "$CONTAINER_REF"; then
+        CONTAINER_AT_PIN=true
+      else
+        echo "  WARNING: container update failed — still on $CURRENT_REF."
+      fi
     fi
   else
     echo "  NOTE: container/ exists but is not a git checkout — leaving as-is."
@@ -369,37 +380,59 @@ if $HAS_DOCKER; then
   # (CONTAINER_REF) advances when you pull a kit that bumped it — release.sh in
   # multiplai-container does that bump. Cheap remote query; skipped if offline.
   # `|| true` keeps this non-fatal under `set -euo pipefail`: an offline or
-  # transient ls-remote failure must skip the heads-up, not abort setup.
-  NEWEST_REF=$(git ls-remote --tags --refs "$CONTAINER_REPO" 'v*' 2>/dev/null \
-    | awk -F/ '{print $NF}' | sort -V | tail -1 || true)
+  # transient ls-remote failure must skip the heads-up, not abort setup. The
+  # query is time-bounded so a black-hole network (SYN drop, no RST) can't
+  # stall setup: `timeout 10` where available (Linux, macOS w/ coreutils),
+  # else git's own low-speed abort (HTTP transports).
+  if command -v timeout >/dev/null 2>&1; then
+    NEWEST_REF=$(timeout 10 git ls-remote --tags --refs "$CONTAINER_REPO" 'v*' 2>/dev/null \
+      | awk -F/ '{print $NF}' | sort -V | tail -1 || true)
+  else
+    NEWEST_REF=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=10 \
+      git ls-remote --tags --refs "$CONTAINER_REPO" 'v*' 2>/dev/null \
+      | awk -F/ '{print $NF}' | sort -V | tail -1 || true)
+  fi
   if [ -n "$NEWEST_REF" ] && [ "$NEWEST_REF" != "$CONTAINER_REF" ] \
      && [ "$(printf '%s\n%s\n' "$CONTAINER_REF" "$NEWEST_REF" | sort -V | tail -1)" = "$NEWEST_REF" ]; then
     echo "  NOTE: newer container release available: $NEWEST_REF (pinned: $CONTAINER_REF)."
     echo "        Update the kit to move the pin: git pull && ./setup.sh"
   fi
-  # Install the host-side SSH gateway from the pinned checkout so the live copy
-  # the bridge invokes always matches the released tooling — never hand-copied
-  # (a stale hand-copy once stranded a security fix on the host). macOS-only:
-  # the bridge is the Mac host bridge (Xcode, mlx-whisper, real Chrome).
-  GATEWAY_SRC="$SCRIPT_DIR/container/container-build-gateway.sh"
-  if [ "$(uname -s)" = "Darwin" ] && [ -f "$GATEWAY_SRC" ]; then
-    mkdir -p "$HOME/.local/bin"
-    if ! cmp -s "$GATEWAY_SRC" "$HOME/.local/bin/container-build-gateway.sh" 2>/dev/null; then
-      cp "$GATEWAY_SRC" "$HOME/.local/bin/container-build-gateway.sh"
-      chmod +x "$HOME/.local/bin/container-build-gateway.sh"
-      echo "  Installed host SSH gateway → ~/.local/bin/container-build-gateway.sh ($CONTAINER_REF)"
-    fi
-  fi
+  BUILD_OK=false
   if [ ! -f "$SCRIPT_DIR/container/build.sh" ]; then
     # The clone/fetch above failed — there's nothing to build. Don't mislead
     # the user into debugging a "build failure" that never started.
     echo "  WARNING: container tooling not present (fetch failed above). Container mode disabled."
     echo "  Fetch manually: git clone $CONTAINER_REPO container   # then re-run ./setup.sh"
   elif bash "$SCRIPT_DIR/container/build.sh"; then
+    BUILD_OK=true
     echo "  Image built successfully."
   else
     echo "  WARNING: Docker build failed. Container mode will not work."
     echo "  Fix the build and re-run: cd container && ./build.sh"
+  fi
+  # Install the host-side SSH gateway from the pinned checkout so the live copy
+  # the bridge invokes always matches the released tooling — never hand-copied
+  # (a stale hand-copy once stranded a security fix on the host). macOS-only:
+  # the bridge is the Mac host bridge (Xcode, mlx-whisper, real Chrome).
+  # Deliberately AFTER the build gate, and gated on the re-pin: installing
+  # from an unverified or unbuilt checkout could leave the host gateway
+  # version-skewed vs the image the bridge serves.
+  GATEWAY_SRC="$SCRIPT_DIR/container/container-build-gateway.sh"
+  GATEWAY_DST="$HOME/.local/bin/container-build-gateway.sh"
+  if [ "$(uname -s)" = "Darwin" ] && [ -f "$GATEWAY_SRC" ]; then
+    if [ "$CONTAINER_AT_PIN" = true ] && [ "$BUILD_OK" = true ]; then
+      mkdir -p "$HOME/.local/bin"
+      if ! cmp -s "$GATEWAY_SRC" "$GATEWAY_DST" 2>/dev/null; then
+        cp "$GATEWAY_SRC" "$GATEWAY_DST"
+        chmod +x "$GATEWAY_DST"
+        echo "  Installed host SSH gateway → ~/.local/bin/container-build-gateway.sh ($CONTAINER_REF)"
+      fi
+    elif ! cmp -s "$GATEWAY_SRC" "$GATEWAY_DST" 2>/dev/null; then
+      echo "  WARNING: NOT installing the host SSH gateway — container/ is not verified"
+      echo "           at $CONTAINER_REF (re-pin failed or unmanaged checkout) or the image"
+      echo "           build failed. The gateway at $GATEWAY_DST"
+      echo "           may be stale vs the released tooling; fix the issue above and re-run ./setup.sh."
+    fi
   fi
 fi
 

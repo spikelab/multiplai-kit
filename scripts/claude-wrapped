@@ -16,9 +16,11 @@
 #   e.g. alias claude-w="$HOME/multiplai-kit/scripts/claude-wrapped"
 #
 # Sid discovery differs from claude.sh: every host session shares one
-# hostname, so the container-name key is ambiguous here. Instead, look for
-# adoption markers whose registry entry carries our hostname, newest entry
-# first — the session that just ended is the most recently updated one.
+# machine hostname, so the container-name key is ambiguous here. Instead,
+# this wrapper exports a per-launch HOSTNAME nonce; the registry hooks stamp
+# it into the entries of the session THIS wrapper launched, and discovery
+# matches on it exactly — a concurrent terminal's session can never be
+# picked up (and cross-released/resumed) from here.
 
 set -euo pipefail
 
@@ -56,12 +58,87 @@ WORKSPACE="${WORKSPACE%/}"
 SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"
 HOST_NAME="${HOSTNAME:-$(hostname)}"
 
-# Launch-timestamp reference: every host session shares one hostname, so
-# hostname alone can't tell "the session that just ran" from an older,
-# possibly phone-driven one. Only registry entries updated at/after this
-# pass's launch qualify (the registry refreshes the entry on every event).
+# Per-launch session linkage: every host terminal shares one machine
+# hostname, so hostname alone cannot tell THIS terminal's session from a
+# session live in a concurrent terminal — a newest-mtime pick could grab
+# (and release/resume) the other terminal's session. The registry hooks
+# stamp entries with $HOSTNAME from the environment before falling back to
+# the OS hostname (multiplai-context lib/session_registry._hostname), so
+# exporting a per-launch nonce makes every entry written by sessions THIS
+# wrapper launched carry a value no other terminal shares — an exact SID
+# linkage. The hub input contract is unaffected: `hostname?` is only
+# matched against live Docker container names (multiplai-gui discovery.py),
+# which a host value never is.
+LAUNCH_HOSTNAME="${HOST_NAME}--cw-$$-$(date +%s)"
+export HOSTNAME="$LAUNCH_HOSTNAME"
+
+# Launch-timestamp reference, kept as a second gate: only registry entries
+# updated at/after this pass's launch qualify (the registry refreshes the
+# entry on every event).
 LAUNCH_REF=$(mktemp "${TMPDIR:-/tmp}/claude-wrapped-launch.XXXXXX")
 trap 'rm -f "$LAUNCH_REF"' EXIT
+
+# Escape ERE metacharacters for the no-jq grep fallback — the machine part
+# of LAUNCH_HOSTNAME may contain dots (FQDNs), which would otherwise match
+# any character. (Bracket ordering matters: `[` must not be followed by
+# `.`/`:`/`=` or sed reads it as a collating-symbol opener.)
+_ere_escape() { printf '%s' "$1" | sed 's/[]^$*+?(){}|.\\[]/\\&/g'; }
+
+# Take-back relaunch arg filter: a resume must never replay the one-shot
+# prompt. Drops -p/--print and EVERY positional — the claude CLI accepts the
+# prompt as a positional anywhere on the line, not just after -p, and a
+# resume never needs the original prompt. Flags survive, and a value-taking
+# flag keeps its value(s) so they are never mistaken for positionals. The
+# three flag lists mirror `claude --help` (CLI 2.1.207): mandatory-value,
+# variadic (<...> consumes values until the next flag, matching commander),
+# and optional-value ([value] consumes one following non-dash token). An
+# unknown future value-flag degrades safely: the flag survives, its value is
+# dropped as a positional — a visible CLI error on relaunch, never a
+# replayed prompt. Result lands in FILTERED_ARGS.
+# (Same function in claude.sh — keep the two in sync.)
+filter_resume_args() {
+    FILTERED_ARGS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p|--print)
+                # one-shot print mode: drop
+                shift; continue ;;
+            --)
+                # everything after -- is positional: drop it all
+                break ;;
+            --agent|--append-system-prompt|--debug-file|--effort|--fallback-model|\
+--input-format|--json-schema|--max-budget-usd|--model|-n|--name|\
+--output-format|--permission-mode|--plugin-dir|--plugin-url|\
+--remote-control-session-name-prefix|--session-id|--setting-sources|\
+--settings|--system-prompt)
+                # mandatory-value flag: keep flag + its value
+                FILTERED_ARGS+=("$1"); shift
+                if [ $# -gt 0 ]; then FILTERED_ARGS+=("$1"); shift; fi
+                continue ;;
+            --add-dir|--allowedTools|--allowed-tools|--disallowedTools|\
+--disallowed-tools|--betas|--file|--mcp-config|--tools)
+                # variadic flag: keep flag + every following non-dash value
+                FILTERED_ARGS+=("$1"); shift
+                while [ $# -gt 0 ]; do
+                    case "$1" in -*) break ;; *) FILTERED_ARGS+=("$1"); shift ;; esac
+                done
+                continue ;;
+            -d|--debug|--from-pr|--prompt-suggestions|--remote-control|-r|--resume|-w|--worktree)
+                # optional-value flag: keep flag + one following non-dash value
+                FILTERED_ARGS+=("$1"); shift
+                if [ $# -gt 0 ]; then
+                    case "$1" in -*) ;; *) FILTERED_ARGS+=("$1"); shift ;; esac
+                fi
+                continue ;;
+            -*)
+                # boolean flag or --flag=value form: keep as-is
+                FILTERED_ARGS+=("$1"); shift; continue ;;
+            *)
+                # positional (the prompt can be one, anywhere): drop
+                shift; continue ;;
+        esac
+    done
+}
 
 RESUME_ARGS=()
 CLAUDE_STATUS=0
@@ -72,19 +149,22 @@ while :; do
 
     [ -n "$WORKSPACE" ] || break
 
-    # Adoption markers addressed at a session of THIS host that was active
-    # during THIS run (entry mtime >= launch ref), newest registry entry
-    # first. Best-effort at every step: no registry (plugin not installed),
-    # no match, or no marker all mean "normal exit".
+    # Adoption markers addressed at a session THIS wrapper launched: the
+    # entry must carry this launch's HOSTNAME nonce (exact match — a
+    # concurrent terminal's sessions carry a different nonce, or the plain
+    # machine hostname) and have been updated during THIS run (entry mtime
+    # >= launch ref). Newest registry entry first. Best-effort at every
+    # step: no registry (plugin not installed), no match, or no marker all
+    # mean "normal exit".
     SID=""
     while IFS= read -r ENTRY; do
         # Skip entries untouched since this pass launched — they belong to
         # other/older sessions and must not be released from here.
         [ "$LAUNCH_REF" -nt "$ENTRY" ] && continue
         if command -v jq >/dev/null 2>&1; then
-            jq -e --arg h "$HOST_NAME" '.hostname == $h' "$ENTRY" >/dev/null 2>&1 || continue
+            jq -e --arg h "$LAUNCH_HOSTNAME" '.hostname == $h' "$ENTRY" >/dev/null 2>&1 || continue
         else
-            grep -qsE "\"hostname\"[[:space:]]*:[[:space:]]*\"$HOST_NAME\"" "$ENTRY" || continue
+            grep -qsE "\"hostname\"[[:space:]]*:[[:space:]]*\"$(_ere_escape "$LAUNCH_HOSTNAME")\"" "$ENTRY" || continue
         fi
         CAND=$(basename "$ENTRY" .json)
         if [ -f "$SESSIONS_DIR/$CAND.adopt" ]; then
@@ -147,23 +227,10 @@ while :; do
     [ -n "$RELEASED" ] || break
     rm -f "$MARKER"
 
-    # One-shot -p/--print (and the prompt that follows it) must not replay
-    # on the resumed session — strip them from the relaunch args.
-    FILTERED_ARGS=()
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            -p|--print)
-                shift
-                # consume the trailing prompt argument, if present
-                if [ $# -gt 0 ]; then
-                    case "$1" in -*) ;; *) shift ;; esac
-                fi
-                continue
-                ;;
-        esac
-        FILTERED_ARGS+=("$1")
-        shift
-    done
+    # One-shot prompts must not replay on the resumed session — a prompt can
+    # be a bare positional anywhere, not just after -p. filter_resume_args
+    # (above) drops -p/--print and all positionals from the relaunch args.
+    filter_resume_args "$@"
     set -- "${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}"
 
     RESUME_ARGS=(--resume "$SID")

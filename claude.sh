@@ -26,6 +26,16 @@
 #                       --rm container that dies at startup keeps its logs).
 #                       Requires MULTIPLAI_DRIVER_TOKEN in the environment
 #                       (forwarded to the container via -e passthrough, never argv).
+#                       Notes:
+#                       - `driver` must be the FIRST argument ($1); anywhere
+#                         else it is treated as a claude prompt/passthrough.
+#                       - Driver flags accept only the space-separated form
+#                         (--sid <x>, not --sid=x).
+#                       - Driver containers intentionally omit the SSH agent
+#                         mount that interactive containers get — a hub-owned
+#                         driver should never perform SSH-authenticated
+#                         operations with the user's agent (parity gap vs
+#                         interactive mode is deliberate).
 #
 # Usage:
 #   ./claude.sh                         # container, default profile
@@ -148,6 +158,12 @@ if [ "$DRIVER_MODE" -eq 1 ] && [ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]; then
     echo "Error: unknown driver-mode arguments: ${PASSTHROUGH_ARGS[*]}" >&2
     exit 1
 fi
+if [ "$DRIVER_MODE" -eq 1 ] && [ ${#CLAUDE_ONLY_ARGS[@]} -gt 0 ]; then
+    # These are claude-CLI flags for the interactive modes; the driver runs
+    # the hub's runner, not claude — silently ignoring them would mislead.
+    echo "Error: unsupported driver-mode arguments: ${CLAUDE_ONLY_ARGS[*]}" >&2
+    exit 1
+fi
 
 # --- Load .env (base config) ---
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
@@ -230,8 +246,20 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
         echo "Error: driver mode requires --runner <path to driver_runner.py> (got: '${DRV_RUNNER:-<unset>}')" >&2
         exit 1
     fi
-    case "$DRV_RUNNER" in
-        "$WORKSPACE"/*|"$SCRIPT_DIR"/*) ;;
+    # Containment checks run on CANONICALIZED paths (symlinks and `..`
+    # resolved via cd + pwd -P) so a crafted `$WORKSPACE/../outside` can't
+    # slip past the prefix match. The original user-supplied paths are what
+    # still reaches docker — the bind mounts use the un-canonicalized
+    # $WORKSPACE/$SCRIPT_DIR, which is what's valid inside the container.
+    _canon_dir() { (cd "$1" 2>/dev/null && pwd -P); }
+    WORKSPACE_REAL=$(_canon_dir "$WORKSPACE") || WORKSPACE_REAL="$WORKSPACE"
+    KIT_REAL=$(_canon_dir "$SCRIPT_DIR") || KIT_REAL="$SCRIPT_DIR"
+    DRV_RUNNER_REAL=""
+    if _RUNNER_DIR_REAL=$(_canon_dir "$(dirname "$DRV_RUNNER")"); then
+        DRV_RUNNER_REAL="$_RUNNER_DIR_REAL/$(basename "$DRV_RUNNER")"
+    fi
+    case "$DRV_RUNNER_REAL" in
+        "$WORKSPACE_REAL"/*|"$KIT_REAL"/*) ;;
         *)
             echo "Error: --runner must live under \$WORKSPACE or the kit root (it reaches the container via the bind mounts): $DRV_RUNNER" >&2
             exit 1
@@ -242,8 +270,9 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
         echo "Error: --project-dir is not a directory: $DRV_PROJECT_DIR" >&2
         exit 1
     fi
-    case "$DRV_PROJECT_DIR/" in
-        "$WORKSPACE/"*) ;;
+    DRV_PROJECT_DIR_REAL=$(_canon_dir "$DRV_PROJECT_DIR") || DRV_PROJECT_DIR_REAL=""
+    case "$DRV_PROJECT_DIR_REAL/" in
+        "$WORKSPACE_REAL/"*) ;;
         *)
             echo "Error: --project-dir must be inside \$WORKSPACE: $DRV_PROJECT_DIR" >&2
             exit 1
@@ -549,6 +578,62 @@ fi
 # "the input device is not a TTY" under pipes/CI/non-interactive shells.
 if [ -t 0 ]; then TTY_ARGS=(-it); else TTY_ARGS=(-i); fi
 
+# Take-back relaunch arg filter: a resume must never replay the one-shot
+# prompt. Drops -p/--print and EVERY positional — the claude CLI accepts the
+# prompt as a positional anywhere on the line, not just after -p, and a
+# resume never needs the original prompt. Flags survive, and a value-taking
+# flag keeps its value(s) so they are never mistaken for positionals. The
+# three flag lists mirror `claude --help` (CLI 2.1.207): mandatory-value,
+# variadic (<...> consumes values until the next flag, matching commander),
+# and optional-value ([value] consumes one following non-dash token). An
+# unknown future value-flag degrades safely: the flag survives, its value is
+# dropped as a positional — a visible CLI error on relaunch, never a
+# replayed prompt. Result lands in FILTERED_ARGS.
+# (Same function in scripts/claude-wrapped — keep the two in sync.)
+filter_resume_args() {
+    FILTERED_ARGS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p|--print)
+                # one-shot print mode: drop
+                shift; continue ;;
+            --)
+                # everything after -- is positional: drop it all
+                break ;;
+            --agent|--append-system-prompt|--debug-file|--effort|--fallback-model|\
+--input-format|--json-schema|--max-budget-usd|--model|-n|--name|\
+--output-format|--permission-mode|--plugin-dir|--plugin-url|\
+--remote-control-session-name-prefix|--session-id|--setting-sources|\
+--settings|--system-prompt)
+                # mandatory-value flag: keep flag + its value
+                FILTERED_ARGS+=("$1"); shift
+                if [ $# -gt 0 ]; then FILTERED_ARGS+=("$1"); shift; fi
+                continue ;;
+            --add-dir|--allowedTools|--allowed-tools|--disallowedTools|\
+--disallowed-tools|--betas|--file|--mcp-config|--tools)
+                # variadic flag: keep flag + every following non-dash value
+                FILTERED_ARGS+=("$1"); shift
+                while [ $# -gt 0 ]; do
+                    case "$1" in -*) break ;; *) FILTERED_ARGS+=("$1"); shift ;; esac
+                done
+                continue ;;
+            -d|--debug|--from-pr|--prompt-suggestions|--remote-control|-r|--resume|-w|--worktree)
+                # optional-value flag: keep flag + one following non-dash value
+                FILTERED_ARGS+=("$1"); shift
+                if [ $# -gt 0 ]; then
+                    case "$1" in -*) ;; *) FILTERED_ARGS+=("$1"); shift ;; esac
+                fi
+                continue ;;
+            -*)
+                # boolean flag or --flag=value form: keep as-is
+                FILTERED_ARGS+=("$1"); shift; continue ;;
+            *)
+                # positional (the prompt can be one, anywhere): drop
+                shift; continue ;;
+        esac
+    done
+}
+
 # --- Run, with the hub adoption take-back loop ---
 # The multiplai hub (multiplai-gui) can adopt a terminal-born session: it
 # writes <sid>.adopt beside the session registry entry the multiplai-context
@@ -674,30 +759,11 @@ while :; do
     [ -n "$RELEASED" ] || break
     rm -f "$MARKER"
 
-    # One-shot -p/--print (and the prompt that follows it) must not replay
-    # on the resumed session — `./claude.sh -p "deploy prod"` would re-run
-    # the side-effectful prompt. Strip them from the relaunch args.
-    FILTERED_ARGS=()
-    _i=0
-    _n=${#PASSTHROUGH_ARGS[@]}
-    while [ "$_i" -lt "$_n" ]; do
-        _a="${PASSTHROUGH_ARGS[$_i]}"
-        case "$_a" in
-            -p|--print)
-                _i=$((_i + 1))
-                # consume the trailing prompt argument, if present
-                if [ "$_i" -lt "$_n" ]; then
-                    case "${PASSTHROUGH_ARGS[$_i]}" in
-                        -*) ;;
-                        *) _i=$((_i + 1)) ;;
-                    esac
-                fi
-                continue
-                ;;
-        esac
-        FILTERED_ARGS+=("$_a")
-        _i=$((_i + 1))
-    done
+    # One-shot prompts must not replay on the resumed session —
+    # `./claude.sh "deploy prod" -p` (or the prompt as a bare positional
+    # anywhere) would re-run the side-effectful prompt. filter_resume_args
+    # (above) drops -p/--print and all positionals from the relaunch args.
+    filter_resume_args "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
     PASSTHROUGH_ARGS=("${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}")
 
     RESUME_ARGS=(--resume "$SID")

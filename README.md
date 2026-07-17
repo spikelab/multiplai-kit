@@ -135,6 +135,15 @@ The plugin's routing is project-aware. When you start a session and mention a pr
 
 `claude.sh` also passes through `--plugin-dir` / `--add-dir` to the underlying `claude` invocation (and keeps them out of `bash` in `--shell` mode), plus `--strict-mcp-config` to isolate account-level MCP integrations.
 
+### Driver subcommand (hub-launched)
+
+`./claude.sh driver --sid <uuid|new> --port <n> --runner <path>` starts a detached, non-interactive driver container for the multiplai hub (multiplai-gui, ADR 0002) — the hub owns its lifecycle. Notes:
+
+- `driver` must be the **first** argument; anywhere else it is treated as a claude prompt/passthrough.
+- Driver flags accept only the space-separated form (`--sid x`, not `--sid=x`).
+- `--plugin-dir` / `--add-dir` are rejected in driver mode (they are claude-CLI flags; the driver runs the hub's runner, not claude).
+- Driver containers **intentionally omit the SSH agent mount** that interactive containers get: a hub-owned driver should never perform SSH-authenticated operations with the user's agent. This parity gap vs interactive mode is deliberate.
+
 ### Hub adoption take-back (optional)
 
 If you run the multiplai hub (multiplai-gui), it can **adopt** a session you

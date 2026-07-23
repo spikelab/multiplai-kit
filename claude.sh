@@ -489,6 +489,11 @@ ENV_ARGS=(
     -e GH_TOKEN="${GH_TOKEN:-}"
     -e SSH_BUILD_USER="${SSH_BUILD_USER:-}"
     -e WORKSPACE="$WORKSPACE"
+    # plan-cli's data dir. plan-cli defaults to ~/planning, which inside the
+    # container is /home/agent/planning — empty, and gone on exit. Pointing both
+    # host and container at $WORKSPACE/.planning (bind-mounted at the identical
+    # path, see MOUNTS) converges them on one real backlog DB.
+    -e PLANNING_DIR="${PLANNING_DIR:-$WORKSPACE/.planning}"
     -e HOST_HOME="$HOME"
     -e CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
     -e CLAUDE_MULTIPLAI_HOME="$SCRIPT_DIR"

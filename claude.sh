@@ -497,6 +497,13 @@ ENV_ARGS=(
     -e HOST_HOME="$HOME"
     -e CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
     -e CLAUDE_MULTIPLAI_HOME="$SCRIPT_DIR"
+    # Where multiplai-context's skills-catalog generator looks for local skills.
+    # It defaults to ~/.claude/skills, which isn't where this kit keeps them —
+    # without this, skills under dotfiles/skills/ never make it into the routing
+    # catalog. pluginConfigs don't reach the container as env vars (verified), so
+    # the value has to come from here. A caller-set value wins: the
+    # CLAUDE_PLUGIN_OPTION_* forwarding loop below appends after this line.
+    -e CLAUDE_PLUGIN_OPTION_skills_dir="$DOTFILES_DIR/skills"
     # The entrypoint's ~/.claude-cli refresh owns CLI updates; the in-app
     # auto-updater targets the root-owned global npm prefix and fails with a
     # per-session nag. Set here as well as in the image so containers built

@@ -65,6 +65,10 @@ captainslog/
 # that a given machine adds beyond the shipped README.
 dotfiles/skills/*
 !dotfiles/skills/README.md
+# Exception: `prioritize` is a real codebase (package + 80-odd tests), not a
+# one-file local skill, so it's tracked. It stays here rather than in the
+# marketplace because it only works against a plan-cli install.
+!dotfiles/skills/prioritize/
 
 # BuildMe/OpenSpec change proposals (per-project working state, not shipped)
 specs/

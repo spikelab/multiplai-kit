@@ -247,7 +247,7 @@ multiplai-kit/                          # = the "runtime" / kit repo
 │
 ├── evals/                 # Unit tests for the kit's own live code (project root, NOT in dotfiles/)
 ├── container/             # Dockerfile, build.sh, venv-sync-entrypoint.sh, apple-containers-experiment.sh
-├── scripts/               # sync_skill_config.py (skill model/effort sync)
+├── scripts/               # claude-wrapped (session launcher helper)
 ├── workspace-scaffold/    # Templates for a new workspace (CLAUDE.md.template, memory/)
 │
 ├── docs/                  # SKILLS.md, HOOKS.md, CUSTOMIZATION.md, PROFILES.md
@@ -375,11 +375,11 @@ Separate from the plugin. `multiplai.conf` (project root, **not** in `dotfiles/`
 | `MULTIPLAI_LOG_LEVEL` | `INFO` | Component log verbosity |
 | `MULTIPLAI_LOG_RETENTION_DAYS` | `0` | Rotated-log retention (`0` = keep forever) |
 
-Per-skill `[section]` overrides set exact model/effort for a named skill; run `python scripts/sync_skill_config.py` after editing (setup.sh does this automatically).
+These ceilings apply to hooks and to the buildme / deep-research SDK pipelines. They do **not** configure Claude Code skills — a skill's model and effort come from its `SKILL.md` frontmatter and nothing else. Retune a skill by editing its frontmatter in the `multiplai-cc-mktplace` repo.
 
 ### Eval Suite
 
-Unit tests at `evals/` (project root) covering the kit's **own live code** — the model-ceiling resolver, `multiplai.conf` loading, and `sync_skill_config.py`. Free, fast, no API key.
+Unit tests at `evals/` (project root) covering the kit's **own live code** — the model-ceiling resolver and `multiplai.conf` loading. Free, fast, no API key.
 
 ```bash
 .venv/bin/python -m pytest evals/ -q

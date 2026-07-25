@@ -76,7 +76,7 @@ uv pip install --python .venv/bin/python -r requirements.txt
 
 ## Running Evals
 
-Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's **own live code** only — model-ceiling resolver, `multiplai.conf` loading, and `sync_skill_config.py`. Free, fast, no API key. See `evals/README.md`.
+Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's **own live code** only — model-ceiling resolver and `multiplai.conf` loading. Free, fast, no API key. See `evals/README.md`.
 
 ```bash
 # From the repo root
@@ -87,7 +87,6 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 |------|--------|
 | `evals/unit/test_model_resolver.py` | Model-ceiling logic (`dotfiles/hooks/model_resolver.py`) |
 | `evals/unit/test_config_loading.py` | `multiplai.conf` parsing |
-| `evals/unit/test_sync_skill_config.py` | `scripts/sync_skill_config.py` |
 
 **The memory / routing / learnings evals are gone** — they tested the retired in-tree hooks and were removed with them. Those mechanisms now live in the `multiplai-context` plugin, which has its own `tests/` (run from the plugin dir). Threshold for the kit tests: 100% (any failure is a bug).
 
@@ -116,7 +115,9 @@ The skill library ships as themed marketplace plugins (`multiplai-pm`, `multipla
 
 ## Configuration
 
-`multiplai.conf` (at the kit project root, NOT in dotfiles/) sets the model/effort ceilings, log level/retention, and per-skill overrides for the **in-tree skills**. Changes take effect on next invocation. See the file for documentation on each setting.
+`multiplai.conf` (at the kit project root, NOT in dotfiles/) sets the model/effort ceilings for hooks and the buildme / deep-research SDK pipelines, plus log level/retention and per-task model tiers. Changes take effect on next invocation. See the file for documentation on each setting.
+
+**It does not configure Claude Code skills.** A skill's `model` and `effort` come from its own `SKILL.md` frontmatter and nothing else — Claude Code offers no override (`skillOverrides` is on/off/user-invocable-only and short-circuits to "on" for plugin skills; `pluginConfigs.options` are handed to the plugin, never read to pick a model). To retune a skill, edit its frontmatter in `multiplai-cc-mktplace`.
 
 `dotfiles/settings.json` controls Claude Code settings (hooks, permissions, UI). Changes take effect on next session start.
 
@@ -139,7 +140,7 @@ Run the kit's unit tests after any change to live kit code:
 | File | Purpose |
 |------|---------|
 | `dotfiles/settings.json` | Registers the `validate-syntax` hook; `pluginConfigs["multiplai-context@multiplai"]`; statusline; permissions |
-| `multiplai.conf` | Kit config (model/effort ceiling, per-skill overrides) — at project root, NOT in dotfiles/ |
+| `multiplai.conf` | Kit config (model/effort ceiling for hooks + SDK pipelines, per-task tiers) — at project root, NOT in dotfiles/ |
 | `dotfiles/hooks/validate-syntax.sh` | The one runtime hook still registered (PostToolUse Write\|Edit) |
 | `dotfiles/hooks/model_resolver.py` | Model-ceiling logic for in-tree skills |
 | `dotfiles/hooks/log_utils.py` | Shared logging helper (used via PYTHONPATH by plugin skills — buildme, deep-research) |

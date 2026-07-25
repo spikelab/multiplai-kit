@@ -1,7 +1,7 @@
 """Shared test infrastructure for the kit eval suite.
 
 Scope: these tests cover the kit's *own* live code — the model-ceiling
-resolver, `multiplai.conf` loading, and `sync_skill_config.py`. The memory /
+resolver and `multiplai.conf` loading. The memory /
 context / learning system now lives in the `multiplai-context` plugin
 (published in the `multiplai-cc-mktplace` repo), which has its own `tests/`.
 """

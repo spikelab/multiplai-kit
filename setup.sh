@@ -121,7 +121,7 @@ if ! $HAS_DOCKER; then
 fi
 
 # --- Step 1: Create workspace directories ---
-TOTAL_STEPS=$( $HAS_DOCKER && echo 10 || echo 9 )
+TOTAL_STEPS=$( $HAS_DOCKER && echo 9 || echo 8 )
 STEP=1
 
 echo "[$STEP/$TOTAL_STEPS] Creating workspace directories..."
@@ -322,20 +322,7 @@ else
   echo "    /plugin install multiplai-context@multiplai"
 fi
 
-# --- Step 9: Sync skill model/effort from multiplai.conf ---
-STEP=$((STEP + 1))
-echo "[$STEP/$TOTAL_STEPS] Syncing skill config from multiplai.conf..."
-if ! compgen -G "$DOTFILES_DIR/skills/*/SKILL.md" > /dev/null; then
-  echo "  No local skills yet — nothing to sync (skill packs come from the marketplace)."
-elif CLAUDE_CONFIG_DIR="$DOTFILES_DIR" CLAUDE_MULTIPLAI_HOME="$SCRIPT_DIR" \
-     "$VENV_DIR/bin/python" "$SCRIPT_DIR/scripts/sync_skill_config.py"; then
-  echo "  Skill frontmatter synced."
-else
-  echo "  Warning: Could not sync skill config (see error above). Run manually:"
-  echo "    CLAUDE_CONFIG_DIR=dotfiles python scripts/sync_skill_config.py"
-fi
-
-# --- Step 10: Build Docker image (if Docker available) ---
+# --- Step 9: Build Docker image (if Docker available) ---
 # Container tooling lives in its own repo (spikelab/multiplai-container),
 # fetched here at a pinned tag. Override CONTAINER_REPO/CONTAINER_REF in .env
 # to track a fork or a different version.

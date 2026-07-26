@@ -207,13 +207,19 @@ Profile files override only:
 - `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL`
 - `GH_TOKEN_KEYCHAIN` — macOS Keychain key for the GitHub token
 - `CLAUDE_CREDENTIALS_FILE` — separate Claude OAuth credentials file per profile
-- `GEMINI_CONFIG_DIR` — optional separate Gemini CLI config dir
+- `GEMINI_CONFIG_DIR` — optional separate Gemini CLI config dir (only mounted when `MULTIPLAI_MOUNT_GEMINI=1`; see [What credentials enter the container](#what-credentials-enter-the-container))
 
 Without `--profile`, only `.env` is loaded. For a full walkthrough — Keychain setup, separate Claude login, a worked example — see [`docs/PROFILES.md`](docs/PROFILES.md).
 
 ### How Skills Access Secrets
 
 Skills that need secrets (e.g. `deep-research` uses `TAVILY_API_KEY`, `EXA_API_KEY`; optionally `BRAVE_API_KEY`, `SERPER_API_KEY`) load them from `.env` automatically via `python-dotenv`. No per-skill config files. Add the key to `.env` (and document it in `.env.example`) and the skill picks it up on next launch. Shell-exported env vars take precedence over `.env` values:
+
+> **Messaging secrets are the exception.** `SLACK_TOKEN` and the `GMAIL_*` trio
+> can send mail and post as you, so being present in `.env` is not enough — they
+> reach the container only when their group is named in `MULTIPLAI_SKILL_SECRETS`
+> (e.g. `MULTIPLAI_SKILL_SECRETS="gmail slack"`). See
+> [What credentials enter the container](#what-credentials-enter-the-container).
 
 ```bash
 TAVILY_API_KEY=override-key ./claude.sh
@@ -501,6 +507,34 @@ tail -f <workspace>/.multiplai/data/logs/activity.log
 ```
 
 `MULTIPLAI_DEBUG=1 claude` makes every plugin script emit DEBUG detail. See the plugin `README.md` → Observability for how to read a routing line.
+
+## What credentials enter the container
+
+Sessions run with tool permissions bypassed — the container is the sandbox, so
+anything mounted or forwarded into it is reachable by the agent, and by any
+prompt injection that lands in a page it fetches. This is the complete list, so
+you can decide what to hand over before you hand it over rather than after.
+
+| Credential | How it enters | Default | Blast radius |
+|---|---|---|---|
+| Claude credentials | mount → `.credentials.json` | **always** | Your Claude subscription. Required — this is the product. |
+| `GH_TOKEN` | `-e` from `.env` or macOS Keychain | when set | Whatever the token is scoped to. Use a **fine-grained** token limited to the repos you work on; a classic `repo` token exposes every repo your account can reach. |
+| SSH agent socket | mount → `/ssh-agent.sock` | when `SSH_AUTH_SOCK` set | Every key in your agent, usable for the container's lifetime (keys aren't copied, but signing requests are honoured). `ssh-add -D` before an autonomous run if that matters. |
+| SSH build key | mount `:ro` | when `SSH_BUILD_KEY` set | The host bridge account. Deny-by-default on the host side (`container-build-gateway.sh`). |
+| Search API keys | `-e` from `.env` | when set | Metered spend on Tavily/Exa/Brave/Serper. |
+| `SLACK_TOKEN` | `-e`, **opt-in** | off | Posting as you in your workspace. Requires `MULTIPLAI_SKILL_SECRETS="slack"`. |
+| `GMAIL_*` trio | `-e`, **opt-in** | off | Reading and sending as your account. Requires `MULTIPLAI_SKILL_SECRETS="gmail"`. |
+| `~/.gemini/` | mount **rw**, **opt-in** | off | OAuth refresh tokens + `history/` of past prompts. Requires `MULTIPLAI_MOUNT_GEMINI=1`. |
+| GCP service-account key | mount `:ro` | only with `--gcp <name>` | Whatever the service account can do. |
+| Workspace | mount **rw** | **always** | Your files. This is the point of the tool. |
+
+**Opt-in means opt-in.** Leave `MULTIPLAI_SKILL_SECRETS` unset and no messaging
+secret reaches the container even if it's sitting in `.env`. If a skill then
+fails with a missing-credential error, the launcher prints which variable was
+withheld and how to enable it — the failure names its own cause.
+
+**What never happens:** the kit has no telemetry and phones nothing home. No
+credential is written into the image, into git, or into any log.
 
 ## Data & retention
 

@@ -452,11 +452,23 @@ mkdir -p "$(dirname "$CREDS_FILE")"
 touch "$CREDS_FILE"
 MOUNTS+=(-v "$CREDS_FILE:$DOTFILES_DIR/.credentials.json")
 
-# Gemini CLI credentials — mount host ~/.gemini/ so oath-personal auth persists.
-# Override GEMINI_CONFIG_DIR in env.<profile> for per-account setups.
-GEMINI_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini}"
-mkdir -p "$GEMINI_DIR"
-MOUNTS+=(-v "$GEMINI_DIR:/home/agent/.gemini")
+# Gemini CLI credentials — opt-in, OFF by default.
+#
+# This used to mount the host's entire ~/.gemini/ read-write on every launch.
+# That directory holds OAuth refresh tokens (oauth_creds.json) and history/ —
+# a record of past prompts — and the image ships no gemini binary, so the
+# default configuration exposed all of it to buy exactly nothing. Set
+# MULTIPLAI_MOUNT_GEMINI=1 in .env or env.<profile> if you've installed the
+# Gemini CLI yourself and want its auth to survive across containers.
+#
+# It stays read-write when enabled: the CLI rewrites oauth_creds.json on every
+# token refresh (verified — the file's mtime advances from inside the
+# container), so a :ro mount would break auth rather than harden it.
+if [ "${MULTIPLAI_MOUNT_GEMINI:-0}" = "1" ]; then
+    GEMINI_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini}"
+    mkdir -p "$GEMINI_DIR"
+    MOUNTS+=(-v "$GEMINI_DIR:/home/agent/.gemini")
+fi
 
 # GCP service account key (read-only) — only mounted when --gcp <name> is used
 # and the env.gcp.<name> file set GCP_KEY_FILE to a real file on host.
@@ -499,14 +511,46 @@ ENV_ARGS=(
     -e DISABLE_AUTOUPDATER=1
 )
 
-# Messaging plugin (multiplai-messaging) credentials — one allowlist to extend
+# Messaging plugin (multiplai-messaging) credentials — opt-in per group.
+#
+# These are live tokens for accounts that can send mail and post to a team's
+# Slack. Every session that gets them can use them, including sessions doing
+# unrelated work, so they are forwarded only when their group is named in
+# MULTIPLAI_SKILL_SECRETS (space-separated, in .env or env.<profile>):
+#
+#     MULTIPLAI_SKILL_SECRETS="gmail slack"
+#
+# Unset means no skill secrets enter the container. One allowlist to extend
 # for the next plugin, instead of hand-enumerating an -e line per var. Only
-# forward vars that are actually set: `-e NAME=` (empty) makes the var *present
-# but empty* in the container, which defeats a script's `os.environ.get(NAME,
-# default)` fallback (the empty string wins over the default). Skipping unset
-# vars keeps optional ones (e.g. GMAIL_TOKEN_URI) truly absent.
-for v in SLACK_TOKEN GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET GMAIL_REFRESH_TOKEN GMAIL_TOKEN_URI GMAIL_TOKEN_FILE; do
-    [ -n "${!v:-}" ] && ENV_ARGS+=(-e "$v=${!v}")
+# vars that are actually set are forwarded: `-e NAME=` (empty) makes the var
+# *present but empty* in the container, which defeats a script's
+# `os.environ.get(NAME, default)` fallback (the empty string wins over the
+# default). Skipping unset vars keeps optional ones (e.g. GMAIL_TOKEN_URI)
+# truly absent.
+SKILL_SECRET_GROUPS="${MULTIPLAI_SKILL_SECRETS:-}"
+_secrets_slack="SLACK_TOKEN"
+_secrets_gmail="GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET GMAIL_REFRESH_TOKEN GMAIL_TOKEN_URI GMAIL_TOKEN_FILE"
+
+_forwarded_secrets=""
+for _group in $SKILL_SECRET_GROUPS; do
+    _varname="_secrets_${_group}"
+    _vars="${!_varname:-}"
+    if [ -z "$_vars" ]; then
+        echo "Warning: MULTIPLAI_SKILL_SECRETS names unknown group '$_group' (known: slack gmail)" >&2
+        continue
+    fi
+    for v in $_vars; do
+        [ -n "${!v:-}" ] && ENV_ARGS+=(-e "$v=${!v}") && _forwarded_secrets="$_forwarded_secrets $v"
+    done
+done
+
+# A secret configured but not opted in is the one failure mode worth a warning:
+# the skill fails inside the container with a missing-credential error that
+# looks nothing like its cause.
+for v in SLACK_TOKEN GMAIL_CLIENT_ID GMAIL_REFRESH_TOKEN; do
+    if [ -n "${!v:-}" ] && [[ " $_forwarded_secrets " != *" $v "* ]]; then
+        echo "Note: $v is set but not forwarded — add its group to MULTIPLAI_SKILL_SECRETS in .env to enable it." >&2
+    fi
 done
 
 # Forward any CLAUDE_PLUGIN_OPTION_* vars set by the caller into the container.

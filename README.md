@@ -19,7 +19,7 @@ The kit is responsible for:
 
 ## The Memory System (the `multiplai-context` plugin)
 
-Memory, context routing, session diary, learnings, and dream consolidation are not part of this repo — they come from **`multiplai-context`**, a normal Claude Code plugin published in the marketplace repo (`spikelab/multiplai-cc-mktplace`). `setup.sh` installs it for you. The only hook the kit registers directly is `validate-syntax.sh` — so if something is off in routing, diary, or learnings, the fix belongs in the **marketplace repo**, not here.
+Memory, context routing, session diary, learnings, and dream consolidation are not part of this repo — they come from **`multiplai-context`**, a normal Claude Code plugin published in the marketplace repo (`spikelab/multiplai-cc-mktplace`). `setup.sh` installs it for you. The only hooks the kit registers directly are `validate-syntax.sh` (syntax validation) and `guard_destructive.py` (destructive-command guard) — so if something is off in routing, diary, or learnings, the fix belongs in the **marketplace repo**, not here.
 
 Inside the marketplace repo:
 
@@ -240,8 +240,8 @@ multiplai-kit/                          # = the "runtime" / kit repo
 │
 ├── dotfiles/              # = CLAUDE_CONFIG_DIR (Claude Code reads everything from here)
 │   ├── CLAUDE.md          # Global instructions (personalized by setup.sh)
-│   ├── settings.json      # Registers validate-syntax hook; pluginConfigs["multiplai-context@multiplai"]; statusline; permissions
-│   ├── hooks/             # validate-syntax.sh, run-hook-python, model_resolver.py, log_utils.py
+│   ├── settings.json      # Registers validate-syntax + guard_destructive hooks; pluginConfigs["multiplai-context@multiplai"]; statusline; permissions
+│   ├── hooks/             # validate-syntax.sh, guard_destructive.py, run-hook-python, model_resolver.py, log_utils.py
 │   ├── skills/            # Your own local skills (the skill library ships as marketplace plugins)
 │   ├── reference/dev/     # 20 best-practice docs (+ README index)
 │   ├── scripts/           # statusline.sh, file-suggestion.sh
@@ -268,11 +268,12 @@ multiplai-kit/                          # = the "runtime" / kit repo
 
 ### Hooks (in-tree)
 
-The kit registers exactly one runtime hook in `settings.json`; everything else in `dotfiles/hooks/` is a live helper:
+The kit registers exactly two runtime hooks in `settings.json`; everything else in `dotfiles/hooks/` is a live helper:
 
 | File | Role |
 |------|------|
-| `validate-syntax.sh` | PostToolUse (Write\|Edit) — validates YAML/JSON syntax. The only hook registered in `settings.json`. |
+| `validate-syntax.sh` | PostToolUse (Write\|Edit) — validates YAML/JSON syntax. |
+| `guard_destructive.py` | PreToolUse (Bash) — denies a curated set of unrecoverable commands. Sessions run with permissions bypassed (the container is the sandbox), so this is the one layer that can still say no. |
 | `run-hook-python` | Wrapper that routes Python hook scripts to the kit venv |
 | `model_resolver.py` | Model-ceiling logic (caps a requested tier via `MULTIPLAI_MODEL`) |
 | `log_utils.py` | Shared logging helper used via PYTHONPATH by plugin skills (buildme, deep-research) |

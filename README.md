@@ -1,8 +1,10 @@
 # multiplai-kit
 
+> Part of the **Multiplai suite** — see [ARCHITECTURE.md](./ARCHITECTURE.md) for how the five repos fit together and which part you need.
+
 A distributable Claude Code kit — launcher, container, reference docs, and workspace conventions as a self-contained package. Clone it, run setup, launch via the wrapper script, and get the full system without touching your existing `~/.claude/`.
 
-The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-is-now-a-plugin) plugin (memory, routing, lifecycle) plus five themed skill packs (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
+The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-the-multiplai-context-plugin) plugin (memory, routing, lifecycle) plus five themed skill packs (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
 
 ## How It Works
 
@@ -15,11 +17,11 @@ The kit is responsible for:
 - **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
 - **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
 
-## The Memory System Is Now a Plugin
+## The Memory System (the `multiplai-context` plugin)
 
-Earlier versions of this kit shipped the memory system as in-tree hooks (`context-router.py`, `session-lifecycle.py`, `extract-learnings.py`, `autodream.py`, `synthesize-now.py`) registered in `settings.json`. **Those have been extracted into a standalone plugin** and removed from this kit entirely. The only hook the kit still registers directly is `validate-syntax.sh`.
+Memory, context routing, session diary, learnings, and dream consolidation are not part of this repo — they come from **`multiplai-context`**, a normal Claude Code plugin published in the marketplace repo (`spikelab/multiplai-cc-mktplace`). `setup.sh` installs it for you. The only hook the kit registers directly is `validate-syntax.sh` — so if something is off in routing, diary, or learnings, the fix belongs in the **marketplace repo**, not here.
 
-The replacement is **`multiplai-context`**, a normal Claude Code plugin published in the marketplace repo (`spikelab/multiplai-cc-mktplace`):
+Inside the marketplace repo:
 
 ```
 multiplai-cc-mktplace/

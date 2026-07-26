@@ -6,6 +6,49 @@ A distributable Claude Code kit — launcher, container, reference docs, and wor
 
 The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-the-multiplai-context-plugin) plugin (memory, routing, lifecycle) plus six themed skill packs (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
 
+## Contents
+
+[Prerequisites](#prerequisites) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [The Memory System](#the-memory-system-the-multiplai-context-plugin) · [The Workspace Model](#the-workspace-model) · [Launcher Modes](#launcher-modes) · [Environment Configuration](#environment-configuration) · [Architecture](#architecture) · [What's Included](#whats-included) · [Container Mode](#container-mode) · [How the pieces fit together](#how-the-pieces-fit-together--and-stay-current) · [Customization](#customization) · [Logging](#logging) · [What credentials enter the container](#what-credentials-enter-the-container) · [Data & retention](#data--retention)
+
+## Prerequisites
+
+**Required:**
+- Claude Code CLI (`npm install -g @anthropic-ai/claude-code`)
+- Claude Max plan or API key (the plugin's LLM calls use the Agent SDK, with an API-key fallback)
+- Python 3.11+ and uv (or pip)
+- git
+- jq
+- ripgrep (`rg`)
+
+**Recommended:**
+- Docker / OrbStack (container mode is the default — without it, Claude runs unsandboxed on your host)
+- ffmpeg (for youtube-transcript audio fallback and the transcribe skill)
+
+**Optional (macOS only):**
+- mlx-whisper (for local audio transcription via Metal GPU)
+
+## Quick Start
+
+```bash
+# Clone
+git clone https://github.com/spikelab/multiplai-kit
+cd multiplai-kit
+
+# Configure
+cp .env.example .env
+# Edit .env: set WORKSPACE (absolute path), GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL
+
+# Setup (creates workspace, memory templates, configures the kit, builds Docker image)
+./setup.sh
+
+# Launch
+./claude.sh
+```
+
+First run prompts for authentication via `/login`. Credentials persist in `~/.claude-container/credentials.json` across container restarts. The plugin's Python scripts declare their own dependencies via PEP 723 inline metadata and run under `uv run --no-project`, so deps are resolved on demand — no manual install or managed-venv step.
+
+Not sure you want the whole kit? [`multiplai`](https://github.com/spikelab/multiplai) is the umbrella repo — it explains what the suite is, which part you actually need, and the adoption ladder from plain Claude Code up to this kit.
+
 ## How It Works
 
 Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching Claude Code. This makes Claude Code use the kit's settings, skills, reference docs, and config instead of `~/.claude/`. Your existing Claude Code config is completely untouched.
@@ -51,43 +94,6 @@ The plugin is installed **from the marketplace** (done by `setup.sh`, or manuall
 Because `CLAUDE_CONFIG_DIR` points at the kit's `dotfiles/`, the install lands in `dotfiles/plugins/` — self-contained, nothing touches `~/.claude/`. Options come from `settings.json` → `pluginConfigs["multiplai-context@multiplai"].options`; `setup.sh` fills the path options (`workspace_dir`, `skills_dir`, `resources_dir`) from your `.env`.
 
 For **plugin development**, sideload a checkout instead with `claude --plugin-dir <path-to-plugin>` and pass options via `CLAUDE_PLUGIN_OPTION_*` env vars (sideloaded plugins do not read `pluginConfigs` automatically; `claude.sh` forwards these vars into the container).
-
-## Prerequisites
-
-**Required:**
-- Claude Code CLI (`npm install -g @anthropic-ai/claude-code`)
-- Claude Max plan or API key (the plugin's LLM calls use the Agent SDK, with an API-key fallback)
-- Python 3.11+ and uv (or pip)
-- git
-- jq
-- ripgrep (`rg`)
-
-**Recommended:**
-- Docker / OrbStack (container mode is the default — without it, Claude runs unsandboxed on your host)
-- ffmpeg (for youtube-transcript audio fallback and the transcribe skill)
-
-**Optional (macOS only):**
-- mlx-whisper (for local audio transcription via Metal GPU)
-
-## Quick Start
-
-```bash
-# Clone
-git clone https://github.com/spikelab/multiplai-kit
-cd multiplai-kit
-
-# Configure
-cp .env.example .env
-# Edit .env: set WORKSPACE (absolute path), GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL
-
-# Setup (creates workspace, memory templates, configures the kit, builds Docker image)
-./setup.sh
-
-# Launch
-./claude.sh
-```
-
-First run prompts for authentication via `/login`. Credentials persist in `~/.claude-container/credentials.json` across container restarts. The plugin's Python scripts declare their own dependencies via PEP 723 inline metadata and run under `uv run --no-project`, so deps are resolved on demand — no manual install or managed-venv step.
 
 ## The Workspace Model
 

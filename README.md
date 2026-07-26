@@ -1,6 +1,6 @@
 # multiplai-kit
 
-> Part of the **Multiplai suite** — see [ARCHITECTURE.md](./ARCHITECTURE.md) for how the five repos fit together and which part you need.
+> Part of the **[Multiplai suite](https://github.com/spikelab/multiplai)** — what the suite is, how the five repos fit together, and which part you need.
 
 A distributable Claude Code kit — launcher, container, reference docs, and workspace conventions as a self-contained package. Clone it, run setup, launch via the wrapper script, and get the full system without touching your existing `~/.claude/`.
 

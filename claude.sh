@@ -10,6 +10,8 @@
 # Additional flags:
 #   --profile <name>    Load env.<name> for git identity + GH token (default: .env)
 #   --gcp <name>        Load env.gcp.<name> for GCP credentials
+#   --net <profile>     Egress profile: unrestricted (default) | restricted
+#                       (restricted is not implemented yet — it refuses)
 #   --shell             Container shell (bash instead of claude)
 #
 # Subcommand:
@@ -123,6 +125,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         --gcp=*)
             GCP_NAME="${1#--gcp=}"
+            shift
+            ;;
+        --net)
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
+            MULTIPLAI_NET="$2"
+            shift 2
+            ;;
+        --net=*)
+            MULTIPLAI_NET="${1#--net=}"
             shift
             ;;
         --local)
@@ -395,6 +406,36 @@ if [ -z "${GH_TOKEN:-}" ]; then
     fi
 fi
 
+# --- Network egress profile ---
+#
+# MULTIPLAI_NET selects how much of the internet the container can reach.
+# "unrestricted" (the default, and the only implemented value) is today's
+# behaviour: normal Docker networking, the agent can reach any host.
+#
+# "restricted" is the planned opt-in profile — an internal Docker network with
+# no route out, plus a proxy sidecar holding a hostname allowlist (the Anthropic
+# API, GitHub, PyPI, the npm registry, and entries you add). It is not built
+# yet. The flag and this validation exist so the interface is settled and a
+# request for it fails loudly and immediately, rather than silently running
+# unrestricted and leaving you believing egress was filtered — which is the
+# worse of the two failure modes by a wide margin.
+MULTIPLAI_NET="${MULTIPLAI_NET:-unrestricted}"
+case "$MULTIPLAI_NET" in
+    unrestricted)
+        ;;
+    restricted)
+        echo "Error: MULTIPLAI_NET=restricted is not implemented yet." >&2
+        echo "       Egress filtering (proxy sidecar + hostname allowlist) is planned;" >&2
+        echo "       until it lands, this refuses rather than pretending to filter." >&2
+        echo "       Use MULTIPLAI_NET=unrestricted (the default) to launch." >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: unknown MULTIPLAI_NET '$MULTIPLAI_NET' (known: unrestricted, restricted)" >&2
+        exit 1
+        ;;
+esac
+
 # --- Ensure kit-venv volume is agent-writable ---
 # New Docker named volumes are root-owned. The venv-sync entrypoint runs as
 # the agent user and can't create the venv on a fresh volume. Fix ownership
@@ -452,11 +493,23 @@ mkdir -p "$(dirname "$CREDS_FILE")"
 touch "$CREDS_FILE"
 MOUNTS+=(-v "$CREDS_FILE:$DOTFILES_DIR/.credentials.json")
 
-# Gemini CLI credentials — mount host ~/.gemini/ so oath-personal auth persists.
-# Override GEMINI_CONFIG_DIR in env.<profile> for per-account setups.
-GEMINI_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini}"
-mkdir -p "$GEMINI_DIR"
-MOUNTS+=(-v "$GEMINI_DIR:/home/agent/.gemini")
+# Gemini CLI credentials — opt-in, OFF by default.
+#
+# This used to mount the host's entire ~/.gemini/ read-write on every launch.
+# That directory holds OAuth refresh tokens (oauth_creds.json) and history/ —
+# a record of past prompts — and the image ships no gemini binary, so the
+# default configuration exposed all of it to buy exactly nothing. Set
+# MULTIPLAI_MOUNT_GEMINI=1 in .env or env.<profile> if you've installed the
+# Gemini CLI yourself and want its auth to survive across containers.
+#
+# It stays read-write when enabled: the CLI rewrites oauth_creds.json on every
+# token refresh (verified — the file's mtime advances from inside the
+# container), so a :ro mount would break auth rather than harden it.
+if [ "${MULTIPLAI_MOUNT_GEMINI:-0}" = "1" ]; then
+    GEMINI_DIR="${GEMINI_CONFIG_DIR:-$HOME/.gemini}"
+    mkdir -p "$GEMINI_DIR"
+    MOUNTS+=(-v "$GEMINI_DIR:/home/agent/.gemini")
+fi
 
 # GCP service account key (read-only) — only mounted when --gcp <name> is used
 # and the env.gcp.<name> file set GCP_KEY_FILE to a real file on host.
@@ -499,15 +552,68 @@ ENV_ARGS=(
     -e DISABLE_AUTOUPDATER=1
 )
 
-# Messaging plugin (multiplai-messaging) credentials — one allowlist to extend
-# for the next plugin, instead of hand-enumerating an -e line per var. Only
-# forward vars that are actually set: `-e NAME=` (empty) makes the var *present
-# but empty* in the container, which defeats a script's `os.environ.get(NAME,
-# default)` fallback (the empty string wins over the default). Skipping unset
-# vars keeps optional ones (e.g. GMAIL_TOKEN_URI) truly absent.
-for v in SLACK_TOKEN GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET GMAIL_REFRESH_TOKEN GMAIL_TOKEN_URI GMAIL_TOKEN_FILE; do
-    [ -n "${!v:-}" ] && ENV_ARGS+=(-e "$v=${!v}")
+# Messaging plugin (multiplai-messaging) credentials — narrowable per group.
+#
+# These are live tokens for accounts that can send mail and post to a team's
+# Slack, and every session that receives them can use them, including sessions
+# doing entirely unrelated work. MULTIPLAI_SKILL_SECRETS (space-separated, in
+# .env or env.<profile>) controls which groups are forwarded:
+#
+#     MULTIPLAI_SKILL_SECRETS="gmail"    # gmail only, slack withheld
+#     MULTIPLAI_SKILL_SECRETS=""         # forward nothing
+#
+# Unset forwards everything that is set, with a warning naming what went in.
+# The permissive default is deliberate: silently breaking a working gmail or
+# slack setup on upgrade would teach people to distrust the launcher, and the
+# warning is what makes the exposure visible enough to act on. Narrow it when
+# you know which groups you actually use.
+#
+# One allowlist to extend for the next plugin, instead of hand-enumerating an
+# -e line per var. Only vars that are actually set are forwarded: `-e NAME=`
+# (empty) makes the var *present but empty* in the container, which defeats a
+# script's `os.environ.get(NAME, default)` fallback (the empty string wins over
+# the default). Skipping unset vars keeps optional ones (e.g. GMAIL_TOKEN_URI)
+# truly absent.
+_secrets_slack="SLACK_TOKEN"
+_secrets_gmail="GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET GMAIL_REFRESH_TOKEN GMAIL_TOKEN_URI GMAIL_TOKEN_FILE"
+_SKILL_SECRET_ALL_GROUPS="slack gmail"
+
+# Distinguish "unset" (forward all, warn) from "set to empty" (forward none) —
+# ${VAR:-default} can't tell them apart, ${VAR+set} can.
+if [ -n "${MULTIPLAI_SKILL_SECRETS+set}" ]; then
+    SKILL_SECRET_GROUPS="$MULTIPLAI_SKILL_SECRETS"
+    _SKILL_SECRETS_EXPLICIT=1
+else
+    SKILL_SECRET_GROUPS="$_SKILL_SECRET_ALL_GROUPS"
+    _SKILL_SECRETS_EXPLICIT=0
+fi
+
+_forwarded_secrets=""
+for _group in $SKILL_SECRET_GROUPS; do
+    _varname="_secrets_${_group}"
+    _vars="${!_varname:-}"
+    if [ -z "$_vars" ]; then
+        echo "Warning: MULTIPLAI_SKILL_SECRETS names unknown group '$_group' (known: $_SKILL_SECRET_ALL_GROUPS)" >&2
+        continue
+    fi
+    for v in $_vars; do
+        [ -n "${!v:-}" ] && ENV_ARGS+=(-e "$v=${!v}") && _forwarded_secrets="$_forwarded_secrets $v"
+    done
 done
+
+if [ "$_SKILL_SECRETS_EXPLICIT" -eq 0 ] && [ -n "$_forwarded_secrets" ]; then
+    echo "Note: forwarding messaging secrets into the container:${_forwarded_secrets}" >&2
+    echo "      Set MULTIPLAI_SKILL_SECRETS in .env to narrow this (e.g. \"gmail\", or \"\" for none)." >&2
+elif [ "$_SKILL_SECRETS_EXPLICIT" -eq 1 ]; then
+    # A secret configured but deliberately withheld is worth naming: the skill
+    # otherwise fails inside the container with a missing-credential error that
+    # looks nothing like its cause.
+    for v in SLACK_TOKEN GMAIL_CLIENT_ID GMAIL_REFRESH_TOKEN; do
+        if [ -n "${!v:-}" ] && [[ " $_forwarded_secrets " != *" $v "* ]]; then
+            echo "Note: $v is set but withheld by MULTIPLAI_SKILL_SECRETS." >&2
+        fi
+    done
+fi
 
 # Forward any CLAUDE_PLUGIN_OPTION_* vars set by the caller into the container.
 # Sideloaded (--plugin-dir) plugins don't get pluginConfigs applied, so their

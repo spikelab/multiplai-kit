@@ -207,13 +207,19 @@ Profile files override only:
 - `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL`
 - `GH_TOKEN_KEYCHAIN` — macOS Keychain key for the GitHub token
 - `CLAUDE_CREDENTIALS_FILE` — separate Claude OAuth credentials file per profile
-- `GEMINI_CONFIG_DIR` — optional separate Gemini CLI config dir
+- `GEMINI_CONFIG_DIR` — optional separate Gemini CLI config dir (only mounted when `MULTIPLAI_MOUNT_GEMINI=1`; see [What credentials enter the container](#what-credentials-enter-the-container))
 
 Without `--profile`, only `.env` is loaded. For a full walkthrough — Keychain setup, separate Claude login, a worked example — see [`docs/PROFILES.md`](docs/PROFILES.md).
 
 ### How Skills Access Secrets
 
 Skills that need secrets (e.g. `deep-research` uses `TAVILY_API_KEY`, `EXA_API_KEY`; optionally `BRAVE_API_KEY`, `SERPER_API_KEY`) load them from `.env` automatically via `python-dotenv`. No per-skill config files. Add the key to `.env` (and document it in `.env.example`) and the skill picks it up on next launch. Shell-exported env vars take precedence over `.env` values:
+
+> **Messaging secrets are the exception.** `SLACK_TOKEN` and the `GMAIL_*` trio
+> can send mail and post as you, so being present in `.env` is not enough — they
+> reach the container only when their group is named in `MULTIPLAI_SKILL_SECRETS`
+> (e.g. `MULTIPLAI_SKILL_SECRETS="gmail slack"`). See
+> [What credentials enter the container](#what-credentials-enter-the-container).
 
 ```bash
 TAVILY_API_KEY=override-key ./claude.sh
@@ -501,3 +507,78 @@ tail -f <workspace>/.multiplai/data/logs/activity.log
 ```
 
 `MULTIPLAI_DEBUG=1 claude` makes every plugin script emit DEBUG detail. See the plugin `README.md` → Observability for how to read a routing line.
+
+## What credentials enter the container
+
+Sessions run with tool permissions bypassed — the container is the sandbox, so
+anything mounted or forwarded into it is reachable by the agent, and by any
+prompt injection that lands in a page it fetches. This is the complete list, so
+you can decide what to hand over before you hand it over rather than after.
+
+| Credential | How it enters | Default | Blast radius |
+|---|---|---|---|
+| Claude credentials | mount → `.credentials.json` | **always** | Your Claude subscription. Required — this is the product. |
+| `GH_TOKEN` | `-e` from `.env` or macOS Keychain | when set | Whatever the token is scoped to. Use a **fine-grained** token limited to the repos you work on; a classic `repo` token exposes every repo your account can reach. |
+| SSH agent socket | mount → `/ssh-agent.sock` | when `SSH_AUTH_SOCK` set | Every key in your agent, usable for the container's lifetime (keys aren't copied, but signing requests are honoured). `ssh-add -D` before an autonomous run if that matters. |
+| SSH build key | mount `:ro` | when `SSH_BUILD_KEY` set | The host bridge account. Deny-by-default on the host side (`container-build-gateway.sh`). |
+| Search API keys | `-e` from `.env` | when set | Metered spend on Tavily/Exa/Brave/Serper. |
+| `SLACK_TOKEN` | `-e` | when set | Posting as you in your workspace. Narrow or disable via `MULTIPLAI_SKILL_SECRETS`. |
+| `GMAIL_*` trio | `-e` | when set | Reading and sending as your account. Narrow or disable via `MULTIPLAI_SKILL_SECRETS`. |
+| `~/.gemini/` | mount **rw**, **opt-in** | off | OAuth refresh tokens + `history/` of past prompts. Requires `MULTIPLAI_MOUNT_GEMINI=1`. |
+| GCP service-account key | mount `:ro` | only with `--gcp <name>` | Whatever the service account can do. |
+| Workspace | mount **rw** | **always** | Your files. This is the point of the tool. |
+
+**Narrowing the messaging secrets.** `MULTIPLAI_SKILL_SECRETS` controls which
+groups are forwarded — `"gmail"` for gmail only, `""` for none. Left unset,
+everything configured is forwarded and the launcher prints a note listing what
+went in, so the exposure is visible rather than silent. When a secret is set but
+withheld, it says that too — otherwise the skill fails inside the container with
+a missing-credential error that looks nothing like its cause.
+
+**What never happens:** the kit has no telemetry and phones nothing home. No
+credential is written into the image, into git, or into any log.
+
+### Network egress
+
+`--net <profile>` (or `MULTIPLAI_NET` in `.env`) selects how much of the
+internet the container can reach. Today `unrestricted` is the default and the
+only implemented value: normal Docker networking, any host reachable.
+
+`restricted` — an internal network with no route out plus a proxy sidecar
+holding a hostname allowlist (Anthropic API, GitHub, PyPI, npm, and your own
+additions) — is planned but **not built yet**, and asking for it exits with an
+error. That is deliberate: silently falling back to unrestricted would leave you
+believing egress was filtered when it wasn't, which is worse than not having the
+feature.
+
+## Data & retention
+
+The kit keeps everything it records on your own disk — there is no telemetry and
+nothing is sent anywhere. But "local" is not the same as "ephemeral": these
+files hold prompt text, tool output and full session transcripts, and by default
+some of them were kept forever. Here is the complete surface and how long each
+part lives.
+
+| Surface | What's in it | Retention |
+|---|---|---|
+| `runtime/logs/*-YYYY-MM-DD.log` | Rotated hook/skill logs — routing decisions, prompt excerpts, errors | `MULTIPLAI_LOG_RETENTION_DAYS` (default **90**) |
+| `runtime/logs/hook-errors.log` | Shared error sink, append-only | Size-capped at ~100 KB, not by date |
+| `<workspace>/.multiplai/data/logs/` | Plugin logs, incl. `activity.log` | Same setting (the plugin reads it too) |
+| `<workspace>/.multiplai/cc-state/projects/<slug>/*.jsonl` | **Claude Code's own session transcripts** — the full text of every message and tool result, including per-request token usage | `cleanupPeriodDays` in `dotfiles/settings.json` (default **365**) |
+| `<workspace>/.multiplai/{memory,diary,learnings}/` | The knowledge corpus you deliberately accumulate | Never auto-deleted — it's the point of the system |
+
+**`MULTIPLAI_LOG_RETENTION_DAYS`** (in `multiplai.conf`) sets how many days
+rotated log files survive. Enforcement runs once per process on the first
+`setup_logging()` call, so old files disappear as sessions run — no cron, no
+daemon. `0` means keep forever; set it only if you actually want a permanent
+archive.
+
+**`cleanupPeriodDays`** (in `dotfiles/settings.json`) is a *Claude Code* setting,
+not a kit one, and it governs the largest and most sensitive surface: the raw
+session transcripts under `.multiplai/cc-state/`. These are verbatim — anything
+you pasted into a session is in there. The kit ships 365 because the cost and
+usage reporting reads these files; lower it if you'd rather keep less. That
+directory is gitignored by `setup.sh`, so it never reaches a remote.
+
+If you're handing this kit to someone else, or running it against a shared
+workspace, review both numbers before the first run rather than after.

@@ -70,7 +70,27 @@ class TestDeniesUnrecoverableCommands:
 
     def test_disk_overwrite(self):
         assert _denied("dd if=/dev/zero of=/dev/disk2 bs=1m")
-        assert _denied("mkfs.ext4 of=/dev/sda1")
+        # mkfs takes the device positionally — there is no of= in its syntax.
+        assert _denied("mkfs.ext4 /dev/sda1")
+        assert _denied("mkfs -t ext4 /dev/sdb")
+
+    def test_multiplai_state_by_absolute_path(self, monkeypatch):
+        """The workspace-cleanup allowance must not swallow `.multiplai/`."""
+        monkeypatch.setenv("WORKSPACE", "/Users/spike/Documents/knowhere")
+        assert _denied("rm -rf /Users/spike/Documents/knowhere/.multiplai")
+        assert _denied(
+            "rm -rf /Users/spike/Documents/knowhere/.multiplai/memory")
+
+    @pytest.mark.parametrize("command", [
+        "rm -rf /tmp/x && rm -rf ~/old-stuff",
+        "git worktree remove .worktrees/f; git push --force origin main",
+        "docker stop mybox && docker volume prune",
+        "rm -rf /tmp/x || rm -rf /etc/nginx",
+    ])
+    def test_allowlisted_fragment_does_not_clear_the_whole_command(self, command):
+        """The allowlist clears only the segment it matches — a compound
+        command must not ride one benign fragment past the rules."""
+        assert _denied(command), command
 
 
 class TestAllowsOrdinaryWork:
@@ -91,6 +111,12 @@ class TestAllowsOrdinaryWork:
         'psql -c "DELETE FROM sessions WHERE id = 3"',
         "gh pr create --title x",
         "gh issue close 12",
+        # Branches that merely contain a protected-branch word are ordinary.
+        "git push --force origin main-fix",
+        "git push -f origin feature/main",
+        # Each segment is benign on its own, so the compound is too.
+        "rm -rf /tmp/a && rm -rf /tmp/b",
+        "git worktree remove .worktrees/f && git push --force-with-lease origin feat/x",
     ])
     def test_not_denied(self, command):
         assert not _denied(command), command

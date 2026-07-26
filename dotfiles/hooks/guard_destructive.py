@@ -60,8 +60,11 @@ RULES = [
     ),
     _rule(
         "force-push-protected",
-        r"\bgit\s+push\b.*(?:--force(?!-with-lease)|(?:^|\s)-f(?:\s|$)).*\b(?:main|master)\b"
-        r"|\bgit\s+push\b.*\b(?:main|master)\b.*(?:--force(?!-with-lease)|(?:^|\s)-f(?:\s|$))",
+        # The branch tokens use lookarounds, not \b: `main-fix` or
+        # `feature/main` are ordinary branches that merely contain the word,
+        # and \b would match inside them (word boundary before `-` and `/`).
+        r"\bgit\s+push\b.*(?:--force(?!-with-lease)|(?:^|\s)-f(?:\s|$)).*(?<![\w./-])(?:main|master)(?![\w./-])"
+        r"|\bgit\s+push\b.*(?<![\w./-])(?:main|master)(?![\w./-]).*(?:--force(?!-with-lease)|(?:^|\s)-f(?:\s|$))",
         "Force-pushing a protected branch rewrites history other checkouts "
         "and PRs depend on.",
     ),
@@ -97,13 +100,17 @@ RULES = [
     ),
     _rule(
         "disk-overwrite",
-        r"\b(?:mkfs(?:\.\w+)?|dd)\b[^|]*\bof=/dev/",
+        # dd targets a device via of=; mkfs takes the device as a positional
+        # argument (`mkfs.ext4 /dev/sda1`) — two syntaxes, two alternatives.
+        r"\bdd\b[^|]*\bof=/dev/"
+        r"|\bmkfs(?:\.\w+)?\b[^|]*\s/dev/",
         "Writing to a block device destroys the filesystem on it.",
     ),
 ]
 
 # Commands that look destructive but are how the agent is *supposed* to clean
-# up after itself. Checked first so a legitimate cleanup is never denied.
+# up after itself. Checked per shell segment, before the rules, so a
+# legitimate cleanup is never denied.
 ALLOWLIST = [
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -128,27 +135,47 @@ def _workspace() -> str:
     return os.environ.get("WORKSPACE", "")
 
 
-def _is_allowlisted(command: str) -> bool:
-    if any(p.search(command) for p in ALLOWLIST):
+# Naive shell-segment split — connectors and pipes, quotes not honoured. The
+# deny rules already search inside quoted text, so splitting inside a quote
+# can only make the guard stricter, never looser.
+_SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;|\n]")
+
+
+def _segments(command: str) -> list[str]:
+    return [s for s in (p.strip() for p in _SEGMENT_SPLIT_RE.split(command)) if s]
+
+
+def _is_allowlisted(segment: str) -> bool:
+    if any(p.search(segment) for p in ALLOWLIST):
         return True
-    # A recursive delete confined to the workspace is ordinary cleanup.
+    # A recursive delete confined to the workspace is ordinary cleanup — but
+    # never `.multiplai/` (the memory/diary/learnings corpus lives inside the
+    # workspace, and this allowance must not defeat the rule protecting it).
     ws = _workspace()
-    if ws and re.search(r"\brm\s+-[a-zA-Z]*r", command, re.IGNORECASE):
-        targets = re.findall(r"(/\S+)", command)
-        if targets and all(t.startswith(ws) for t in targets):
+    if ws and re.search(r"\brm\s+-[a-zA-Z]*r", segment, re.IGNORECASE):
+        targets = re.findall(r"(/\S+)", segment)
+        if targets and all(
+            t.startswith(ws) and ".multiplai" not in t for t in targets
+        ):
             return True
     return False
 
 
 def check(command: str) -> tuple[str, str] | None:
-    """Return (rule_name, explanation) when *command* must be denied."""
+    """Return (rule_name, explanation) when *command* must be denied.
+
+    Evaluated per shell segment: the allowlist clears only the segment it
+    matches, never the whole command. Otherwise `rm -rf /tmp/x && <anything>`
+    would ride the /tmp allowance past every rule.
+    """
     if not command or not command.strip():
         return None
-    if _is_allowlisted(command):
-        return None
-    for name, pattern, why in RULES:
-        if pattern.search(command):
-            return name, why
+    for segment in _segments(command):
+        if _is_allowlisted(segment):
+            continue
+        for name, pattern, why in RULES:
+            if pattern.search(segment):
+                return name, why
     return None
 
 

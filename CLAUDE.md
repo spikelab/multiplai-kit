@@ -8,7 +8,7 @@ This is a standalone git repo with its own `.git/`. There is a single working tr
 
 **Key distinction:** `dotfiles/CLAUDE.md` is the user-facing global instructions that ship with the kit. This file (`CLAUDE.md` at project root) is for developing the kit.
 
-**Architecture note — the memory system is now a plugin.** The context-routing, diary, and learnings-extraction hooks that used to live in `dotfiles/hooks/` have been extracted into a standalone Claude Code plugin, **`multiplai-context`**, published in the marketplace repo (`spikelab/multiplai-cc-mktplace`, under `plugins/multiplai-context/`). Those hooks were removed from this kit entirely — there is no `_retired/` directory. This kit now only ships the launcher, container, in-tree skills, reference docs, kit config, and the one remaining `validate-syntax` hook — and it installs the plugin from the marketplace. See `README.md` → "The Memory System Is Now a Plugin". When the bug is in routing/diary/learnings, fix it in the **marketplace repo**, not here.
+**Architecture note — the memory system is now a plugin.** The context-routing, diary, and learnings-extraction hooks that used to live in `dotfiles/hooks/` have been extracted into a standalone Claude Code plugin, **`multiplai-context`**, published in the marketplace repo (`spikelab/multiplai-cc-mktplace`, under `plugins/multiplai-context/`). Those hooks were removed from this kit entirely — there is no `_retired/` directory. This kit now only ships the launcher, container, in-tree skills, reference docs, kit config, and two runtime hooks (`validate-syntax`, `guard_destructive`) — and it installs the plugin from the marketplace. See `README.md` → "The Memory System Is Now a Plugin". When the bug is in routing/diary/learnings, fix it in the **marketplace repo**, not here.
 
 ## Git
 
@@ -94,7 +94,9 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 
 **The memory/lifecycle hooks moved to the plugin.** Routing (`context_manager.py`), session lifecycle (`session_start.py`, `session_stop.py`, `session_end.py`, `pre_compact.py`), and learnings extraction (`extract_learnings.py`) now live in the marketplace repo (`multiplai-cc-mktplace`) under `plugins/multiplai-context/scripts/`, registered in that plugin's `hooks/hooks.json`. Edit and test them there.
 
-What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings.json` is just **`validate-syntax.sh`** (PostToolUse on Write|Edit). Everything else in `dotfiles/hooks/` is a live helper: `run-hook-python`, `model_resolver.py`, `log_utils.py`.
+What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings.json` is **`validate-syntax.sh`** (PostToolUse on Write|Edit) and **`guard_destructive.py`** (PreToolUse on Bash). Everything else in `dotfiles/hooks/` is a live helper: `run-hook-python`, `model_resolver.py`, `log_utils.py`.
+
+**Why a PreToolUse guard exists at all.** Sessions run `--dangerously-skip-permissions`, so the `settings.json` allow-list never prompts and never blocks — the container is the sandbox. Hooks still run in bypass mode, which makes PreToolUse the only layer that can still say no. `guard_destructive.py` denies a curated set of *unrecoverable* commands (host-mount deletes, force-push to main, `docker prune`, `DROP TABLE`, …) and gets out of the way otherwise. Keep it small: it exists to stop the confident mistake, not a determined adversary, and a guard that blocks ordinary work gets disabled and then protects nothing. Calibration in both directions is pinned by `evals/unit/test_guard_destructive.py` — add a test on both sides when you add a rule.
 
 **Hook protocol:** Hooks receive JSON on stdin, write JSON to stdout. See Claude Code docs for the schema per event type.
 
@@ -139,7 +141,7 @@ Run the kit's unit tests after any change to live kit code:
 
 | File | Purpose |
 |------|---------|
-| `dotfiles/settings.json` | Registers the `validate-syntax` hook; `pluginConfigs["multiplai-context@multiplai"]`; statusline; permissions |
+| `dotfiles/settings.json` | Registers the `validate-syntax` + `guard_destructive` hooks; `pluginConfigs["multiplai-context@multiplai"]`; statusline; permissions |
 | `multiplai.conf` | Kit config (model/effort ceiling for hooks + SDK pipelines, per-task tiers) — at project root, NOT in dotfiles/ |
 | `dotfiles/hooks/validate-syntax.sh` | The one runtime hook still registered (PostToolUse Write\|Edit) |
 | `dotfiles/hooks/model_resolver.py` | Model-ceiling logic for in-tree skills |

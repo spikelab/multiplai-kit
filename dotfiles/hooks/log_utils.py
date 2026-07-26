@@ -37,6 +37,11 @@ _DEFAULT_RETENTION_DAYS = 7
 # standard: "truncated to ~100KB when oversized".
 _ERROR_LOG_MAX_BYTES = 100 * 1024
 
+# Retention runs once per process, on first setup_logging() call. Hooks are
+# short-lived processes fired many times a session, so sweeping on every
+# logger construction would stat the whole log dir for no benefit.
+_swept = False
+
 
 def _truncate_oversized(path: Path, max_bytes: int = _ERROR_LOG_MAX_BYTES) -> None:
     """Truncate an append-only log to its most recent tail when oversized.
@@ -64,12 +69,17 @@ def _truncate_oversized(path: Path, max_bytes: int = _ERROR_LOG_MAX_BYTES) -> No
 
 
 def _get_retention_days() -> int:
-    """Read log retention from multiplai.conf. 0 = keep forever. Default 7."""
+    """Read log retention from multiplai.conf. 0 = keep forever. Default 7.
+
+    A negative value falls back to the default rather than being honoured: it
+    would put the cutoff in the future and delete every rotated log.
+    """
     # Check env first (set by conf loader or manually)
     env_val = os.environ.get("MULTIPLAI_LOG_RETENTION_DAYS")
     if env_val is not None:
         try:
-            return int(env_val)
+            n = int(env_val)
+            return n if n >= 0 else _DEFAULT_RETENTION_DAYS
         except ValueError:
             pass
 
@@ -209,6 +219,14 @@ def setup_logging(
     if log_dir is None:
         log_dir = LOG_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Enforce retention. Without this call the setting is decoration: rotated
+    # logs hold prompt text and routing decisions, and they sit on the host
+    # mount forever. Once per process, and never fatal.
+    global _swept
+    if not _swept:
+        _swept = True
+        cleanup_old_logs(log_dir)
 
     # Level from config
     level = os.environ.get("MULTIPLAI_LOG_LEVEL", "INFO").upper()

@@ -501,3 +501,35 @@ tail -f <workspace>/.multiplai/data/logs/activity.log
 ```
 
 `MULTIPLAI_DEBUG=1 claude` makes every plugin script emit DEBUG detail. See the plugin `README.md` → Observability for how to read a routing line.
+
+## Data & retention
+
+The kit keeps everything it records on your own disk — there is no telemetry and
+nothing is sent anywhere. But "local" is not the same as "ephemeral": these
+files hold prompt text, tool output and full session transcripts, and by default
+some of them were kept forever. Here is the complete surface and how long each
+part lives.
+
+| Surface | What's in it | Retention |
+|---|---|---|
+| `runtime/logs/*-YYYY-MM-DD.log` | Rotated hook/skill logs — routing decisions, prompt excerpts, errors | `MULTIPLAI_LOG_RETENTION_DAYS` (default **90**) |
+| `runtime/logs/hook-errors.log` | Shared error sink, append-only | Size-capped at ~100 KB, not by date |
+| `<workspace>/.multiplai/data/logs/` | Plugin logs, incl. `activity.log` | Same setting (the plugin reads it too) |
+| `<workspace>/.multiplai/cc-state/projects/<slug>/*.jsonl` | **Claude Code's own session transcripts** — the full text of every message and tool result, including per-request token usage | `cleanupPeriodDays` in `dotfiles/settings.json` (default **365**) |
+| `<workspace>/.multiplai/{memory,diary,learnings}/` | The knowledge corpus you deliberately accumulate | Never auto-deleted — it's the point of the system |
+
+**`MULTIPLAI_LOG_RETENTION_DAYS`** (in `multiplai.conf`) sets how many days
+rotated log files survive. Enforcement runs once per process on the first
+`setup_logging()` call, so old files disappear as sessions run — no cron, no
+daemon. `0` means keep forever; set it only if you actually want a permanent
+archive.
+
+**`cleanupPeriodDays`** (in `dotfiles/settings.json`) is a *Claude Code* setting,
+not a kit one, and it governs the largest and most sensitive surface: the raw
+session transcripts under `.multiplai/cc-state/`. These are verbatim — anything
+you pasted into a session is in there. The kit ships 365 because the cost and
+usage reporting reads these files; lower it if you'd rather keep less. That
+directory is gitignored by `setup.sh`, so it never reaches a remote.
+
+If you're handing this kit to someone else, or running it against a shared
+workspace, review both numbers before the first run rather than after.

@@ -14,6 +14,14 @@ This is a standalone git repo with its own `.git/`. There is a single working tr
 
 - Single working tree, single `main` branch. Develop here; commit and push as usual.
 - Personal data (`.multiplai/`, `.env`, `env.<profile>`) is gitignored and never enters the repo.
+- **Any user-visible change needs a `CHANGELOG.md` entry under `## [Unreleased]`**
+  ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format,
+  Added/Changed/Deprecated/Removed/Fixed/Security). "User-visible" means a user
+  who runs `git pull && ./setup.sh` would notice: launcher flags, `setup.sh`
+  behaviour, shipped defaults in `multiplai.conf` / `dotfiles/settings.json`,
+  container pin bumps, and documented behaviour. Internal refactors and test-only
+  changes don't need one. The repo has no tags — `main` is what users consume, so
+  the changelog is the only way they can tell what they got.
 
 ```bash
 git status

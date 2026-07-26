@@ -522,19 +522,34 @@ you can decide what to hand over before you hand it over rather than after.
 | SSH agent socket | mount → `/ssh-agent.sock` | when `SSH_AUTH_SOCK` set | Every key in your agent, usable for the container's lifetime (keys aren't copied, but signing requests are honoured). `ssh-add -D` before an autonomous run if that matters. |
 | SSH build key | mount `:ro` | when `SSH_BUILD_KEY` set | The host bridge account. Deny-by-default on the host side (`container-build-gateway.sh`). |
 | Search API keys | `-e` from `.env` | when set | Metered spend on Tavily/Exa/Brave/Serper. |
-| `SLACK_TOKEN` | `-e`, **opt-in** | off | Posting as you in your workspace. Requires `MULTIPLAI_SKILL_SECRETS="slack"`. |
-| `GMAIL_*` trio | `-e`, **opt-in** | off | Reading and sending as your account. Requires `MULTIPLAI_SKILL_SECRETS="gmail"`. |
+| `SLACK_TOKEN` | `-e` | when set | Posting as you in your workspace. Narrow or disable via `MULTIPLAI_SKILL_SECRETS`. |
+| `GMAIL_*` trio | `-e` | when set | Reading and sending as your account. Narrow or disable via `MULTIPLAI_SKILL_SECRETS`. |
 | `~/.gemini/` | mount **rw**, **opt-in** | off | OAuth refresh tokens + `history/` of past prompts. Requires `MULTIPLAI_MOUNT_GEMINI=1`. |
 | GCP service-account key | mount `:ro` | only with `--gcp <name>` | Whatever the service account can do. |
 | Workspace | mount **rw** | **always** | Your files. This is the point of the tool. |
 
-**Opt-in means opt-in.** Leave `MULTIPLAI_SKILL_SECRETS` unset and no messaging
-secret reaches the container even if it's sitting in `.env`. If a skill then
-fails with a missing-credential error, the launcher prints which variable was
-withheld and how to enable it — the failure names its own cause.
+**Narrowing the messaging secrets.** `MULTIPLAI_SKILL_SECRETS` controls which
+groups are forwarded — `"gmail"` for gmail only, `""` for none. Left unset,
+everything configured is forwarded and the launcher prints a note listing what
+went in, so the exposure is visible rather than silent. When a secret is set but
+withheld, it says that too — otherwise the skill fails inside the container with
+a missing-credential error that looks nothing like its cause.
 
 **What never happens:** the kit has no telemetry and phones nothing home. No
 credential is written into the image, into git, or into any log.
+
+### Network egress
+
+`--net <profile>` (or `MULTIPLAI_NET` in `.env`) selects how much of the
+internet the container can reach. Today `unrestricted` is the default and the
+only implemented value: normal Docker networking, any host reachable.
+
+`restricted` — an internal network with no route out plus a proxy sidecar
+holding a hostname allowlist (Anthropic API, GitHub, PyPI, npm, and your own
+additions) — is planned but **not built yet**, and asking for it exits with an
+error. That is deliberate: silently falling back to unrestricted would leave you
+believing egress was filtered when it wasn't, which is worse than not having the
+feature.
 
 ## Data & retention
 

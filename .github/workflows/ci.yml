@@ -1,0 +1,64 @@
+name: CI
+
+# This repo is what users clone and track (`git pull && ./setup.sh`), so `main`
+# is a shipped artifact. Until this workflow existed nothing checked the tree
+# before someone consumed it. Two jobs, both covering this repo's own live code
+# only: the unit suite CLAUDE.md already tells contributors to run, and a syntax
+# gate over the two large shell entry points.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evals:
+    name: Kit unit suite (evals/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # setup.sh builds the kit venv at .venv/ and the docs say to run the
+      # suite as `.venv/bin/python -m pytest evals/ -q`. Reproduce that shape
+      # here rather than a bare `pip install`, so CI exercises the same layout
+      # a contributor has locally.
+      - name: Create the kit venv
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python -r requirements.txt
+
+      - name: Run evals
+        run: .venv/bin/python -m pytest evals/ -q
+
+  shell-syntax:
+    name: Shell syntax (claude.sh, setup.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `bash -n` parses without executing — it catches the unclosed `if`, the
+      # stray `fi`, the broken heredoc. These two files are the entire user
+      # entry path and had no automated check at all.
+      - name: Parse the shell entry points
+        run: |
+          status=0
+          for f in claude.sh setup.sh scripts/claude-wrapped; do
+            if bash -n "$f"; then
+              echo "ok: $f"
+            else
+              echo "FAIL: $f"
+              status=1
+            fi
+          done
+          exit "$status"

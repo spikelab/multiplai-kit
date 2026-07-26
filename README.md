@@ -4,53 +4,11 @@
 
 A distributable Claude Code kit — launcher, container, reference docs, and workspace conventions as a self-contained package. Clone it, run setup, launch via the wrapper script, and get the full system without touching your existing `~/.claude/`.
 
-The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-the-multiplai-context-plugin) plugin (memory, routing, lifecycle) plus five themed skill packs (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
+The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-the-multiplai-context-plugin) plugin (memory, routing, lifecycle) plus six themed skill packs (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
 
-## How It Works
+## Contents
 
-Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching Claude Code. This makes Claude Code use the kit's settings, skills, reference docs, and config instead of `~/.claude/`. Your existing Claude Code config is completely untouched.
-
-The kit is responsible for:
-- **Launcher** (`claude.sh`) — container/local/shell modes, git-identity profiles, GCP overlays.
-- **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely.
-- **Reference docs** (20) — prescriptive best-practice docs loaded per coding task.
-- **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
-- **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
-
-## The Memory System (the `multiplai-context` plugin)
-
-Memory, context routing, session diary, learnings, and dream consolidation are not part of this repo — they come from **`multiplai-context`**, a normal Claude Code plugin published in the marketplace repo (`spikelab/multiplai-cc-mktplace`). `setup.sh` installs it for you. The only hooks the kit registers directly are `validate-syntax.sh` (syntax validation) and `guard_destructive.py` (destructive-command guard) — so if something is off in routing, diary, or learnings, the fix belongs in the **marketplace repo**, not here.
-
-Inside the marketplace repo:
-
-```
-multiplai-cc-mktplace/
-├── .claude-plugin/marketplace.json     # marketplace "multiplai"
-└── plugins/multiplai-context/
-    ├── .claude-plugin/plugin.json       # plugin manifest + userConfig schema
-    ├── hooks/hooks.json                 # SessionStart / UserPromptSubmit / Stop / SessionEnd / PreCompact
-    ├── scripts/                         # context_manager.py, session_*.py, extract_learnings.py, dream.py, …
-    ├── skills/                          # setup, dream, dream-remember, health, memory-health-audit, now, refresh-catalogs, backfill
-    └── templates/                       # starter memory files
-```
-
-What the plugin provides (see its own `README.md` for full detail):
-- **Per-prompt context routing** — a `UserPromptSubmit` hook routes each prompt against indexed catalogs and injects only the relevant memory.
-- **Session lifecycle** — diary per UTC day, deferred learnings extraction, dream-due nudge.
-- **Consolidation** — `/multiplai-context:dream` proposes memory edits; `/multiplai-context:dream-remember` reviews and applies them.
-
-### How the kit loads and configures the plugin
-
-The plugin is installed **from the marketplace** (done by `setup.sh`, or manually):
-
-```
-/plugin marketplace add spikelab/multiplai-cc-mktplace
-/plugin install multiplai-context@multiplai
-```
-
-Because `CLAUDE_CONFIG_DIR` points at the kit's `dotfiles/`, the install lands in `dotfiles/plugins/` — self-contained, nothing touches `~/.claude/`. Options come from `settings.json` → `pluginConfigs["multiplai-context@multiplai"].options`; `setup.sh` fills the path options (`workspace_dir`, `skills_dir`, `resources_dir`) from your `.env`.
-
-For **plugin development**, sideload a checkout instead with `claude --plugin-dir <path-to-plugin>` and pass options via `CLAUDE_PLUGIN_OPTION_*` env vars (sideloaded plugins do not read `pluginConfigs` automatically; `claude.sh` forwards these vars into the container).
+[Prerequisites](#prerequisites) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [The Memory System](#the-memory-system-the-multiplai-context-plugin) · [The Workspace Model](#the-workspace-model) · [Launcher Modes](#launcher-modes) · [Environment Configuration](#environment-configuration) · [Architecture](#architecture) · [What's Included](#whats-included) · [Container Mode](#container-mode) · [How the pieces fit together](#how-the-pieces-fit-together--and-stay-current) · [Customization](#customization) · [Logging](#logging) · [What credentials enter the container](#what-credentials-enter-the-container) · [Data & retention](#data--retention)
 
 ## Prerequisites
 
@@ -88,6 +46,54 @@ cp .env.example .env
 ```
 
 First run prompts for authentication via `/login`. Credentials persist in `~/.claude-container/credentials.json` across container restarts. The plugin's Python scripts declare their own dependencies via PEP 723 inline metadata and run under `uv run --no-project`, so deps are resolved on demand — no manual install or managed-venv step.
+
+Not sure you want the whole kit? [`multiplai`](https://github.com/spikelab/multiplai) is the umbrella repo — it explains what the suite is, which part you actually need, and the adoption ladder from plain Claude Code up to this kit.
+
+## How It Works
+
+Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching Claude Code. This makes Claude Code use the kit's settings, skills, reference docs, and config instead of `~/.claude/`. Your existing Claude Code config is completely untouched.
+
+The kit is responsible for:
+- **Launcher** (`claude.sh`) — container/local/shell modes, git-identity profiles, GCP overlays.
+- **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely.
+- **Reference docs** (21 files in `dotfiles/reference/dev/`, including the README index) — prescriptive best-practice docs loaded per coding task. Re-derive with `ls dotfiles/reference/dev/*.md | wc -l`.
+- **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
+- **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
+
+## The Memory System (the `multiplai-context` plugin)
+
+Memory, context routing, session diary, learnings, and dream consolidation are not part of this repo — they come from **`multiplai-context`**, a normal Claude Code plugin published in the marketplace repo (`spikelab/multiplai-cc-mktplace`). `setup.sh` installs it for you. The only hooks the kit registers directly are `validate-syntax.sh` (syntax validation) and `guard_destructive.py` (destructive-command guard) — so if something is off in routing, diary, or learnings, the fix belongs in the **marketplace repo**, not here.
+
+Inside the marketplace repo:
+
+```
+multiplai-cc-mktplace/
+├── .claude-plugin/marketplace.json     # marketplace "multiplai"
+└── plugins/multiplai-context/
+    ├── .claude-plugin/plugin.json       # plugin manifest + userConfig schema
+    ├── hooks/hooks.json                 # SessionStart / UserPromptSubmit / Stop / SessionEnd / PreCompact
+    ├── scripts/                         # context_manager.py, session_*.py, extract_learnings.py, dream.py, …
+    ├── skills/                          # setup, dream, dream-remember, health, memory-health-audit, now, refresh-catalogs, backfill
+    └── templates/                       # starter memory files
+```
+
+What the plugin provides (see its own `README.md` for full detail):
+- **Per-prompt context routing** — a `UserPromptSubmit` hook routes each prompt against indexed catalogs and injects only the relevant memory.
+- **Session lifecycle** — diary per UTC day, deferred learnings extraction, dream-due nudge.
+- **Consolidation** — `/multiplai-context:dream` proposes memory edits; `/multiplai-context:dream-remember` reviews and applies them.
+
+### How the kit loads and configures the plugin
+
+The plugin is installed **from the marketplace** (done by `setup.sh`, or manually):
+
+```
+/plugin marketplace add spikelab/multiplai-cc-mktplace
+/plugin install multiplai-context@multiplai
+```
+
+Because `CLAUDE_CONFIG_DIR` points at the kit's `dotfiles/`, the install lands in `dotfiles/plugins/` — self-contained, nothing touches `~/.claude/`. Options come from `settings.json` → `pluginConfigs["multiplai-context@multiplai"].options`; `setup.sh` fills the path options (`workspace_dir`, `skills_dir`, `resources_dir`) from your `.env`.
+
+For **plugin development**, sideload a checkout instead with `claude --plugin-dir <path-to-plugin>` and pass options via `CLAUDE_PLUGIN_OPTION_*` env vars (sideloaded plugins do not read `pluginConfigs` automatically; `claude.sh` forwards these vars into the container).
 
 ## The Workspace Model
 
@@ -243,7 +249,7 @@ multiplai-kit/                          # = the "runtime" / kit repo
 │   ├── settings.json      # Registers validate-syntax + guard_destructive hooks; pluginConfigs["multiplai-context@multiplai"]; statusline; permissions
 │   ├── hooks/             # validate-syntax.sh, guard_destructive.py, run-hook-python, model_resolver.py, log_utils.py
 │   ├── skills/            # Your own local skills (the skill library ships as marketplace plugins)
-│   ├── reference/dev/     # 20 best-practice docs (+ README index)
+│   ├── reference/dev/     # 21 .md files — best-practice docs, incl. the README index
 │   ├── scripts/           # statusline.sh, file-suggestion.sh
 │   ├── output-styles/     # Output formatting
 │   ├── templates/         # Project templates
@@ -282,7 +288,7 @@ Memory routing, diary, learnings extraction, and the autodream gate now live in 
 
 ### Skills (themed marketplace packs)
 
-The skill library ships as five themed plugins from the Multiplai marketplace — `multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media` — install the ones you want. See `docs/SKILLS.md` for the pack index. `dotfiles/skills/` stays available for your own local skills. The `multiplai-context` plugin adds its namespaced commands under `/multiplai-context:*` (below).
+The skill library ships as six themed plugins from the Multiplai marketplace — `multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging` — install the ones you want. See `docs/SKILLS.md` for the pack index. `dotfiles/skills/` stays available for your own local skills. The `multiplai-context` plugin adds its namespaced commands under `/multiplai-context:*` (below).
 
 ### Memory, Context & Learning (provided by the plugin)
 
@@ -382,7 +388,7 @@ Separate from the plugin. `multiplai.conf` (project root, **not** in `dotfiles/`
 | `MULTIPLAI_MODEL` | `claude-opus-4-6` | Model ceiling — caps the tier a skill/hook can request (`haiku < sonnet < opus`) |
 | `MULTIPLAI_EFFORT` | `high` | Effort ceiling (`low < medium < high < max`) |
 | `MULTIPLAI_LOG_LEVEL` | `INFO` | Component log verbosity |
-| `MULTIPLAI_LOG_RETENTION_DAYS` | `0` | Rotated-log retention (`0` = keep forever) |
+| `MULTIPLAI_LOG_RETENTION_DAYS` | `90` | Rotated-log retention in days — shipped default 90; `0` means keep forever (see [Data & retention](#data--retention)) |
 
 These ceilings apply to hooks and to the buildme / deep-research SDK pipelines. They do **not** configure Claude Code skills — a skill's model and effort come from its `SKILL.md` frontmatter and nothing else. Retune a skill by editing its frontmatter in the `multiplai-cc-mktplace` repo.
 

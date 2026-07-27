@@ -6,6 +6,8 @@ A distributable Claude Code kit — launcher, container, reference docs, and wor
 
 The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-the-multiplai-context-plugin) plugin (memory, routing, lifecycle) plus six themed skill packs (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
 
+**Not sure you want the whole kit?** Just want memory on your existing Claude Code? That's one command via the plugin marketplace — no Docker, no clone. [`multiplai`](https://github.com/spikelab/multiplai) is the umbrella repo — it explains what the suite is, which part you actually need, and the adoption ladder from plain Claude Code up to this kit (the full sandboxed environment).
+
 ## Contents
 
 [Prerequisites](#prerequisites) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [The Memory System](#the-memory-system-the-multiplai-context-plugin) · [The Workspace Model](#the-workspace-model) · [Launcher Modes](#launcher-modes) · [Environment Configuration](#environment-configuration) · [Architecture](#architecture) · [What's Included](#whats-included) · [Container Mode](#container-mode) · [How the pieces fit together](#how-the-pieces-fit-together--and-stay-current) · [Customization](#customization) · [Logging](#logging) · [What credentials enter the container](#what-credentials-enter-the-container) · [Data & retention](#data--retention)
@@ -47,8 +49,6 @@ cp .env.example .env
 
 First run prompts for authentication via `/login`. Credentials persist in `~/.claude-container/credentials.json` across container restarts. The plugin's Python scripts declare their own dependencies via PEP 723 inline metadata and run under `uv run --no-project`, so deps are resolved on demand — no manual install or managed-venv step.
 
-Not sure you want the whole kit? [`multiplai`](https://github.com/spikelab/multiplai) is the umbrella repo — it explains what the suite is, which part you actually need, and the adoption ladder from plain Claude Code up to this kit.
-
 ## How It Works
 
 Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching Claude Code. This makes Claude Code use the kit's settings, skills, reference docs, and config instead of `~/.claude/`. Your existing Claude Code config is completely untouched.
@@ -56,7 +56,7 @@ Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching 
 The kit is responsible for:
 - **Launcher** (`claude.sh`) — container/local/shell modes, git-identity profiles, GCP overlays.
 - **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely.
-- **Reference docs** (21 files in `dotfiles/reference/dev/`, including the README index) — prescriptive best-practice docs loaded per coding task. Re-derive with `ls dotfiles/reference/dev/*.md | wc -l`.
+- **Reference docs** (20+ reference docs in `dotfiles/reference/dev/`, including the README index) — prescriptive best-practice docs loaded per coding task.
 - **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
 - **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
 
@@ -143,39 +143,7 @@ The plugin's routing is project-aware. When you start a session and mention a pr
 
 `claude.sh` also passes through `--plugin-dir` / `--add-dir` to the underlying `claude` invocation (and keeps them out of `bash` in `--shell` mode), plus `--strict-mcp-config` to isolate account-level MCP integrations.
 
-### Driver subcommand (hub-launched)
-
-`./claude.sh driver --sid <uuid|new> --port <n> --runner <path>` starts a detached, non-interactive driver container for the multiplai hub (multiplai-gui, ADR 0002) — the hub owns its lifecycle. Notes:
-
-- `driver` must be the **first** argument; anywhere else it is treated as a claude prompt/passthrough.
-- Driver flags accept only the space-separated form (`--sid x`, not `--sid=x`).
-- `--plugin-dir` / `--add-dir` are rejected in driver mode (they are claude-CLI flags; the driver runs the hub's runner, not claude).
-- Driver containers **intentionally omit the SSH agent mount** that interactive containers get: a hub-owned driver should never perform SSH-authenticated operations with the user's agent. This parity gap vs interactive mode is deliberate.
-
-### Hub adoption take-back (optional)
-
-If you run the multiplai hub (multiplai-gui), it can **adopt** a session you
-started from a terminal — e.g. you walk away and continue it from your phone.
-The multiplai-context plugin's hooks keep a session registry under
-`$WORKSPACE/.multiplai/data/sessions/`; the hub drops a `<session-id>.adopt`
-marker there when it takes the driver seat. When claude exits and a marker
-addressed at your container exists, `claude.sh` offers:
-
-```
-Session adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it.
-```
-
-Enter asks the hub to release the session (`POST /v1/sessions/<id>/release`,
-hub URL/token from the environment or `multiplai.conf`, silently skipped if
-the hub is unreachable), deletes the marker, and relaunches the container
-with `claude --resume <session-id>`. Without a hub, a marker, or the plugin,
-nothing changes — the launcher behaves exactly as before.
-
-**No-Docker parity:** running claude bare on the host? `scripts/claude-wrapped`
-wraps `claude "$@"` in the same take-back loop (`alias claude-w=".../scripts/claude-wrapped"`).
-Host adoption is *cooperative*: with no container to kill, the hub only adopts
-host sessions that are idle or ended — in practice, after you exit claude —
-and the wrapper handles the take-back half of that handshake.
+`claude.sh` also ships the kit half of a session-orchestration handshake (a `driver` subcommand and an adoption take-back loop) for the multiplai native cockpit — on the roadmap, not yet released. These code paths are inert without it; full documentation lands with the release.
 
 ## Environment Configuration
 
@@ -249,7 +217,7 @@ multiplai-kit/                          # = the "runtime" / kit repo
 │   ├── settings.json      # Registers validate-syntax + guard_destructive hooks; pluginConfigs["multiplai-context@multiplai"]; statusline; permissions
 │   ├── hooks/             # validate-syntax.sh, guard_destructive.py, run-hook-python, model_resolver.py, log_utils.py
 │   ├── skills/            # Your own local skills (the skill library ships as marketplace plugins)
-│   ├── reference/dev/     # 21 .md files — best-practice docs, incl. the README index
+│   ├── reference/dev/     # 20+ best-practice docs, incl. the README index
 │   ├── scripts/           # statusline.sh, file-suggestion.sh
 │   ├── output-styles/     # Output formatting
 │   ├── templates/         # Project templates

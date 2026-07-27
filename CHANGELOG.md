@@ -17,6 +17,15 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- README: hub-integration documentation (the "Driver subcommand" and "Hub
+  adoption take-back" sections) is held back until multiplai-gui releases —
+  replaced by a one-paragraph roadmap note. The full text is preserved in
+  `CLAUDE.md` for restore-on-release; the code paths themselves are unchanged.
+- README: entry-path de-escalation (marketplace plugin vs full kit, umbrella
+  repo link) moved into the intro, before Prerequisites, so newcomers meet the
+  lighter path before the clone-and-Docker quickstart.
+- README: reference-doc count is growth-tolerant "20+" instead of an exact
+  figure; the derive command moved to `CLAUDE.md`.
 - README: `MULTIPLAI_LOG_RETENTION_DAYS` is documented as its shipped default
   `90` in the Kit Configuration table. It previously said `0` ("keep forever"),
   contradicting the Data & retention section — a privacy-relevant default,

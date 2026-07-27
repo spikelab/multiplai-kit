@@ -160,3 +160,56 @@ Run the kit's unit tests after any change to live kit code:
 | `container/` | Container tooling — fetched at setup from spikelab/multiplai-container |
 | `setup.sh` | First-time setup with prerequisite validation |
 | `claude.sh` | Launcher (container/local/shell modes) |
+
+## Reference-doc count
+
+The README says "20+ reference docs" on purpose — growth-tolerant, no stale
+number to maintain. Derive the exact count when needed:
+
+```bash
+ls dotfiles/reference/dev/*.md | wc -l
+```
+
+## Hub integration docs — held back until multiplai-gui releases; restore to README then
+
+The `driver` subcommand and the adoption take-back loop are real, shipped code
+in `claude.sh` and `scripts/claude-wrapped` — the kit half of a handshake with
+the multiplai native cockpit (multiplai-gui), which is not yet released. Per
+the suite rule, public material presents the GUI as *coming*, never available,
+so the two README sections below were removed from `README.md` → "Launcher
+Modes" (replaced by one roadmap-ceiling paragraph) and preserved here
+verbatim. When multiplai-gui releases, restore them to the README.
+
+### Driver subcommand (hub-launched)
+
+`./claude.sh driver --sid <uuid|new> --port <n> --runner <path>` starts a detached, non-interactive driver container for the multiplai hub (multiplai-gui, ADR 0002) — the hub owns its lifecycle. Notes:
+
+- `driver` must be the **first** argument; anywhere else it is treated as a claude prompt/passthrough.
+- Driver flags accept only the space-separated form (`--sid x`, not `--sid=x`).
+- `--plugin-dir` / `--add-dir` are rejected in driver mode (they are claude-CLI flags; the driver runs the hub's runner, not claude).
+- Driver containers **intentionally omit the SSH agent mount** that interactive containers get: a hub-owned driver should never perform SSH-authenticated operations with the user's agent. This parity gap vs interactive mode is deliberate.
+
+### Hub adoption take-back (optional)
+
+If you run the multiplai hub (multiplai-gui), it can **adopt** a session you
+started from a terminal — e.g. you walk away and continue it from your phone.
+The multiplai-context plugin's hooks keep a session registry under
+`$WORKSPACE/.multiplai/data/sessions/`; the hub drops a `<session-id>.adopt`
+marker there when it takes the driver seat. When claude exits and a marker
+addressed at your container exists, `claude.sh` offers:
+
+```
+Session adopted by multiplai hub. Press Enter to take it back, Ctrl-C to leave it.
+```
+
+Enter asks the hub to release the session (`POST /v1/sessions/<id>/release`,
+hub URL/token from the environment or `multiplai.conf`, silently skipped if
+the hub is unreachable), deletes the marker, and relaunches the container
+with `claude --resume <session-id>`. Without a hub, a marker, or the plugin,
+nothing changes — the launcher behaves exactly as before.
+
+**No-Docker parity:** running claude bare on the host? `scripts/claude-wrapped`
+wraps `claude "$@"` in the same take-back loop (`alias claude-w=".../scripts/claude-wrapped"`).
+Host adoption is *cooperative*: with no container to kill, the hub only adopts
+host sessions that are idle or ended — in practice, after you exit claude —
+and the wrapper handles the take-back half of that handshake.

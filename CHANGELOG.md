@@ -15,8 +15,51 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Removed
+
+- **`--gcp <name>` flag and the `env.gcp.*` overlay convention.** GCP wiring is
+  now activated by `GCP_KEY_FILE` alone, from wherever it is set — `.env`, a
+  profile, or an export for one launch (`GCP_KEY_FILE=~/k.json ./claude.sh`).
+  With dynamic forwarding and shell-env-wins there was nothing left for a
+  selector flag to do. **Migration:** move the contents of your `env.gcp.<name>`
+  into `.env` or the relevant `env.<profile>`, and rename `GCP_PROJECT` to
+  `CLOUDSDK_CORE_PROJECT` (the launcher no longer translates it). A
+  `GCP_KEY_FILE` pointing at a missing file is now a hard error rather than a
+  silent launch without credentials. The `-gcp<name>` container-name suffix is
+  gone with the flag.
+- **`--net <profile>` flag.** Its only implemented behaviour was refusing
+  `restricted`, which the `MULTIPLAI_NET` environment variable already covers.
+  Set `MULTIPLAI_NET` in `.env` or export it per launch; the value validation and
+  the loud refusal of `restricted` are unchanged.
+- **`MULTIPLAI_SKILL_SECRETS`.** The gate is deleted, and `SLACK_TOKEN` /
+  `GMAIL_*` are forwarded like any other declared variable. It read as a
+  confinement it never provided: `.env` sits on the bind-mounted kit root and the
+  skills read it from there, so a session could obtain any credential in the file
+  regardless of what was forwarded. The honest boundary is `.env` itself —
+  narrow by keeping a credential out of it until the launch that needs it. If you
+  had it set, delete the line; nothing else is required.
+
 ### Changed
 
+- **Container environment is forwarded dynamically.** Every variable assigned in
+  `.env` or `env.<profile>` reaches the container when its value is non-empty,
+  minus a denylist of launcher-only settings and host paths the mounts remap.
+  Previously an enumerated list in `claude.sh` decided, so any new secret needed
+  a matching launcher edit and silently never arrived without one. Values are
+  passed as `-e NAME` (no `=value`), so they are read from the launcher's
+  environment and never appear on a command line in `ps`.
+- **The shell environment now overrides the env files.** `.env` and
+  `env.<profile>` provide defaults; anything exported before launch wins,
+  including `WORKSPACE`. This is the precedence the kit already documented and
+  that the in-container loaders already used (`override=False`) — the launcher
+  was the one place that violated it. If you relied on `.env` overriding an
+  exported variable, unset it in your shell.
+- A profile (`env.<profile>`) may now carry any variable, not just git identity —
+  e.g. a client's `GCP_KEY_FILE`. Documented in `docs/PROFILES.md`.
+- README, `SECURITY.md`, `docs/PROFILES.md`, `CLAUDE.md`, `.env.example` and
+  `env.example` updated for all of the above: a new "How variables reach the
+  container" section, `.env` named as the credential boundary, and the removed
+  flags struck from every launch example and threat-model row.
 - README: hub-integration documentation (the "Driver subcommand" and "Hub
   adoption take-back" sections) is held back until multiplai-gui releases —
   replaced by a one-paragraph roadmap note. The full text is preserved in
@@ -38,6 +81,21 @@ public repo has shipped without in-tree memory hooks from day one (see the
 - README: Prerequisites and Quick Start moved above "How It Works" and "The
   Memory System", and a Contents list was added after the intro. Prose
   unchanged — a reorder, not a rewrite.
+
+### Fixed
+
+- **Empty variables are no longer forwarded into the container.** `-e NAME=`
+  makes a variable *present but empty*, which beats every `${NAME:-fallback}` and
+  `os.environ.get(NAME, default)` downstream. Concretely: an unset `GH_TOKEN` was
+  forwarded as empty and shadowed a token the container mints for itself, leaving
+  `gh` unauthenticated with no visible cause. Empty or unset now means not
+  forwarded, so in-container defaults apply as intended.
+- `--profile` overrides are no longer at risk from the new precedence rule: the
+  launching shell's snapshot is taken once, before `.env` is sourced, so a
+  profile still overrides `.env` while the shell still overrides both.
+- `claude.sh` no longer runs `eval` on `WORKSPACE` or `GCP_KEY_FILE` to expand
+  `~`; a leading tilde is expanded with parameter substitution instead, so a
+  command substitution in a config value is no longer executed.
 
 ### Added
 

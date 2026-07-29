@@ -9,10 +9,15 @@
 #
 # Additional flags:
 #   --profile <name>    Load env.<name> for git identity + GH token (default: .env)
-#   --gcp <name>        Load env.gcp.<name> for GCP credentials
-#   --net <profile>     Egress profile: unrestricted (default) | restricted
-#                       (restricted is not implemented yet — it refuses)
 #   --shell             Container shell (bash instead of claude)
+#
+# Environment:
+#   Every variable assigned in .env / env.<profile> is forwarded into the
+#   container when its value is non-empty (minus a launcher-only denylist) —
+#   adding a var to .env is all it takes. Variables exported in the launching
+#   shell WIN over the files. See "Environment forwarding" below.
+#   MULTIPLAI_NET selects the egress profile (unrestricted, the default and only
+#   implemented value). GCP_KEY_FILE, if set, mounts that service-account key.
 #
 # Subcommand:
 #   driver              Non-interactive driver container for the multiplai hub
@@ -42,7 +47,6 @@
 # Usage:
 #   ./claude.sh                         # container, default profile
 #   ./claude.sh --profile work          # container, work git identity
-#   ./claude.sh --gcp prod              # container, load env.gcp.prod
 #   ./claude.sh --local                 # bare, host permissions apply
 #   ./claude.sh --shell                 # container bash shell
 #   ./claude.sh --profile work --shell  # work profile, bash shell
@@ -74,7 +78,6 @@ DRV_FOREGROUND=0
 
 # --- Parse flags (extract ours, pass the rest through) ---
 PROFILE=""
-GCP_NAME=""
 MODE=""
 PASSTHROUGH_ARGS=()
 CLAUDE_ONLY_ARGS=()
@@ -116,24 +119,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --profile=*)
             PROFILE="${1#--profile=}"
-            shift
-            ;;
-        --gcp)
-            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
-            GCP_NAME="$2"
-            shift 2
-            ;;
-        --gcp=*)
-            GCP_NAME="${1#--gcp=}"
-            shift
-            ;;
-        --net)
-            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
-            MULTIPLAI_NET="$2"
-            shift 2
-            ;;
-        --net=*)
-            MULTIPLAI_NET="${1#--net=}"
             shift
             ;;
         --local)
@@ -183,16 +168,77 @@ if [ ! -f "$SCRIPT_DIR/.env" ]; then
     exit 1
 fi
 
-# Export everything sourced from the user env files (`set -a`) so it reaches
-# the exec'd `claude` and its child skill scripts in bare/--local modes, which
-# run on the host with NO container `-e` forwarding. Previously only vars named
-# explicitly below were forwarded (container only); a plain `source` leaves the
-# rest as un-exported shell vars, invisible to skills in --local. .env / profile
-# / gcp overlays are user config by definition — all meant to become environment.
-# shellcheck disable=SC1091
-set -a
-source "$SCRIPT_DIR/.env"
-set +a
+# --- Sourcing env files: the file is the DEFAULT, the shell environment WINS ---
+#
+# `source_env_file` does two things at once.
+#
+# 1. **Precedence.** A var already exported in the launching shell survives the
+#    source. The kit documents this rule ("Shell env wins over .env") and the
+#    in-container python loaders honour it (`override=False`) — the launcher used
+#    to be the one place that violated it, so a setup that mints a fresh
+#    GH_TOKEN per shell had it silently replaced by the stale value in .env.
+#    Applies to every name the file assigns, WORKSPACE included.
+#
+# 2. **Discovery.** It records every name the file assigns in `_ENV_FILE_VARS`.
+#    That list is the universe considered for container forwarding (see
+#    "Environment forwarding" below), which is what makes adding a var to .env
+#    sufficient to get it into the container — no launcher edit.
+#
+# `set -a` exports the sourced values so they also reach the exec'd `claude` and
+# its child skill scripts in bare/--local modes, which run on the host with no
+# container `-e` forwarding at all.
+_ENV_FILE_VARS=""
+_ENV_SNAP_NAMES=()
+_ENV_SNAP_VALUES=()
+# Explicit count rather than ${#_ENV_SNAP_NAMES[@]}: macOS ships bash 3.2, where
+# expanding an empty array under `set -u` is a minefield (hence the
+# ${arr[@]+"${arr[@]}"} guards throughout this file). A counter has no such edge.
+_ENV_SNAP_N=0
+source_env_file() {
+    local path="$1"
+    local name val i
+
+    # Names assigned by the file. A leading `#` can't match `[A-Za-z_]`, so
+    # commented-out entries are ignored — uncommenting a var is what forwards it.
+    #
+    # The environment value is snapshotted the FIRST time a name is seen, which
+    # is before the file declaring it has been sourced. Snapshotting once, rather
+    # than per file, is what keeps `--profile` working: .env is sourced first, so
+    # a per-file snapshot would capture .env's value and then restore it over the
+    # profile that exists precisely to override it.
+    #
+    # printenv, not ${!name}: it reads the real environment, and it is the only
+    # thing that tells "exported but empty" apart from "unset". That difference
+    # carries intent — `GH_TOKEN= ./claude.sh` means deliberately blank, not
+    # "fall back to whatever the file says".
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        case " $_ENV_FILE_VARS " in
+            *" $name "*) continue ;;
+        esac
+        _ENV_FILE_VARS="$_ENV_FILE_VARS $name"
+        if val=$(printenv "$name"); then
+            _ENV_SNAP_NAMES[$_ENV_SNAP_N]="$name"
+            _ENV_SNAP_VALUES[$_ENV_SNAP_N]="$val"
+            _ENV_SNAP_N=$((_ENV_SNAP_N + 1))
+        fi
+    done < <(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*$/\2/p' "$path")
+
+    # shellcheck disable=SC1090
+    set -a
+    source "$path"
+    set +a
+
+    # Files are defaults; the launching shell wins. Names that were unset in the
+    # launcher's environment were never snapshotted, so the file's value stands.
+    i=0
+    while [ "$i" -lt "$_ENV_SNAP_N" ]; do
+        export "${_ENV_SNAP_NAMES[$i]}=${_ENV_SNAP_VALUES[$i]}"
+        i=$((i + 1))
+    done
+}
+
+source_env_file "$SCRIPT_DIR/.env"
 
 # --- Load profile overlay (if specified) ---
 if [ -n "$PROFILE" ]; then
@@ -200,37 +246,21 @@ if [ -n "$PROFILE" ]; then
     if [ ! -f "$PROFILE_FILE" ]; then
         echo "Error: Profile '$PROFILE' not found at $PROFILE_FILE"
         echo "Available profiles:"
-        # Real profiles only — exclude the env.example template and env.gcp.* files.
+        # Real profiles only — exclude the committed env.example template.
         ls "$SCRIPT_DIR"/env.* 2>/dev/null \
-            | grep -vE '/env\.(example|gcp\.)' \
+            | grep -v '/env\.example$' \
             | sed 's/.*env\./  /' || echo "  (none)"
         exit 1
     fi
-    # shellcheck disable=SC1090
-    set -a
-    source "$PROFILE_FILE"
-    set +a
+    source_env_file "$PROFILE_FILE"
     echo "[claude] Profile: $PROFILE"
 fi
 
-# --- Load GCP overlay (orthogonal to --profile; sets GCP_KEY_FILE + GCP_PROJECT) ---
-if [ -n "$GCP_NAME" ]; then
-    GCP_FILE="$SCRIPT_DIR/env.gcp.$GCP_NAME"
-    if [ ! -f "$GCP_FILE" ]; then
-        echo "Error: GCP profile '$GCP_NAME' not found at $GCP_FILE"
-        echo "Available GCP profiles:"
-        ls "$SCRIPT_DIR"/env.gcp.* 2>/dev/null | sed 's/.*env\.gcp\./  /' || echo "  (none)"
-        exit 1
-    fi
-    # shellcheck disable=SC1090
-    set -a
-    source "$GCP_FILE"
-    set +a
-    echo "[claude] GCP: $GCP_NAME"
-fi
-
-# Expand ~ and $HOME in WORKSPACE, strip trailing slash
-WORKSPACE=$(eval echo "${WORKSPACE:-}")
+# Expand a leading ~ in WORKSPACE, strip trailing slash. No `eval` — this is
+# user config, and eval would execute whatever a stray backtick in it says.
+# `$HOME` inside the file's double quotes is already expanded at source time.
+WORKSPACE="${WORKSPACE:-}"
+WORKSPACE="${WORKSPACE/#\~/$HOME}"
 WORKSPACE="${WORKSPACE%/}"
 : "${WORKSPACE:?WORKSPACE must be set in .env}"
 : "${GIT_AUTHOR_NAME:?GIT_AUTHOR_NAME must be set in .env}"
@@ -339,16 +369,32 @@ fi
 # also collapses nested SDK calls with exit 1. Verified 2026-05-19.
 MCP_ISOLATION=(--strict-mcp-config)
 
+# --- Bare mode: no container, claude runs directly on this host ---
+# The three callers below differ in exactly one thing: whether skip-permissions
+# is safe. It is safe only when something else is already the sandbox (we are
+# inside a container). On the host — explicit --local, or Docker missing — the
+# permission prompts are the only boundary left, so they stay on.
+# Env forwarding is moot here: `set -a` in source_env_file already exported the
+# user's config into this process, which `claude` inherits.
+exec_bare() {
+    local -a skip=()
+    if [ "${1:-}" = "skip-permissions" ]; then
+        skip=(--dangerously-skip-permissions)
+    fi
+    export CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
+    exec claude "${skip[@]+"${skip[@]}"}" "${MCP_ISOLATION[@]}" \
+        "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}" \
+        "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+}
+
 # --- Explicit local mode ---
 if [[ "$MODE" == "local" ]]; then
-    export CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
-    exec claude "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+    exec_bare
 fi
 
 # --- Already inside a container? Run bare with full permissions ---
 if [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
-    export CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
-    exec claude --dangerously-skip-permissions "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+    exec_bare skip-permissions
 fi
 
 # --- Docker not available? Warn and fall back to bare mode ---
@@ -357,8 +403,7 @@ if ! command -v docker &>/dev/null; then
     echo "  Host filesystem is NOT isolated. Permission prompts are active."
     echo "  Install Docker and re-run ./setup.sh to build the sandbox image."
     echo ""
-    export CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
-    exec claude "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+    exec_bare
 fi
 
 # --- Container mode (default) ---
@@ -396,7 +441,11 @@ fi
 # the user to fix a Keychain that can't exist there.
 GH_TOKEN_KEY="${GH_TOKEN_KEYCHAIN:-gh-token}"
 if [ -z "${GH_TOKEN:-}" ] && [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
+    # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
+    # docker resolves from this process's ENVIRONMENT, so a plain shell variable
+    # would arrive as nothing at all.
     GH_TOKEN=$(security find-generic-password -a "$USER" -s "$GH_TOKEN_KEY" -w 2>/dev/null || true)
+    export GH_TOKEN
 fi
 if [ -z "${GH_TOKEN:-}" ]; then
     if [ "$(uname)" = "Darwin" ]; then
@@ -415,7 +464,7 @@ fi
 # "restricted" is the planned opt-in profile — an internal Docker network with
 # no route out, plus a proxy sidecar holding a hostname allowlist (the Anthropic
 # API, GitHub, PyPI, the npm registry, and entries you add). It is not built
-# yet. The flag and this validation exist so the interface is settled and a
+# yet. The name and this validation exist so the interface is settled and a
 # request for it fails loudly and immediately, rather than silently running
 # unrestricted and leaving you believing egress was filtered — which is the
 # worse of the two failure modes by a wide margin.
@@ -511,20 +560,25 @@ if [ "${MULTIPLAI_MOUNT_GEMINI:-0}" = "1" ]; then
     MOUNTS+=(-v "$GEMINI_DIR:/home/agent/.gemini")
 fi
 
-# GCP service account key (read-only) — only mounted when --gcp <name> is used
-# and the env.gcp.<name> file set GCP_KEY_FILE to a real file on host.
-GCP_KEY_FILE=$(eval echo "${GCP_KEY_FILE:-}")
-if [ -n "$GCP_KEY_FILE" ] && [ -f "$GCP_KEY_FILE" ]; then
+# GCP service account key (read-only) — activated by GCP_KEY_FILE alone, from
+# whichever source set it: .env, env.<profile>, or an export in the launching
+# shell. There is no separate selector flag or overlay file; with dynamic
+# forwarding and shell-env-wins there is nothing left for one to do.
+#
+# Set-but-missing is a hard error rather than a silent skip: launching without
+# the credential surfaces as an opaque auth failure deep inside some later
+# gcloud call, which is a much worse place to learn the path was wrong.
+GCP_KEY_FILE="${GCP_KEY_FILE:-}"
+GCP_KEY_FILE="${GCP_KEY_FILE/#\~/$HOME}"
+GCP_ACTIVE=0
+if [ -n "$GCP_KEY_FILE" ]; then
+    if [ ! -f "$GCP_KEY_FILE" ]; then
+        echo "Error: GCP_KEY_FILE is set but there is no file at: $GCP_KEY_FILE" >&2
+        exit 1
+    fi
     MOUNTS+=(-v "$GCP_KEY_FILE:/home/agent/.gcp/key.json:ro")
-elif [ -n "${GCP_NAME:-}" ]; then
-    echo "Error: --gcp $GCP_NAME requested but key file not found at: ${GCP_KEY_FILE:-<unset>}"
-    exit 1
+    GCP_ACTIVE=1
 fi
-
-# Gmail (multiplai-messaging skill): credential is three env vars from .env,
-# forwarded below like SLACK_TOKEN — GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET /
-# GMAIL_REFRESH_TOKEN (minted once on the host by the skill's get_token.py).
-# No mount, no token file. (A JSON file via GMAIL_TOKEN_FILE is an optional fallback.)
 
 # Optional: SSH agent forwarding
 SSH_MOUNT=()
@@ -532,15 +586,86 @@ if [ -n "${SSH_AUTH_SOCK:-}" ]; then
     SSH_MOUNT=(-v "$SSH_AUTH_SOCK:/ssh-agent.sock" -e SSH_AUTH_SOCK=/ssh-agent.sock)
 fi
 
-# --- Environment ---
-ENV_ARGS=(
-    -e GIT_AUTHOR_NAME="$GIT_AUTHOR_NAME"
-    -e GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}"
-    -e GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
-    -e GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-}}"
-    -e TERM
-    -e GH_TOKEN="${GH_TOKEN:-}"
-    -e SSH_BUILD_USER="${SSH_BUILD_USER:-}"
+# --- Environment forwarding ---
+#
+# The universe of forwarded variables is
+#
+#     (every name assigned in .env / env.<profile>  ∪  keep-list)  −  denylist
+#
+# so adding a variable to .env is all it takes to see it in the container. The
+# old hand-enumerated list is what this replaces: it meant every new secret
+# needed a matching launcher edit, and without one the var silently never
+# arrived — a failure that looks like a broken skill, not a missing -e line.
+#
+# Two rules make the sweep safe to point at user config:
+#
+#  1. **Value-less `-e NAME`.** Docker resolves the value from this process's
+#     environment, so secrets never appear on argv (and therefore never in
+#     `ps`). This is why source_env_file exports, and why GH_TOKEN from the
+#     Keychain and the GIT_COMMITTER_* defaults are exported explicitly below.
+#  2. **Non-empty only.** `-e NAME=` makes the variable *present but empty*
+#     inside the container, which beats every `${NAME:-fallback}` and
+#     `os.environ.get(NAME, default)` downstream — an empty forwarded GH_TOKEN
+#     shadows a token the container would otherwise mint for itself. Empty or
+#     unset here means not forwarded at all, so the default wins as intended.
+#
+# Note there is no sweep of the whole host environment. A variable that is
+# exported in the shell and named in no file reaches the container only if it is
+# on the keep-list — the file is still the declaration of intent.
+
+# Vars that legitimately exist in no env file: set by the terminal, computed
+# below, or read from the macOS Keychain.
+_ENV_KEEP="TERM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GH_TOKEN SSH_BUILD_USER CLOUDSDK_CORE_PROJECT"
+
+# Never forwarded dynamically, for one of three reasons: it configures the
+# launcher itself (which image, which volume, which network); it holds a HOST
+# path that the mounts remap, so the host value is actively wrong inside the
+# container; or it is set explicitly further down with a computed container-side
+# value. MULTIPLAI_DRIVER_TOKEN is denied here and forwarded by driver mode
+# alone — an interactive session has no business holding the hub's token.
+#
+# The last line is the guard rail: these are never *meant* to be in an env file,
+# but the sweep now reads user config, and a stray `PATH=` or `HOME=` in .env
+# would otherwise be forwarded as the macOS value and break the Linux container
+# in ways that look nothing like their cause. SSH_AUTH_SOCK is denied because the
+# SSH_MOUNT block above already forwards it, remapped to the socket's in-container
+# path; the host path would win on argv order and silently kill agent forwarding.
+_ENV_DENY="WORKSPACE SSH_BUILD_KEY GCP_KEY_FILE CLAUDE_CREDENTIALS_FILE
+GEMINI_CONFIG_DIR IMAGE_NAME CONTAINER_REPO CONTAINER_REF KIT_VENV_VOLUME
+MULTIPLAI_NET GH_TOKEN_KEYCHAIN MULTIPLAI_MOUNT_GEMINI MULTIPLAI_HUB_URL
+MULTIPLAI_HUB_TOKEN MULTIPLAI_DRIVER_TOKEN HOST_HOME CLAUDE_CONFIG_DIR
+CLAUDE_MULTIPLAI_HOME DISABLE_AUTOUPDATER GOOGLE_APPLICATION_CREDENTIALS
+CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
+SSH_AUTH_SOCK PATH HOME USER LOGNAME SHELL PWD OLDPWD HOSTNAME"
+
+# The list above wraps for readability; the membership tests below are
+# space-delimited, so flatten the newlines out of it first.
+_flat=""
+for _name in $_ENV_DENY; do _flat="$_flat $_name"; done
+_ENV_DENY="$_flat"
+
+# The committer fields fall back to the author fields, and both must be in the
+# ENVIRONMENT (not merely shell variables) for value-less forwarding to find them.
+export GIT_AUTHOR_NAME
+export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-}"
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-}}"
+
+ENV_ARGS=()
+_ENV_SEEN=""
+for _name in $_ENV_FILE_VARS $_ENV_KEEP; do
+    case " $_ENV_DENY " in *" $_name "*) continue ;; esac
+    case " $_ENV_SEEN " in *" $_name "*) continue ;; esac
+    # printenv, not ${!_name}: it reads the same environment docker will read,
+    # so what we test is exactly what would be forwarded.
+    [ -n "$(printenv "$_name" 2>/dev/null)" ] || continue
+    _ENV_SEEN="$_ENV_SEEN $_name"
+    ENV_ARGS+=(-e "$_name")
+done
+
+# Computed / container-side values — these are the names on the denylist above,
+# passed in value form because the host's value is not the container's.
+ENV_ARGS+=(
     -e WORKSPACE="$WORKSPACE"
     -e HOST_HOME="$HOME"
     -e CLAUDE_CONFIG_DIR="$DOTFILES_DIR"
@@ -552,67 +677,13 @@ ENV_ARGS=(
     -e DISABLE_AUTOUPDATER=1
 )
 
-# Messaging plugin (multiplai-messaging) credentials — narrowable per group.
-#
-# These are live tokens for accounts that can send mail and post to a team's
-# Slack, and every session that receives them can use them, including sessions
-# doing entirely unrelated work. MULTIPLAI_SKILL_SECRETS (space-separated, in
-# .env or env.<profile>) controls which groups are forwarded:
-#
-#     MULTIPLAI_SKILL_SECRETS="gmail"    # gmail only, slack withheld
-#     MULTIPLAI_SKILL_SECRETS=""         # forward nothing
-#
-# Unset forwards everything that is set, with a warning naming what went in.
-# The permissive default is deliberate: silently breaking a working gmail or
-# slack setup on upgrade would teach people to distrust the launcher, and the
-# warning is what makes the exposure visible enough to act on. Narrow it when
-# you know which groups you actually use.
-#
-# One allowlist to extend for the next plugin, instead of hand-enumerating an
-# -e line per var. Only vars that are actually set are forwarded: `-e NAME=`
-# (empty) makes the var *present but empty* in the container, which defeats a
-# script's `os.environ.get(NAME, default)` fallback (the empty string wins over
-# the default). Skipping unset vars keeps optional ones (e.g. GMAIL_TOKEN_URI)
-# truly absent.
-_secrets_slack="SLACK_TOKEN"
-_secrets_gmail="GMAIL_CLIENT_ID GMAIL_CLIENT_SECRET GMAIL_REFRESH_TOKEN GMAIL_TOKEN_URI GMAIL_TOKEN_FILE"
-_SKILL_SECRET_ALL_GROUPS="slack gmail"
-
-# Distinguish "unset" (forward all, warn) from "set to empty" (forward none) —
-# ${VAR:-default} can't tell them apart, ${VAR+set} can.
-if [ -n "${MULTIPLAI_SKILL_SECRETS+set}" ]; then
-    SKILL_SECRET_GROUPS="$MULTIPLAI_SKILL_SECRETS"
-    _SKILL_SECRETS_EXPLICIT=1
-else
-    SKILL_SECRET_GROUPS="$_SKILL_SECRET_ALL_GROUPS"
-    _SKILL_SECRETS_EXPLICIT=0
-fi
-
-_forwarded_secrets=""
-for _group in $SKILL_SECRET_GROUPS; do
-    _varname="_secrets_${_group}"
-    _vars="${!_varname:-}"
-    if [ -z "$_vars" ]; then
-        echo "Warning: MULTIPLAI_SKILL_SECRETS names unknown group '$_group' (known: $_SKILL_SECRET_ALL_GROUPS)" >&2
-        continue
-    fi
-    for v in $_vars; do
-        [ -n "${!v:-}" ] && ENV_ARGS+=(-e "$v=${!v}") && _forwarded_secrets="$_forwarded_secrets $v"
-    done
-done
-
-if [ "$_SKILL_SECRETS_EXPLICIT" -eq 0 ] && [ -n "$_forwarded_secrets" ]; then
-    echo "Note: forwarding messaging secrets into the container:${_forwarded_secrets}" >&2
-    echo "      Set MULTIPLAI_SKILL_SECRETS in .env to narrow this (e.g. \"gmail\", or \"\" for none)." >&2
-elif [ "$_SKILL_SECRETS_EXPLICIT" -eq 1 ]; then
-    # A secret configured but deliberately withheld is worth naming: the skill
-    # otherwise fails inside the container with a missing-credential error that
-    # looks nothing like its cause.
-    for v in SLACK_TOKEN GMAIL_CLIENT_ID GMAIL_REFRESH_TOKEN; do
-        if [ -n "${!v:-}" ] && [[ " $_forwarded_secrets " != *" $v "* ]]; then
-            echo "Note: $v is set but withheld by MULTIPLAI_SKILL_SECRETS." >&2
-        fi
-    done
+# GCP credential env — the key is mounted at a fixed container path, so these
+# two point there, never at the host path in GCP_KEY_FILE.
+if [ "$GCP_ACTIVE" -eq 1 ]; then
+    ENV_ARGS+=(
+        -e CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=/home/agent/.gcp/key.json
+        -e GOOGLE_APPLICATION_CREDENTIALS=/home/agent/.gcp/key.json
+    )
 fi
 
 # Forward any CLAUDE_PLUGIN_OPTION_* vars set by the caller into the container.
@@ -622,19 +693,6 @@ fi
 while IFS='=' read -r _name _; do
     [ -n "$_name" ] && ENV_ARGS+=(-e "$_name")
 done < <(env | grep '^CLAUDE_PLUGIN_OPTION_' | cut -d= -f1)
-
-if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
-    ENV_ARGS+=(-e ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL")
-fi
-
-# GCP credential env — only set when --gcp <name> is active and key was mounted.
-if [ -n "${GCP_KEY_FILE:-}" ] && [ -f "$GCP_KEY_FILE" ]; then
-    ENV_ARGS+=(
-        -e CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=/home/agent/.gcp/key.json
-        -e GOOGLE_APPLICATION_CREDENTIALS=/home/agent/.gcp/key.json
-    )
-    [ -n "${GCP_PROJECT:-}" ] && ENV_ARGS+=(-e CLOUDSDK_CORE_PROJECT="$GCP_PROJECT")
-fi
 
 # Propagate the launcher's cwd into the container so `./claude.sh <subproject>`
 # lands in the subproject. The whole workspace is bind-mounted at the same path,
@@ -763,9 +821,6 @@ while :; do
     CONTAINER_NAME="claude"
     if [ -n "$PROFILE" ]; then
         CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE}"
-    fi
-    if [ -n "$GCP_NAME" ]; then
-        CONTAINER_NAME="${CONTAINER_NAME}-gcp${GCP_NAME}"
     fi
     CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
 

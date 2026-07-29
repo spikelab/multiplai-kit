@@ -135,7 +135,6 @@ The plugin's routing is project-aware. When you start a session and mention a pr
 ```bash
 ./claude.sh                         # container (default)
 ./claude.sh --profile work          # container, work git identity
-./claude.sh --gcp ro                # container + GCP credential overlay
 ./claude.sh --local                 # bare mode, host permissions
 ./claude.sh --shell                 # container bash shell
 ./claude.sh --profile work --shell  # work profile, bash shell
@@ -153,9 +152,8 @@ The kit uses **two kinds of env files** with similar names — intentional but c
 |---|---|---|---|
 | `.env` | gitignored | **Base config** — workspace path, default git identity, GH token, container settings, **and secrets (API keys for skills)** | Always, by `claude.sh` |
 | `.env.example` | committed | Template for `.env` | Manual: `cp .env.example .env` |
-| `env.<profile>` (e.g. `env.work`, `env.personal`) | gitignored | **Optional override layer** — git identity and GH token only. Does NOT replace `.env`, just overrides specific fields. | Only when `--profile <name>` is passed |
+| `env.<profile>` (e.g. `env.work`, `env.personal`) | gitignored | **Optional override layer** — typically git identity and GH token. Does NOT replace `.env`, just overrides the fields it names. | Only when `--profile <name>` is passed |
 | `env.example` | committed | Template for profile files | Manual: `cp env.example env.<name>` |
-| `env.<gcp>` (e.g. `env.gcp.ro`) | gitignored | **GCP credential overlay** — sets `GCP_KEY_FILE` + `GCP_PROJECT` | Only when `--gcp <name>` is passed |
 
 **Rule of thumb — where does a new value belong?**
 
@@ -168,6 +166,27 @@ The kit uses **two kinds of env files** with similar names — intentional but c
 
 **The dot matters.** `.env.example` (leading dot) is the template for the base config. `env.example` (no dot) is the template for profile overrides. They are NOT duplicates.
 
+### How variables reach the container
+
+Two rules, and they are the whole model:
+
+1. **Anything you declare gets forwarded, if it has a value.** Every variable assigned in `.env` or `env.<profile>` is passed into the container when its value is non-empty. Adding a key to `.env` is sufficient — there is no list in the launcher to update. A commented-out line assigns nothing, so uncommenting it is what turns forwarding on.
+
+   Empty counts as absent: an empty variable is *not* forwarded, because a variable that is present-but-empty inside the container beats every `${VAR:-fallback}` and `os.environ.get(VAR, default)` downstream. Leaving it out is what lets the default apply.
+
+   The exceptions are variables that only configure the launcher (`IMAGE_NAME`, `CONTAINER_REF`, `KIT_VENV_VOLUME`, `MULTIPLAI_NET`, `GH_TOKEN_KEYCHAIN`, `MULTIPLAI_MOUNT_GEMINI`, `MULTIPLAI_HUB_*`) and ones holding a **host** path that the container mounts elsewhere (`WORKSPACE`, `SSH_BUILD_KEY`, `GCP_KEY_FILE`, `CLAUDE_CREDENTIALS_FILE`, `GEMINI_CONFIG_DIR`). Those still take effect — they just arrive as the container's path, not the host's.
+
+2. **Your shell wins over the files.** A variable exported before launch overrides whatever `.env` or the profile says:
+
+   ```bash
+   GH_TOKEN="$(mint-a-short-lived-token)" ./claude.sh   # the minted one is used
+   GCP_KEY_FILE=~/.gcp/other.json ./claude.sh           # this key, this launch
+   ```
+
+   This is the same precedence the in-container loaders use when they read `.env` (`override=False`), so one rule holds end to end. A variable exported in your shell but named in no file is *not* swept up — the file is still where you declare intent — apart from a few that legitimately live nowhere else (`TERM`, the `GIT_*` identity fields, `GH_TOKEN`, `SSH_BUILD_USER`, `CLOUDSDK_CORE_PROJECT`, `CLAUDE_PLUGIN_OPTION_*`).
+
+Values are handed to Docker by name, not on the command line, so secrets never appear in `ps` output.
+
 ### Creating a Profile (optional)
 
 Profiles switch git identity and GitHub token for different contexts (personal vs work). They layer on top of `.env`:
@@ -179,11 +198,14 @@ cp env.example env.work
 ./claude.sh --profile work
 ```
 
-Profile files override only:
+What a profile typically overrides:
 - `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL`
 - `GH_TOKEN_KEYCHAIN` — macOS Keychain key for the GitHub token
 - `CLAUDE_CREDENTIALS_FILE` — separate Claude OAuth credentials file per profile
 - `GEMINI_CONFIG_DIR` — optional separate Gemini CLI config dir (only mounted when `MULTIPLAI_MOUNT_GEMINI=1`; see [What credentials enter the container](#what-credentials-enter-the-container))
+- `GCP_KEY_FILE` / `CLOUDSDK_CORE_PROJECT` — when a client's cloud credentials should follow their identity rather than apply to every launch
+
+Any variable is allowed in a profile; those are just the ones that usually differ per identity.
 
 Without `--profile`, only `.env` is loaded. For a full walkthrough — Keychain setup, separate Claude login, a worked example — see [`docs/PROFILES.md`](docs/PROFILES.md).
 
@@ -191,21 +213,21 @@ Without `--profile`, only `.env` is loaded. For a full walkthrough — Keychain 
 
 Skills that need secrets (e.g. `deep-research` uses `TAVILY_API_KEY`, `EXA_API_KEY`; optionally `BRAVE_API_KEY`, `SERPER_API_KEY`) load them from `.env` automatically via `python-dotenv`. No per-skill config files. Add the key to `.env` (and document it in `.env.example`) and the skill picks it up on next launch. Shell-exported env vars take precedence over `.env` values:
 
-> **Messaging secrets are the exception.** `SLACK_TOKEN` and the `GMAIL_*` trio
-> can send mail and post as you, so being present in `.env` is not enough — they
-> reach the container only when their group is named in `MULTIPLAI_SKILL_SECRETS`
-> (e.g. `MULTIPLAI_SKILL_SECRETS="gmail slack"`). See
-> [What credentials enter the container](#what-credentials-enter-the-container).
-
 ```bash
 TAVILY_API_KEY=override-key ./claude.sh
 ```
+
+> **`SLACK_TOKEN` and the `GMAIL_*` trio deserve a moment's thought** before you
+> add them: they can post and send mail as you, and every session gets them,
+> including sessions doing unrelated work. Putting them in `.env` *is* the
+> decision to hand them over — see
+> [What credentials enter the container](#what-credentials-enter-the-container).
 
 ## Architecture
 
 ```
 multiplai-kit/                          # = the "runtime" / kit repo
-├── claude.sh              # Single entrypoint (container default, --local, --shell, --profile, --gcp)
+├── claude.sh              # Single entrypoint (container default, --local, --shell, --profile)
 ├── setup.sh               # One-time: prerequisite checks, workspace, memory templates, Docker build
 ├── multiplai.conf         # Kit config (model/effort ceilings, per-skill overrides) — project root, NOT in dotfiles/
 ├── requirements.txt       # Kit venv deps
@@ -499,25 +521,32 @@ you can decide what to hand over before you hand it over rather than after.
 | SSH agent socket | mount → `/ssh-agent.sock` | when `SSH_AUTH_SOCK` set | Every key in your agent, usable for the container's lifetime (keys aren't copied, but signing requests are honoured). `ssh-add -D` before an autonomous run if that matters. |
 | SSH build key | mount `:ro` | when `SSH_BUILD_KEY` set | The host bridge account. Deny-by-default on the host side (`container-build-gateway.sh`). |
 | Search API keys | `-e` from `.env` | when set | Metered spend on Tavily/Exa/Brave/Serper. |
-| `SLACK_TOKEN` | `-e` | when set | Posting as you in your workspace. Narrow or disable via `MULTIPLAI_SKILL_SECRETS`. |
-| `GMAIL_*` trio | `-e` | when set | Reading and sending as your account. Narrow or disable via `MULTIPLAI_SKILL_SECRETS`. |
+| `SLACK_TOKEN` | `-e` | when set | Posting as you in your workspace. |
+| `GMAIL_*` trio | `-e` | when set | Reading and sending as your account. |
+| Any other var in `.env` / `env.<profile>` | `-e` | when non-empty | Whatever that credential is for. You declared it; it is forwarded. |
 | `~/.gemini/` | mount **rw**, **opt-in** | off | OAuth refresh tokens + `history/` of past prompts. Requires `MULTIPLAI_MOUNT_GEMINI=1`. |
-| GCP service-account key | mount `:ro` | only with `--gcp <name>` | Whatever the service account can do. |
+| GCP service-account key | mount `:ro` | when `GCP_KEY_FILE` set | Whatever the service account can do. |
 | Workspace | mount **rw** | **always** | Your files. This is the point of the tool. |
 
-**Narrowing the messaging secrets.** `MULTIPLAI_SKILL_SECRETS` controls which
-groups are forwarded — `"gmail"` for gmail only, `""` for none. Left unset,
-everything configured is forwarded and the launcher prints a note listing what
-went in, so the exposure is visible rather than silent. When a secret is set but
-withheld, it says that too — otherwise the skill fails inside the container with
-a missing-credential error that looks nothing like its cause.
+**`.env` is the boundary, not the forwarding list.** Earlier versions gated the
+messaging tokens behind an allowlist. That gate has been removed, because it
+never bought what it appeared to: `.env` lives on the bind-mounted kit root, and
+the skills read it from there directly, so a session that can read files can
+obtain any credential in it whether or not the launcher forwarded it as an
+environment variable. Keeping the gate meant maintaining a control that a
+one-line `Read` defeats, while implying a confinement that did not exist.
+
+So the honest rule is the simple one: **a credential in `.env` is a credential
+you have handed to every session.** Narrow by not putting it there — keep a
+second `.env` for the launches that need Slack or Gmail, or export the token for
+just that launch (`SLACK_TOKEN=xoxp-… ./claude.sh`) instead of storing it.
 
 **What never happens:** the kit has no telemetry and phones nothing home. No
 credential is written into the image, into git, or into any log.
 
 ### Network egress
 
-`--net <profile>` (or `MULTIPLAI_NET` in `.env`) selects how much of the
+`MULTIPLAI_NET` (in `.env`, or exported for one launch) selects how much of the
 internet the container can reach. Today `unrestricted` is the default and the
 only implemented value: normal Docker networking, any host reachable.
 

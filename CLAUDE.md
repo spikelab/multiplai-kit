@@ -38,7 +38,7 @@ This project has **four distinct env files** (plus their templates). Getting the
 |---|---|---|
 | `.env` | **no** (gitignored) | Base config loaded on every launch. Workspace path, default git identity, GH token, container settings, **and all skill secrets (API keys)**. |
 | `.env.example` | **yes** | Template for `.env`. Mirror every field here (with placeholder values/comments) so new users can `cp .env.example .env`. |
-| `env.<profile>` | **no** (gitignored) | Optional per-profile overlay (e.g. `env.work`, `env.personal`). Contains only git identity + `GH_TOKEN_KEYCHAIN`. Loaded by `claude.sh --profile <name>` AFTER `.env`, so overrides specific fields. |
+| `env.<profile>` | **no** (gitignored) | Optional per-profile overlay (e.g. `env.work`, `env.personal`). Usually git identity + `GH_TOKEN_KEYCHAIN`, but any variable is allowed. Loaded by `claude.sh --profile <name>` AFTER `.env`, so overrides the fields it names. |
 | `env.example` | **yes** | Template for profile files. Minimal — only the fields a profile is allowed to override. |
 
 **Decision tree when adding a new env var:**
@@ -50,10 +50,15 @@ This project has **four distinct env files** (plus their templates). Getting the
 **What NOT to do:**
 
 - Don't create a new `.env.*` file for a specific skill. One `.env` at the project root, shared by all skills.
-- Don't put secrets in `env.<profile>`. Profile files are for git identity overlay only. API keys go in `.env` so they apply regardless of which profile is active.
+- Prefer `.env` for secrets, so they apply regardless of which profile is active. A profile *may* carry one (e.g. a client's `GCP_KEY_FILE`) when it genuinely belongs to that identity — profiles are no longer git-identity-only.
 - Don't forget to update `.env.example` when you add a field to `.env`. The example file is the only thing new users see to know what keys are needed.
+- **Don't add an `-e` line to `claude.sh` for a new variable.** Forwarding is dynamic — declaring it in `.env` is the whole job. Editing the launcher is only for changing the *rules* (the keep-list or the denylist).
 
-**Shell env wins over `.env`.** All loaders use `override=False` semantics. So `TAVILY_API_KEY=x python -m research_pipeline ...` overrides the value in `.env` for that single invocation.
+**Shell env wins over `.env`.** All loaders use `override=False` semantics, and
+since the dynamic-forwarding refactor `claude.sh` itself honours the same rule
+(it used to be the one place that didn't). So `TAVILY_API_KEY=x python -m
+research_pipeline ...` and `GH_TOKEN=$(mint) ./claude.sh` both override the file
+for that single invocation.
 
 **`claude.sh` launch flow:**
 
@@ -62,10 +67,19 @@ This project has **four distinct env files** (plus their templates). Getting the
   ↓
 1. source .env                    # WORKSPACE, default git, TAVILY_API_KEY, etc.
 2. source env.personal            # overrides GIT_AUTHOR_NAME/EMAIL/GH_TOKEN_KEYCHAIN
-3. start container with all resulting env vars inherited
-4. inside container, skills call load_env() which re-reads .env
-   (but override=False, so the shell values from steps 1-2 win)
+3. restore anything exported in the launching shell  # shell wins over both files
+4. start container, forwarding every var declared in (1)/(2) whose value is
+   non-empty, minus a launcher-only denylist; by NAME, so no secret hits argv
+5. inside container, skills call load_env() which re-reads .env
+   (but override=False, so the values from steps 1-3 win)
 ```
+
+The forwarding contract lives in one block in `claude.sh` (`_ENV_KEEP` /
+`_ENV_DENY` under "Environment forwarding"). Two invariants to preserve if you
+touch it: an **empty** value is never forwarded (a present-but-empty var in the
+container defeats every `${VAR:-default}` downstream — this is what broke a
+setup that minted `GH_TOKEN` in-container), and values are passed as `-e NAME`
+without `=value` so they never appear in `ps`.
 
 See `README.md` → "Environment Configuration" for the user-facing version.
 

@@ -16,7 +16,11 @@ Launch with: `./claude.sh --profile <name>`
 
 ## What a profile can override
 
-Only these fields. Anything else belongs in `.env`.
+A profile may set **any** variable — it is sourced after `.env` under the same
+rules, so whatever it names wins over `.env` and is forwarded to the container
+when non-empty. In practice these are the fields worth putting in one, because
+they are the ones that differ per identity. Everything else belongs in `.env`,
+where it applies to every launch.
 
 | Field | Purpose |
 |---|---|
@@ -25,6 +29,7 @@ Only these fields. Anything else belongs in `.env`.
 | `GH_TOKEN_KEYCHAIN` | macOS Keychain key name holding this org's GitHub token |
 | `CLAUDE_CREDENTIALS_FILE` | Path to a **separate** Claude OAuth credentials file → a separate Claude account/key |
 | `GEMINI_CONFIG_DIR` | Optional — separate Gemini CLI config dir for a different Google account |
+| `GCP_KEY_FILE` / `CLOUDSDK_CORE_PROJECT` | Optional — a service-account key that should follow this client rather than apply to every launch |
 
 > The "different Claude key" is just `CLAUDE_CREDENTIALS_FILE` pointing at its own
 > file. Each path gets its own `/login`, so a profile can use a different Claude
@@ -109,13 +114,19 @@ profiles apart in `docker ps` / OrbStack.
   ↓
 1. source .env              # WORKSPACE, default git identity, skill API keys
 2. source env.work          # overrides git identity, GH_TOKEN_KEYCHAIN, CLAUDE_CREDENTIALS_FILE
-3. read GH token from Keychain key "gh-token-claude-ro-work"
-4. mount CLAUDE_CREDENTIALS_FILE → container, start container with this identity
-5. inside container: git + gh + Claude all use the work identity
+3. anything exported in your shell wins over BOTH files
+4. read GH token from Keychain key "gh-token-claude-ro-work" (unless already set)
+5. mount CLAUDE_CREDENTIALS_FILE → container, forward every non-empty declared var
+6. inside container: git + gh + Claude all use the work identity
 ```
 
 `.env` is always loaded first; the profile only changes what it names. Without
 `--profile`, only `.env` is used (your default identity).
+
+Step 3 is worth remembering: the files are defaults, and your shell overrides
+them. So you can borrow one field of another identity for a single launch —
+`GIT_AUTHOR_EMAIL=me@personal.example ./claude.sh --profile work` — without
+editing either file.
 
 ---
 

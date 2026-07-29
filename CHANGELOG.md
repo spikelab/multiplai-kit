@@ -112,6 +112,10 @@ public repo has shipped without in-tree memory hooks from day one (see the
   `-e NAME` against — so the rules are checked without a daemon or an image and
   the suite runs in CI. Verified by mutation: breaking each of the seven rules
   in turn makes the corresponding tests fail.
+- `scripts/verify-env-forwarding.sh` — answers "is my variable actually reaching
+  the container?" by launching real containers and reading the environment from
+  inside them, which the stub-based tests cannot do. Prints PASS/FAIL per check
+  and exits non-zero on any failure; restores `.env` on every exit path.
 
 ## 2026-07-26
 

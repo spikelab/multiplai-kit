@@ -104,6 +104,14 @@ public repo has shipped without in-tree memory hooks from day one (see the
   the README already implies.
 - `.github/workflows/ci.yml` — runs `pytest evals/` and a `bash -n` syntax
   check over `claude.sh` and `setup.sh` on every push to `main` and every PR.
+- `evals/unit/test_claude_sh_env.py` — 35 tests pinning the env-forwarding
+  contract (empty-var rule, shell-wins precedence, dynamic forwarding, the
+  denylist, GCP activation, profile layering, the removed flags). It runs the
+  launcher against a stub `docker` that records the argv *and the environment
+  docker was handed* — which is what real docker resolves a value-less
+  `-e NAME` against — so the rules are checked without a daemon or an image and
+  the suite runs in CI. Verified by mutation: breaking each of the seven rules
+  in turn makes the corresponding tests fail.
 
 ## 2026-07-26
 

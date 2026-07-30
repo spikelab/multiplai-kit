@@ -73,13 +73,26 @@ TMP=""
 cleanup() { rm -f "$ERR" ${TMP:+"$TMP"}; }
 trap cleanup EXIT
 
+# Two routes to the same host script. Bare on the Mac, `multiplai-gh-token` is
+# right here on PATH (setup.sh installs it to ~/.local/bin) — call it directly;
+# `host.docker.internal` only resolves from inside a container, and ssh'ing to
+# yourself to run a script you already have is a bridge for its own sake. From
+# inside the container the binary does not exist (the App key never enters the
+# container), so `command -v` cleanly picks the route.
 set +e
-resp=$(ssh -q -o BatchMode=yes -o ConnectTimeout=10 "$HOST" \
-        multiplai-gh-token --json "$APP" 2>"$ERR")
-rc=$?
+if command -v multiplai-gh-token >/dev/null 2>&1; then
+    VIA=local
+    resp=$(multiplai-gh-token --json "$APP" 2>"$ERR")
+    rc=$?
+else
+    VIA=bridge
+    resp=$(ssh -q -o BatchMode=yes -o ConnectTimeout=10 "$HOST" \
+            multiplai-gh-token --json "$APP" 2>"$ERR")
+    rc=$?
+fi
 set -e
 
-if [ "$rc" -eq 255 ]; then
+if [ "$VIA" = bridge ] && [ "$rc" -eq 255 ]; then
     # ssh's own failure code. Say so explicitly: the container has no other route
     # to the App key, so "the bridge is down" is the whole diagnosis.
     printf 'gh-tok: cannot reach the macOS host bridge (%s) — the App key lives on\n' "$HOST" >&2
@@ -99,7 +112,11 @@ tok=$(printf '%s' "$resp" | jq -r '.token // empty' 2>/dev/null || true)
 [ -n "$tok" ] || die "the host response carried no .token (not JSON, or an error body)"
 
 expires=$(printf '%s' "$resp" | jq -r '.expires_at // empty' 2>/dev/null || true)
-epoch=$(date -u -d "$expires" +%s 2>/dev/null || true)
+# GNU date first (`-d`, the container), BSD date second (`-j -f`, a bare Mac —
+# BSD date has no `-d` and would otherwise force the 30m fallback on every
+# mint, with a warning each time).
+epoch=$(date -u -d "$expires" +%s 2>/dev/null \
+     || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$expires" +%s 2>/dev/null || true)
 case "$epoch" in
     ''|*[!0-9]*)
         # A token that works should not be thrown away over an unreadable

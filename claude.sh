@@ -614,8 +614,11 @@ fi
 # on the keep-list — the file is still the declaration of intent.
 
 # Vars that legitimately exist in no env file: set by the terminal, computed
-# below, or read from the macOS Keychain.
-_ENV_KEEP="TERM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GH_TOKEN SSH_BUILD_USER CLOUDSDK_CORE_PROJECT"
+# below, read from the macOS Keychain, or exported per launch
+# (ANTHROPIC_BASE_URL — pointing one launch at a proxy shouldn't require an
+# .env line; it used to work from the shell alone and silently dropping it
+# would misroute traffic with no visible cause).
+_ENV_KEEP="TERM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GH_TOKEN SSH_BUILD_USER CLOUDSDK_CORE_PROJECT ANTHROPIC_BASE_URL"
 
 # Never forwarded dynamically, for one of three reasons: it configures the
 # launcher itself (which image, which volume, which network); it holds a HOST

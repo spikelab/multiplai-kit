@@ -183,7 +183,7 @@ Two rules, and they are the whole model:
    GCP_KEY_FILE=~/.gcp/other.json ./claude.sh           # this key, this launch
    ```
 
-   This is the same precedence the in-container loaders use when they read `.env` (`override=False`), so one rule holds end to end. A variable exported in your shell but named in no file is *not* swept up — the file is still where you declare intent — apart from a few that legitimately live nowhere else (`TERM`, the `GIT_*` identity fields, `GH_TOKEN`, `SSH_BUILD_USER`, `CLOUDSDK_CORE_PROJECT`, `CLAUDE_PLUGIN_OPTION_*`).
+   This is the same precedence the in-container loaders use when they read `.env` (`override=False`), so one rule holds end to end. A variable exported in your shell but named in no file is *not* swept up — the file is still where you declare intent — apart from a few that legitimately live nowhere else (`TERM`, the `GIT_*` identity fields, `GH_TOKEN`, `SSH_BUILD_USER`, `CLOUDSDK_CORE_PROJECT`, `ANTHROPIC_BASE_URL`, `CLAUDE_PLUGIN_OPTION_*`).
 
 Values are handed to Docker by name, not on the command line, so secrets never appear in `ps` output.
 

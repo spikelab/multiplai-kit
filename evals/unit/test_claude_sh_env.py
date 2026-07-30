@@ -288,6 +288,18 @@ def test_keep_list_var_is_forwarded_when_absent_from_env_file(kit):
     assert result.forwarded_bare("TERM")
 
 
+def test_shell_exported_proxy_url_is_forwarded_without_an_env_line(kit):
+    """ANTHROPIC_BASE_URL is on the keep-list: pointing one launch at a proxy
+    (`ANTHROPIC_BASE_URL=... ./claude.sh`) must work with the .env line still
+    commented out — silently dropping it would send traffic direct to Anthropic
+    with no visible cause."""
+    result = kit.launch(
+        "--shell", "-c", "true", ANTHROPIC_BASE_URL="http://host.docker.internal:4000"
+    )
+    assert result.forwarded_bare("ANTHROPIC_BASE_URL")
+    assert result.resolved("ANTHROPIC_BASE_URL") == "http://host.docker.internal:4000"
+
+
 # --- the denylist ------------------------------------------------------------
 
 

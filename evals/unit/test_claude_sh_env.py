@@ -437,6 +437,119 @@ def test_unknown_profile_errors_and_lists_real_ones(kit):
     assert "example" not in result.output, "listed the env.example template as a profile"
 
 
+# --- GitHub auth mode selection ----------------------------------------------
+#
+# Two modes, both supported, never both at once: a PAT (`GH_TOKEN` /
+# `GH_TOKEN_KEYCHAIN`) or a GitHub App (`GH_TOKEN_APP`, minted per session by
+# hooks inside the container). What these pin is the *refusal*: when both are
+# declared in configuration the launcher must stop, because a silent winner runs
+# the session as the wrong GitHub identity — a failure that looks like a
+# permissions bug hours later, in someone else's repo.
+#
+# App mode is macOS-only (minting goes over the Mac host bridge), so the cases
+# below put a `uname` stub printing Darwin first on PATH. It is confined: the
+# launcher calls `uname` in exactly this block and nowhere else.
+
+APP_ENV_FILE = """\
+WORKSPACE="{ws}"
+GIT_AUTHOR_NAME="Env File Name"
+GIT_AUTHOR_EMAIL="envfile@example.com"
+GH_TOKEN_APP="acme"
+"""
+
+
+def _pretend_macos(kit):
+    stub = kit.stub_dir / "uname"
+    stub.write_text("#!/bin/sh\nprintf 'Darwin\\n'\n")
+    stub.chmod(0o755)
+
+
+def _install_host_minter(kit):
+    """The host-side minting script the launcher pre-flights for in App mode."""
+    bin_dir = kit.home / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / "multiplai-gh-token"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    script.chmod(0o755)
+    return script
+
+
+def test_pat_mode_is_unchanged_and_forwards_no_app_name(kit):
+    _pretend_macos(kit)
+    result = kit.launch("--shell", "-c", "true")
+    assert result.status == 0
+    assert result.resolved("GH_TOKEN") == "token-from-env-file"
+    assert not result.mentions("GH_TOKEN_APP")
+
+
+def test_app_mode_forwards_the_app_name_and_no_token(kit):
+    """The token is minted in the container, so the launcher forwards only the
+    profile name. A forwarded GH_TOKEN would also beat gh's credential store and
+    make `gh auth login --with-token` refuse outright."""
+    _pretend_macos(kit)
+    _install_host_minter(kit)
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
+
+    result = kit.launch("--shell", "-c", "true")
+    assert result.status == 0, result.output
+    assert result.forwarded_bare("GH_TOKEN_APP")
+    assert result.resolved("GH_TOKEN_APP") == "acme"
+    assert not result.mentions("GH_TOKEN")
+
+
+@pytest.mark.parametrize("pat_line", ['GH_TOKEN="pat-token"', 'GH_TOKEN_KEYCHAIN="gh-acme"'])
+def test_both_identities_declared_in_files_is_a_hard_error(kit, pat_line):
+    """Not a precedence rule. The message must name both variables and the file
+    each came from — "both are set" is useless advice to someone with three env
+    files."""
+    _pretend_macos(kit)
+    _install_host_minter(kit)
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace).replace('GH_TOKEN_APP="acme"', pat_line))
+    kit.write_profile("acme", 'GH_TOKEN_APP="acme"\n')
+
+    result = kit.launch("--profile", "acme", "--shell", "-c", "true")
+    assert result.status != 0
+    assert "GH_TOKEN_APP" in result.output
+    assert pat_line.split("=")[0] in result.output
+    assert "env.acme" in result.output and ".env" in result.output
+    assert result.argv == [], "a container was launched despite the conflict"
+
+
+def test_shell_token_overrides_a_file_declared_app(kit):
+    """The kit's documented "your shell wins" rule. Not a conflict: the token is
+    used and GH_TOKEN_APP is dropped so the container hooks stay inert rather
+    than fighting the credential that was handed in."""
+    _pretend_macos(kit)
+    _install_host_minter(kit)
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
+
+    result = kit.launch("--shell", "-c", "true", GH_TOKEN="minted-in-shell")
+    assert result.status == 0, result.output
+    assert result.resolved("GH_TOKEN") == "minted-in-shell"
+    assert not result.mentions("GH_TOKEN_APP")
+
+
+def test_app_mode_without_the_host_script_refuses_to_launch(kit):
+    """Every `gh` call in that session would fail; failing at the door names the
+    fix (`./setup.sh`) instead of surfacing as an unauthenticated container."""
+    _pretend_macos(kit)
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
+
+    result = kit.launch("--shell", "-c", "true")
+    assert result.status != 0
+    assert "multiplai-gh-token" in result.output
+    assert result.argv == [], "a container was launched with no way to authenticate"
+
+
+def test_app_mode_off_darwin_refuses_to_launch(kit):
+    """Minting needs the macOS host bridge; there is no other route to the key."""
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
+    result = kit.launch("--shell", "-c", "true")
+    assert result.status != 0
+    assert "macOS" in result.output
+    assert result.argv == []
+
+
 # --- removed flags ----------------------------------------------------------
 
 

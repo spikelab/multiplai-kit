@@ -176,6 +176,8 @@ Two rules, and they are the whole model:
 
    The exceptions are variables that only configure the launcher (`IMAGE_NAME`, `CONTAINER_REF`, `KIT_VENV_VOLUME`, `MULTIPLAI_NET`, `GH_TOKEN_KEYCHAIN`, `MULTIPLAI_MOUNT_GEMINI`, `MULTIPLAI_HUB_*`) and ones holding a **host** path that the container mounts elsewhere (`WORKSPACE`, `SSH_BUILD_KEY`, `GCP_KEY_FILE`, `CLAUDE_CREDENTIALS_FILE`, `GEMINI_CONFIG_DIR`). Those still take effect — they just arrive as the container's path, not the host's.
 
+   `GH_TOKEN_APP` is deliberately *not* one of those exceptions: it is forwarded, because the hooks inside the container read it to know which GitHub App profile to mint against. It is a profile **name**, not a secret.
+
 2. **Your shell wins over the files.** A variable exported before launch overrides whatever `.env` or the profile says:
 
    ```bash
@@ -183,7 +185,7 @@ Two rules, and they are the whole model:
    GCP_KEY_FILE=~/.gcp/other.json ./claude.sh           # this key, this launch
    ```
 
-   This is the same precedence the in-container loaders use when they read `.env` (`override=False`), so one rule holds end to end. A variable exported in your shell but named in no file is *not* swept up — the file is still where you declare intent — apart from a few that legitimately live nowhere else (`TERM`, the `GIT_*` identity fields, `GH_TOKEN`, `SSH_BUILD_USER`, `CLOUDSDK_CORE_PROJECT`, `ANTHROPIC_BASE_URL`, `CLAUDE_PLUGIN_OPTION_*`).
+   This is the same precedence the in-container loaders use when they read `.env` (`override=False`), so one rule holds end to end. A variable exported in your shell but named in no file is *not* swept up — the file is still where you declare intent — apart from a few that legitimately live nowhere else (`TERM`, the `GIT_*` identity fields, `GH_TOKEN`, `GH_TOKEN_APP`, `SSH_BUILD_USER`, `CLOUDSDK_CORE_PROJECT`, `ANTHROPIC_BASE_URL`, `CLAUDE_PLUGIN_OPTION_*`).
 
 Values are handed to Docker by name, not on the command line, so secrets never appear in `ps` output.
 
@@ -517,7 +519,7 @@ you can decide what to hand over before you hand it over rather than after.
 | Credential | How it enters | Default | Blast radius |
 |---|---|---|---|
 | Claude credentials | mount → `.credentials.json` | **always** | Your Claude subscription. Required — this is the product. |
-| `GH_TOKEN` | `-e` from `.env` or macOS Keychain | when set | Whatever the token is scoped to. Use a **fine-grained** token limited to the repos you work on; a classic `repo` token exposes every repo your account can reach. |
+| `GH_TOKEN` | `-e` from `.env` or macOS Keychain | when set | Whatever the token is scoped to. Use a **fine-grained** token limited to the repos you work on; a classic `repo` token exposes every repo your account can reach. Better still on macOS with the host bridge: `GH_TOKEN_APP=<app>` mints a fresh ~1-hour **GitHub App installation token** per session and renews it in place — the App's private key never enters the container, and no long-lived token exists to leak. The two are mutually exclusive; declaring both in config is a launch error. |
 | SSH agent socket | mount → `/ssh-agent.sock` | when `SSH_AUTH_SOCK` set | Every key in your agent, usable for the container's lifetime (keys aren't copied, but signing requests are honoured). `ssh-add -D` before an autonomous run if that matters. |
 | SSH build key | mount `:ro` | when `SSH_BUILD_KEY` set | The host bridge account. Deny-by-default on the host side (`container-build-gateway.sh`). |
 | Search API keys | `-e` from `.env` | when set | Metered spend on Tavily/Exa/Brave/Serper. |

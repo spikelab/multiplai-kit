@@ -109,6 +109,10 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 |------|--------|
 | `evals/unit/test_model_resolver.py` | Model-ceiling logic (`dotfiles/hooks/model_resolver.py`) |
 | `evals/unit/test_config_loading.py` | `multiplai.conf` parsing |
+| `evals/unit/test_claude_sh_env.py` | `claude.sh` env forwarding + GitHub auth-mode selection (stub `docker`) |
+| `evals/unit/test_guard_destructive.py` | PreToolUse destructive-command guard |
+| `evals/unit/test_log_retention.py` | Log rotation/retention helper |
+| `evals/unit/test_gh_app_hooks.py` | GitHub App SessionStart/PreToolUse hooks (stub `gh-tok` + stub `gh`) |
 
 **The memory / routing / learnings evals are gone** — they tested the retired in-tree hooks and were removed with them. Those mechanisms now live in the `multiplai-context` plugin, which has its own `tests/` (run from the plugin dir). Threshold for the kit tests: 100% (any failure is a bug).
 
@@ -116,7 +120,9 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 
 **The memory/lifecycle hooks moved to the plugin.** Routing (`context_manager.py`), session lifecycle (`session_start.py`, `session_stop.py`, `session_end.py`, `pre_compact.py`), and learnings extraction (`extract_learnings.py`) now live in the marketplace repo (`multiplai-cc-mktplace`) under `plugins/multiplai-context/scripts/`, registered in that plugin's `hooks/hooks.json`. Edit and test them there.
 
-What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings.json` is **`validate-syntax.sh`** (PostToolUse on Write|Edit) and **`guard_destructive.py`** (PreToolUse on Bash). Everything else in `dotfiles/hooks/` is a live helper: `run-hook-python`, `model_resolver.py`, `log_utils.py`.
+What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings.json` is **`validate-syntax.sh`** (PostToolUse on Write|Edit), **`guard_destructive.py`** (PreToolUse on Bash), and the two GitHub App hooks — **`gh-app-auth.sh`** (SessionStart) and **`gh-app-refresh.sh`** (PreToolUse on Bash). Everything else in `dotfiles/hooks/` is a live helper: `run-hook-python`, `model_resolver.py`, `log_utils.py`, `gh-tok`.
+
+**The GitHub App hooks.** Both exit 0 on their first line unless `GH_TOKEN_APP` is set, so PAT-mode users pay one test. `gh-app-auth.sh` mints via `gh-tok` and stores the token in gh's own credential store (a *file*, which is the point — the Bash tool starts a fresh shell per call, so an exported variable is gone by the next one). `gh-app-refresh.sh` runs before **every** Bash call, so its guard is three shell builtins reading a bare-integer sidecar against `$EPOCHSECONDS` — no `jq`, no `date`, no subshell. Keep it that way; `evals/unit/test_gh_app_hooks.py` fails if a fork creeps into the hot path. `gh-tok` is the shared minting primitive: it talks to the Mac over the SSH bridge (`multiplai-gh-token`, shipped by `multiplai-container`) and prints **nothing** on stdout when it fails, which is what makes the hooks abort instead of storing a truncated credential. It lives here rather than in the image so it can never be a container release behind the hooks that call it.
 
 **Why a PreToolUse guard exists at all.** Sessions run `--dangerously-skip-permissions`, so the `settings.json` allow-list never prompts and never blocks — the container is the sandbox. Hooks still run in bypass mode, which makes PreToolUse the only layer that can still say no. `guard_destructive.py` denies a curated set of *unrecoverable* commands (host-mount deletes, force-push to main, `docker prune`, `DROP TABLE`, …) and gets out of the way otherwise. Keep it small: it exists to stop the confident mistake, not a determined adversary, and a guard that blocks ordinary work gets disabled and then protects nothing. Calibration in both directions is pinned by `evals/unit/test_guard_destructive.py` — add a test on both sides when you add a rule.
 
@@ -167,6 +173,9 @@ Run the kit's unit tests after any change to live kit code:
 | `multiplai.conf` | Kit config (model/effort ceiling for hooks + SDK pipelines, per-task tiers) — at project root, NOT in dotfiles/ |
 | `dotfiles/hooks/validate-syntax.sh` | Runtime hook (PostToolUse Write\|Edit) — YAML/JSON syntax validation |
 | `dotfiles/hooks/guard_destructive.py` | Runtime hook (PreToolUse Bash) — denies unrecoverable commands; the only enforcement layer in bypass-permissions mode |
+| `dotfiles/hooks/gh-app-auth.sh` | Runtime hook (SessionStart) — mints a GitHub App token into gh's credential store; inert without `GH_TOKEN_APP` |
+| `dotfiles/hooks/gh-app-refresh.sh` | Runtime hook (PreToolUse Bash) — re-mints when the cached token has run out; zero-fork hot path |
+| `dotfiles/hooks/gh-tok` | Minting primitive both App hooks call — SSH bridge → host `multiplai-gh-token`; not a user-facing idiom |
 | `dotfiles/hooks/model_resolver.py` | Model-ceiling logic for in-tree skills |
 | `dotfiles/hooks/log_utils.py` | Shared logging helper (used via PYTHONPATH by plugin skills — buildme, deep-research) |
 | `multiplai-cc-mktplace` → `plugins/multiplai-context/` | The memory/context/learning plugin (marketplace repo) — routing, diary, learnings now live here |

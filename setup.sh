@@ -404,22 +404,33 @@ if $HAS_DOCKER; then
   # Deliberately AFTER the build gate, and gated on the re-pin: installing
   # from an unverified or unbuilt checkout could leave the host gateway
   # version-skewed vs the image the bridge serves.
-  GATEWAY_SRC="$SCRIPT_DIR/container/container-build-gateway.sh"
-  GATEWAY_DST="$HOME/.local/bin/container-build-gateway.sh"
-  if [ "$(uname -s)" = "Darwin" ] && [ -f "$GATEWAY_SRC" ]; then
+  #
+  # `multiplai-gh-token` rides the same path for the same reason: the host script
+  # and the gateway branch that allowlists it are two halves of one contract, and
+  # shipping them from different generations is exactly the version skew these
+  # gates exist to prevent. One loop, so a third host file can never be added on
+  # weaker terms by copy-paste.
+  install_host_tool() {  # $1 = filename under container/
+    local src="$SCRIPT_DIR/container/$1"
+    local dst="$HOME/.local/bin/$1"
+    [ -f "$src" ] || return 0
     if [ "$CONTAINER_AT_PIN" = true ] && [ "$BUILD_OK" = true ]; then
       mkdir -p "$HOME/.local/bin"
-      if ! cmp -s "$GATEWAY_SRC" "$GATEWAY_DST" 2>/dev/null; then
-        cp "$GATEWAY_SRC" "$GATEWAY_DST"
-        chmod +x "$GATEWAY_DST"
-        echo "  Installed host SSH gateway → ~/.local/bin/container-build-gateway.sh ($CONTAINER_REF)"
+      if ! cmp -s "$src" "$dst" 2>/dev/null; then
+        cp "$src" "$dst"
+        chmod 755 "$dst"
+        echo "  Installed host tool → ~/.local/bin/$1 ($CONTAINER_REF)"
       fi
-    elif ! cmp -s "$GATEWAY_SRC" "$GATEWAY_DST" 2>/dev/null; then
-      echo "  WARNING: NOT installing the host SSH gateway — container/ is not verified"
+    elif ! cmp -s "$src" "$dst" 2>/dev/null; then
+      echo "  WARNING: NOT installing ~/.local/bin/$1 — container/ is not verified"
       echo "           at $CONTAINER_REF (re-pin failed or unmanaged checkout) or the image"
-      echo "           build failed. The gateway at $GATEWAY_DST"
-      echo "           may be stale vs the released tooling; fix the issue above and re-run ./setup.sh."
+      echo "           build failed. The copy at $dst may be stale vs the released"
+      echo "           tooling; fix the issue above and re-run ./setup.sh."
     fi
+  }
+  if [ "$(uname -s)" = "Darwin" ]; then
+    install_host_tool container-build-gateway.sh
+    install_host_tool multiplai-gh-token
   fi
 fi
 

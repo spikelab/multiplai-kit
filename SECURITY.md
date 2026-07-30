@@ -38,8 +38,8 @@ there is only one copy to keep true:
 - [**What credentials enter the container**](README.md#what-credentials-enter-the-container)
   — the complete list of what is mounted or forwarded, when, and the blast
   radius of each.
-- [**Network egress**](README.md#network-egress) — what `--net` does and does
-  not do today.
+- [**Network egress**](README.md#network-egress) — what `MULTIPLAI_NET` does and
+  does not do today.
 - [**Data & retention**](README.md#data--retention) — what is written to disk,
   where, and for how long.
 
@@ -57,18 +57,21 @@ What follows from that:
 - **In scope** for a report: the container escaping or weakening its own
   boundary (privilege escalation, `--cap-drop`/`no-new-privileges` bypass);
   credentials entering the container that the README says do not, or entering
-  when their gate (`MULTIPLAI_SKILL_SECRETS`, `MULTIPLAI_MOUNT_GEMINI`,
-  `--gcp`) is off; secrets written into the image, into git, or into a log;
-  `guard_destructive.py` failing to deny a command it claims to deny;
-  `setup.sh` / `claude.sh` executing untrusted input from the workspace or a
-  fetched artifact; the container pin being resolvable to something other than
-  the immutable tag in `CONTAINER_REF`.
+  when their gate (`MULTIPLAI_MOUNT_GEMINI`, `GCP_KEY_FILE`) is off; a variable
+  on the launcher's forwarding denylist reaching the container with its host
+  value; secrets written into the image, into git, into a log, or onto a command
+  line where `ps` can read them; `guard_destructive.py` failing to deny a command
+  it claims to deny; `setup.sh` / `claude.sh` executing untrusted input from the
+  workspace or a fetched artifact; the container pin being resolvable to
+  something other than the immutable tag in `CONTAINER_REF`.
 - **Not a vulnerability**, because it is the documented design: the agent
   reading or writing any file in the mounted workspace; the agent using a token
-  you chose to forward; a prompt injection in fetched content causing the agent
-  to act within the permissions you already granted it. The mitigations for
-  these are scoping (fine-grained `GH_TOKEN`, `ssh-add -D`, narrowing
-  `MULTIPLAI_SKILL_SECRETS`), not a code fix here.
+  you chose to put in `.env`; a prompt injection in fetched content causing the
+  agent to act within the permissions you already granted it. The mitigations
+  for these are scoping (a fine-grained `GH_TOKEN`, `ssh-add -D`, keeping a
+  credential out of `.env` until the launch that needs it), not a code fix here.
+  In particular, the launcher forwards every non-empty variable you declare in
+  `.env` — that is the documented contract, not a leak.
 - The kit has **no telemetry** and phones nothing home. A report showing
   otherwise is very much in scope.
 

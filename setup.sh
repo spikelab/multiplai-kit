@@ -330,7 +330,7 @@ if $HAS_DOCKER; then
   STEP=$((STEP + 1))
   IMAGE_NAME="${IMAGE_NAME:-claude-multiplai:local}"
   CONTAINER_REPO="${CONTAINER_REPO:-https://github.com/spikelab/multiplai-container}"
-  CONTAINER_REF="${CONTAINER_REF:-v0.6}"
+  CONTAINER_REF="${CONTAINER_REF:-v0.7}"
   echo "[$STEP/$TOTAL_STEPS] Building Docker image ($IMAGE_NAME)..."
   # CONTAINER_AT_PIN tracks whether container/ is verifiably a git checkout at
   # $CONTAINER_REF — the gateway install below is gated on it, so an offline

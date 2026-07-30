@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# gh-tok — return a valid GitHub App installation token, minting one if needed.
+#
+# NOT a user-facing idiom. Its only callers are the two hooks that keep a session
+# authenticated (gh-app-auth.sh at SessionStart, gh-app-refresh.sh on
+# PreToolUse). An agent types ordinary `gh`/`git` commands and never this.
+#
+# Why it lives in the kit and not the container image: `claude.sh` bind-mounts
+# $DOTFILES_DIR into every container, so this file and the hooks that call it
+# move together on a plain `git pull` — no image rebuild, no tag, no
+# CONTAINER_REF bump. Baking it into the image would split one mechanism across
+# two repos on two delivery cadences, and a kit pulled ahead of a container
+# release would leave a hook calling a binary that isn't there.
+#
+# The private key never enters this container: minting happens on the macOS host
+# via the SSH bridge verb `multiplai-gh-token` (multiplai-container), which is
+# allowlisted by container-build-gateway.sh. Host setup:
+# multiplai-container/docs/gh-app-token.md.
+#
+# Usage:  gh-tok [<app>]        # app defaults to $GH_TOKEN_APP
+#
+# Contract, relied on by both hooks:
+#   * on success: the token on stdout, nothing else, exit 0
+#   * on ANY failure: NOTHING on stdout, a diagnosis on stderr, non-zero exit
+#     (the hooks pipe stdout straight into `gh auth login --with-token`, so an
+#     empty stdout + non-zero status makes them abort visibly instead of storing
+#     a truncated or stale credential)
+#   * the token is never printed to stderr, never logged, never on argv
+
+set -euo pipefail
+umask 077
+
+HOST="${GH_TOK_SSH_HOST:-host.docker.internal}"
+SKEW=120                 # re-mint this many seconds before the real expiry
+
+die() { printf 'gh-tok: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+APP="${1:-${GH_TOKEN_APP:-}}"
+[ -n "$APP" ] || die "no app profile given and GH_TOKEN_APP is unset (set GH_TOKEN_APP=<app> in your .env or profile)"
+# Same character class the host script and the gateway enforce. Validate before
+# the name reaches a path or an argv.
+[[ "${APP//[A-Za-z0-9._-]/}" == "" && "$APP" == [A-Za-z0-9]* ]] \
+  || die "invalid app name: '$APP' (allowed: alnum . _ -, must start alnum)"
+
+CACHE_DIR="$HOME/.cache/multiplai/gh"
+CACHE="$CACHE_DIR/$APP.json"
+EXPF="$CACHE.exp"
+
+# --- fast path: a cached token that is still comfortably valid ------------------
+# A missing, unreadable, non-numeric or expired sidecar — or a cache with no
+# .token in it — all mean the same thing here: mint. Never treat an unparseable
+# cache as valid.
+if [ -s "$CACHE" ] && [ -s "$EXPF" ]; then
+    exp=$(cat "$EXPF" 2>/dev/null || true)
+    case "$exp" in ''|*[!0-9]*) exp=0 ;; esac
+    if [ "$exp" -gt $(( $(date +%s) + SKEW )) ]; then
+        tok=$(jq -r '.token // empty' <"$CACHE" 2>/dev/null || true)
+        if [ -n "$tok" ]; then
+            printf '%s\n' "$tok"
+            exit 0
+        fi
+    fi
+fi
+
+# --- mint on the host ----------------------------------------------------------
+ERR=$(mktemp)
+TMP=""
+cleanup() { rm -f "$ERR" ${TMP:+"$TMP"}; }
+trap cleanup EXIT
+
+set +e
+resp=$(ssh -q -o BatchMode=yes -o ConnectTimeout=10 "$HOST" \
+        multiplai-gh-token --json "$APP" 2>"$ERR")
+rc=$?
+set -e
+
+if [ "$rc" -eq 255 ]; then
+    # ssh's own failure code. Say so explicitly: the container has no other route
+    # to the App key, so "the bridge is down" is the whole diagnosis.
+    printf 'gh-tok: cannot reach the macOS host bridge (%s) — the App key lives on\n' "$HOST" >&2
+    printf '        the Mac and there is no other route to it. ssh said:\n' >&2
+    sed 's/^/        /' <"$ERR" >&2
+    exit 1
+fi
+if [ "$rc" -ne 0 ]; then
+    printf 'gh-tok: the host refused to mint for app "%s" (rc=%s):\n' "$APP" "$rc" >&2
+    sed 's/^/        /' <"$ERR" >&2
+    exit 1
+fi
+
+# Validate before trusting: a gateway DENIED line, an HTML error page or an empty
+# body must not be written to the cache as if it were a token.
+tok=$(printf '%s' "$resp" | jq -r '.token // empty' 2>/dev/null || true)
+[ -n "$tok" ] || die "the host response carried no .token (not JSON, or an error body)"
+
+expires=$(printf '%s' "$resp" | jq -r '.expires_at // empty' 2>/dev/null || true)
+epoch=$(date -u -d "$expires" +%s 2>/dev/null || true)
+case "$epoch" in
+    ''|*[!0-9]*)
+        # A token that works should not be thrown away over an unreadable
+        # timestamp — but it must never be trusted for longer than it can live.
+        # Half of GitHub's 1-hour lifetime is safe, and the warning is loud.
+        epoch=$(( $(date +%s) + 1800 ))
+        printf 'gh-tok: could not read expires_at (%s); caching for 30m\n' "${expires:-<empty>}" >&2
+        ;;
+esac
+
+# --- cache atomically: JSON first, sidecar second -------------------------------
+# The sidecar must never be newer than the token it describes, or a reader could
+# see a fresh expiry against a stale token. Both mode 600 in a mode-700 dir; the
+# temp files are created in the same directory so `mv` is atomic.
+mkdir -p "$CACHE_DIR"
+chmod 700 "$CACHE_DIR" "$(dirname "$CACHE_DIR")" 2>/dev/null || true
+
+TMP=$(mktemp "$CACHE_DIR/.tmp.XXXXXX")
+printf '%s\n' "$resp" >"$TMP"
+chmod 600 "$TMP"
+mv -f "$TMP" "$CACHE"
+
+TMP=$(mktemp "$CACHE_DIR/.tmp.XXXXXX")
+printf '%s\n' "$epoch" >"$TMP"
+chmod 600 "$TMP"
+mv -f "$TMP" "$EXPF"
+TMP=""
+
+printf '%s\n' "$tok"

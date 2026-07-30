@@ -27,6 +27,7 @@ where it applies to every launch.
 | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | Git authorship for commits in this identity |
 | `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL` | Committer fields (usually same as author) |
 | `GH_TOKEN_KEYCHAIN` | macOS Keychain key name holding this org's GitHub token |
+| `GH_TOKEN_APP` | **Instead of the above** — name of a host-side GitHub App profile; the session mints a fresh ~1h installation token per launch. Exclusive with `GH_TOKEN`/`GH_TOKEN_KEYCHAIN`; see "One identity per profile" below |
 | `CLAUDE_CREDENTIALS_FILE` | Path to a **separate** Claude OAuth credentials file → a separate Claude account/key |
 | `GEMINI_CONFIG_DIR` | Optional — separate Gemini CLI config dir for a different Google account |
 | `GCP_KEY_FILE` / `CLOUDSDK_CORE_PROJECT` | Optional — a service-account key that should follow this client rather than apply to every launch |
@@ -36,6 +37,53 @@ where it applies to every launch.
 > subscription/account than your default. On first launch the file is empty and
 > Claude Code prompts you to `/login`; the credentials persist there across
 > containers.
+
+---
+
+## One identity per profile — where the GitHub token lives
+
+There are two ways to authenticate GitHub, both supported, **never both at once**:
+
+| Mode | Config | Use when |
+|---|---|---|
+| **PAT** | `GH_TOKEN`, or `GH_TOKEN_KEYCHAIN` naming a Keychain item | the org has no GitHub App — the default |
+| **App** | `GH_TOKEN_APP=<app>` | macOS + host bridge, and you installed a GitHub App for the org. Each launch mints a fresh ~1-hour installation token; the App's private key never enters the container. Setup: `container/docs/gh-app-token.md` |
+
+Declaring one of each **in configuration** is a hard launch error, not a
+precedence rule:
+
+```
+Error: two GitHub identities are declared in configuration.
+         GH_TOKEN_APP='dolce'   declared in env.dolce
+         GH_TOKEN               declared in .env
+```
+
+They select different GitHub identities, and a silent winner means running the
+session as the wrong user — worse than not launching.
+
+**The consequence for your file layout is not optional.** A `GH_TOKEN` sitting
+in `.env` as a global default conflicts with *every* profile that sets
+`GH_TOKEN_APP`. So each identity's GitHub auth belongs in **its own profile**,
+and `.env` carries neither:
+
+```
+.env            → WORKSPACE, API keys, container settings.  No GitHub token.
+env.spikelab    → GIT_* identity + GH_TOKEN_KEYCHAIN="gh-token-spikelab"
+env.dolce       → GIT_* identity + GH_TOKEN_APP="dolce"
+```
+
+One exception, by design: a **shell** export is an override, not a conflict —
+in either direction. `GH_TOKEN=$(mint) ./claude.sh --profile dolce` launches,
+uses that token, and leaves the App hooks inert for that session; a shell
+`GH_TOKEN_APP=<app>` likewise beats a file-declared PAT. The same "your shell
+wins" rule that applies to every other variable — and never silently: the
+launcher prints a notice naming the variable being dropped and the file that
+declared it.
+
+In App mode the launcher forwards no `GH_TOKEN` at all (an environment token
+beats gh's credential store and would block it), and there is **no PAT
+fallback**: if minting fails you get an unauthenticated `gh` (with the mint
+retried at most once a minute), not a silent switch to a different identity.
 
 ---
 
@@ -115,9 +163,13 @@ profiles apart in `docker ps` / OrbStack.
 1. source .env              # WORKSPACE, default git identity, skill API keys
 2. source env.work          # overrides git identity, GH_TOKEN_KEYCHAIN, CLAUDE_CREDENTIALS_FILE
 3. anything exported in your shell wins over BOTH files
-4. read GH token from Keychain key "gh-token-claude-ro-work" (unless already set)
+4. pick the GitHub auth mode — PAT (read the token from Keychain key
+   "gh-token-claude-ro-work" unless already set) or App (forward GH_TOKEN_APP
+   and no token; refuse if both were declared in files)
 5. mount CLAUDE_CREDENTIALS_FILE → container, forward every non-empty declared var
 6. inside container: git + gh + Claude all use the work identity
+   (in App mode, a SessionStart hook mints the token and stores it in gh's
+   credential store; a PreToolUse hook renews it when it runs out)
 ```
 
 `.env` is always loaded first; the profile only changes what it names. Without
@@ -133,8 +185,13 @@ editing either file.
 ## Quick checklist for any new profile
 
 - [ ] `cp env.example env.<name>` and fill in git identity
-- [ ] Set `GH_TOKEN_KEYCHAIN` to a unique key name
-- [ ] `security add-generic-password ... -s "<that key name>" -w "<token>"`
+- [ ] Pick **one** GitHub auth mode for this profile, and keep the other out of
+      `.env` too:
+  - PAT → set `GH_TOKEN_KEYCHAIN` to a unique key name, then
+    `security add-generic-password ... -s "<that key name>" -w "<token>"`
+  - App → set `GH_TOKEN_APP="<app>"` and make sure
+    `~/.local/state/multiplai-gh-token/<app>/` exists
+    (`multiplai-gh-token --check <app>`)
 - [ ] Set `CLAUDE_CREDENTIALS_FILE` to a unique absolute path
 - [ ] `./claude.sh --profile <name>` → `/login` to the right Claude account
 - [ ] Verify with `git config user.email` and `gh auth status`

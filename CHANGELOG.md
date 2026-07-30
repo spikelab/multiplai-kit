@@ -15,6 +15,47 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **`GH_TOKEN_APP` — GitHub App authentication, as an alternative to a PAT**
+  (macOS + host bridge). Set `GH_TOKEN_APP=<app>` in `.env` or an
+  `env.<profile>` and the session authenticates `gh` and `git` off a fresh
+  **~1-hour GitHub App installation token**, minted on the Mac and renewed in
+  place. The App's private key never enters the container, and no long-lived
+  token exists to leak.
+
+  How it works, in three parts: `claude.sh` forwards only the profile **name**;
+  a new `SessionStart` hook (`dotfiles/hooks/gh-app-auth.sh`) mints via the SSH
+  bridge and stores the token in **gh's own credential store**, so it survives
+  every Bash call and — through the `gh auth setup-git` helper the kit already
+  installs — serves `git clone/fetch/push` over https with no token in the URL;
+  a new `PreToolUse(Bash)` hook (`gh-app-refresh.sh`) re-mints when the cached
+  token has run out, decided at the moment of use so an idle session recovers.
+  Nothing to type, nothing to prefix, no wrapper, no bespoke credential helper.
+  The minting primitive is `dotfiles/hooks/gh-tok` (a kit file, bind-mounted, so
+  it can never be a container release behind the hooks that call it).
+
+  **PAT and App modes are mutually exclusive and the launcher enforces it.**
+  Declaring `GH_TOKEN_APP` *in configuration* alongside `GH_TOKEN` or
+  `GH_TOKEN_KEYCHAIN` is a hard launch error naming both variables and the file
+  each came from — they select different GitHub identities, and a silent winner
+  means running as the wrong user. Give each identity its own profile (see
+  `docs/PROFILES.md`). A shell export is still an override, not a conflict, in
+  **either direction** — `GH_TOKEN` from the shell wins over a file-declared
+  `GH_TOKEN_APP` and vice versa — and the launcher prints a notice naming the
+  variable being dropped and the file that declared it, so the override is
+  never silent. PAT mode is otherwise unchanged and remains the default.
+
+  A dead bridge degrades, it never blocks: a failed mint writes a 60-second
+  backoff marker beside the token cache, so `gh` runs unauthenticated and the
+  renew path is retried at most once a minute — instead of every Bash call
+  paying the SSH connect timeout inside the PreToolUse hook.
+
+  Host-side setup (creating the App, installing its key) lives in the container
+  repo: `container/docs/gh-app-token.md`. `setup.sh` installs the host minting
+  script `multiplai-gh-token` into `~/.local/bin/` from the pinned `container/`
+  checkout, under the same verification gates as the SSH gateway.
+
 ### Removed
 
 - **`--gcp <name>` flag and the `env.gcp.*` overlay convention.** GCP wiring is

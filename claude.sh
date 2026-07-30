@@ -190,6 +190,12 @@ fi
 _ENV_FILE_VARS=""
 _ENV_SNAP_NAMES=()
 _ENV_SNAP_VALUES=()
+# Which file first declared each name. Only the GitHub auth-mode check reads
+# this, and only to name the offending file in its error — "GH_TOKEN and
+# GH_TOKEN_APP are both set" is useless advice if you own three env files.
+_ENV_DECL_NAMES=()
+_ENV_DECL_FILES=()
+_ENV_DECL_N=0
 # Explicit count rather than ${#_ENV_SNAP_NAMES[@]}: macOS ships bash 3.2, where
 # expanding an empty array under `set -u` is a minefield (hence the
 # ${arr[@]+"${arr[@]}"} guards throughout this file). A counter has no such edge.
@@ -217,6 +223,9 @@ source_env_file() {
             *" $name "*) continue ;;
         esac
         _ENV_FILE_VARS="$_ENV_FILE_VARS $name"
+        _ENV_DECL_NAMES[$_ENV_DECL_N]="$name"
+        _ENV_DECL_FILES[$_ENV_DECL_N]="$path"
+        _ENV_DECL_N=$((_ENV_DECL_N + 1))
         if val=$(printenv "$name"); then
             _ENV_SNAP_NAMES[$_ENV_SNAP_N]="$name"
             _ENV_SNAP_VALUES[$_ENV_SNAP_N]="$val"
@@ -436,22 +445,138 @@ if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     exit 1
 fi
 
-# GH_TOKEN: env var > macOS Keychain key. The Keychain lookup is macOS-only
-# (`security`); on Linux we skip it and point at the env var instead of telling
-# the user to fix a Keychain that can't exist there.
+# --- GitHub auth: pick a MODE, never mint -------------------------------------
+#
+# Two modes, both supported, never both at once:
+#
+#   PAT mode  GH_TOKEN, or the macOS Keychain item named by GH_TOKEN_KEYCHAIN.
+#             Unchanged, and still the default for anyone without a GitHub App.
+#   App mode  GH_TOKEN_APP names a host-side App profile. The launcher forwards
+#             only the NAME; the SessionStart hook mints inside the container so
+#             the token is fresh relative to the SESSION rather than to
+#             `docker run`, and the PreToolUse hook renews it when it runs out.
+#             The App's private key never leaves the Mac.
+#
+# Declaring both IN CONFIGURATION is a hard error, not a precedence rule: a
+# silent winner here means launching with the wrong GitHub identity, which is
+# worse than not launching. A GH_TOKEN exported in the launching SHELL is a
+# different thing — the kit's documented "shell env wins" override — and is
+# allowed. source_env_file already records which names came from a file
+# (_ENV_DECL_*) and which existed in the environment first (_ENV_SNAP_NAMES),
+# so telling them apart needs no new machinery.
+_gh_decl_file() {    # the env file that first declared NAME, if any
+    local i=0
+    while [ "$i" -lt "$_ENV_DECL_N" ]; do
+        if [ "${_ENV_DECL_NAMES[$i]}" = "$1" ]; then
+            printf '%s' "${_ENV_DECL_FILES[$i]}"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+    return 1
+}
+_gh_from_shell() {   # is NAME's current value the launching shell's?
+    # Two ways that is true, and the second is easy to miss: the snapshot only
+    # records names that an env file ALSO declares (that is all it needs to do —
+    # restore the shell's value over the file's). A name nobody declared but that
+    # is set right now can only have come from the shell, and treating it as
+    # file-declared would turn the documented `GH_TOKEN=$(mint) ./claude.sh`
+    # override into a launch error.
+    local i=0
+    while [ "$i" -lt "$_ENV_SNAP_N" ]; do
+        if [ "${_ENV_SNAP_NAMES[$i]}" = "$1" ]; then return 0; fi
+        i=$((i + 1))
+    done
+    _gh_decl_file "$1" >/dev/null || return 0
+    return 1
+}
+
 GH_TOKEN_KEY="${GH_TOKEN_KEYCHAIN:-gh-token}"
-if [ -z "${GH_TOKEN:-}" ] && [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
-    # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
-    # docker resolves from this process's ENVIRONMENT, so a plain shell variable
-    # would arrive as nothing at all.
-    GH_TOKEN=$(security find-generic-password -a "$USER" -s "$GH_TOKEN_KEY" -w 2>/dev/null || true)
-    export GH_TOKEN
-fi
-if [ -z "${GH_TOKEN:-}" ]; then
-    if [ "$(uname)" = "Darwin" ]; then
-        echo "Warning: No '$GH_TOKEN_KEY' in Keychain and \$GH_TOKEN unset. GitHub CLI will not be authenticated."
+GH_AUTH_MODE=pat
+
+if [ -n "${GH_TOKEN_APP:-}" ]; then
+    if [ -n "${GH_TOKEN:-}" ] && _gh_from_shell GH_TOKEN; then
+        # Rule: a shell-exported token is an override, not a conflict. It wins
+        # for this launch; GH_TOKEN_APP is dropped so the container hooks stay
+        # inert rather than fighting the token that was handed in.
+        echo "[claude] GH_TOKEN from the shell overrides GH_TOKEN_APP='$GH_TOKEN_APP' for this launch."
+        unset GH_TOKEN_APP
+    elif ! _gh_from_shell GH_TOKEN_APP; then
+        _pat_var=""; _pat_file=""
+        if [ -n "${GH_TOKEN:-}" ] && ! _gh_from_shell GH_TOKEN; then
+            _pat_var=GH_TOKEN; _pat_file=$(_gh_decl_file GH_TOKEN || true)
+        elif [ -n "${GH_TOKEN_KEYCHAIN:-}" ] && ! _gh_from_shell GH_TOKEN_KEYCHAIN; then
+            _pat_var=GH_TOKEN_KEYCHAIN; _pat_file=$(_gh_decl_file GH_TOKEN_KEYCHAIN || true)
+        fi
+        if [ -n "$_pat_var" ]; then
+            _app_file=$(_gh_decl_file GH_TOKEN_APP || true)
+            echo "Error: two GitHub identities are declared in configuration." >&2
+            echo "         GH_TOKEN_APP='$GH_TOKEN_APP'   declared in ${_app_file:-the environment}" >&2
+            echo "         $_pat_var   declared in ${_pat_file:-the environment}" >&2
+            echo "       These select different GitHub identities. Refusing to guess which one" >&2
+            echo "       you meant — a silent winner here runs the session as the wrong user." >&2
+            echo "       Fix: give each identity its own profile (the PAT in one env.<profile>," >&2
+            echo "       GH_TOKEN_APP in another, neither in .env). See docs/PROFILES.md." >&2
+            exit 1
+        fi
+        GH_AUTH_MODE=app
     else
-        echo "Warning: \$GH_TOKEN not set. GitHub CLI will not be authenticated (set GH_TOKEN in .env or your profile)."
+        # GH_TOKEN_APP itself came from the launching shell: the same "your
+        # shell wins" override as above, in the other direction — but never
+        # silently. A file-declared PAT is being dropped for this launch; name
+        # it and the file it lives in, exactly like the mirror case, or the
+        # session runs as an unexpected GitHub user with no visible cause.
+        _pat_var=""
+        if [ -n "${GH_TOKEN:-}" ] && ! _gh_from_shell GH_TOKEN; then
+            _pat_var=GH_TOKEN
+        elif [ -n "${GH_TOKEN_KEYCHAIN:-}" ] && ! _gh_from_shell GH_TOKEN_KEYCHAIN; then
+            _pat_var=GH_TOKEN_KEYCHAIN
+        fi
+        if [ -n "$_pat_var" ]; then
+            _pat_file=$(_gh_decl_file "$_pat_var" || true)
+            echo "[claude] GH_TOKEN_APP='$GH_TOKEN_APP' from the shell overrides $_pat_var (declared in ${_pat_file:-a file}) for this launch."
+        fi
+        GH_AUTH_MODE=app
+    fi
+fi
+
+if [ "$GH_AUTH_MODE" = app ]; then
+    # App mode is macOS-only: minting goes over the Mac host bridge. Launching a
+    # session that cannot possibly authenticate is worse than refusing here.
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "Error: GH_TOKEN_APP='$GH_TOKEN_APP' needs the macOS host bridge, and this host is not macOS." >&2
+        echo "       Use a PAT (GH_TOKEN) here, or unset GH_TOKEN_APP." >&2
+        exit 1
+    fi
+    if [ ! -x "$HOME/.local/bin/multiplai-gh-token" ]; then
+        echo "Error: GH_TOKEN_APP='$GH_TOKEN_APP' but ~/.local/bin/multiplai-gh-token is not installed." >&2
+        echo "       Every gh call in the session would fail. Install it: ./setup.sh" >&2
+        echo "       (setup installs it from the pinned container checkout, with the gateway.)" >&2
+        exit 1
+    fi
+    # No PAT fallback, ever: falling back would swap the session's GitHub
+    # identity without saying so. An environment token also beats hosts.yml and
+    # makes `gh auth login --with-token` refuse outright, so forward none.
+    unset GH_TOKEN
+    export GH_TOKEN_APP
+else
+    # PAT mode — exactly the previous behaviour. The Keychain lookup is macOS-only
+    # (`security`); on Linux we skip it and point at the env var instead of telling
+    # the user to fix a Keychain that can't exist there.
+    if [ -z "${GH_TOKEN:-}" ] && [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
+        # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
+        # docker resolves from this process's ENVIRONMENT, so a plain shell variable
+        # would arrive as nothing at all.
+        GH_TOKEN=$(security find-generic-password -a "$USER" -s "$GH_TOKEN_KEY" -w 2>/dev/null || true)
+        export GH_TOKEN
+    fi
+    if [ -z "${GH_TOKEN:-}" ]; then
+        if [ "$(uname)" = "Darwin" ]; then
+            echo "Warning: No '$GH_TOKEN_KEY' in Keychain and \$GH_TOKEN unset. GitHub CLI will not be authenticated."
+            echo "         (Or set GH_TOKEN_APP=<app> to use a GitHub App — see docs/PROFILES.md.)"
+        else
+            echo "Warning: \$GH_TOKEN not set. GitHub CLI will not be authenticated (set GH_TOKEN in .env or your profile)."
+        fi
     fi
 fi
 
@@ -618,7 +743,11 @@ fi
 # (ANTHROPIC_BASE_URL — pointing one launch at a proxy shouldn't require an
 # .env line; it used to work from the shell alone and silently dropping it
 # would misroute traffic with no visible cause).
-_ENV_KEEP="TERM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GH_TOKEN SSH_BUILD_USER CLOUDSDK_CORE_PROJECT ANTHROPIC_BASE_URL"
+#
+# GH_TOKEN_APP is here rather than on the denylist on purpose: the two hooks
+# inside the container read it to know which App profile to mint against, and it
+# is a profile NAME, not a secret.
+_ENV_KEEP="TERM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GH_TOKEN GH_TOKEN_APP SSH_BUILD_USER CLOUDSDK_CORE_PROJECT ANTHROPIC_BASE_URL"
 
 # Never forwarded dynamically, for one of three reasons: it configures the
 # launcher itself (which image, which volume, which network); it holds a HOST

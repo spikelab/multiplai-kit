@@ -7,7 +7,7 @@ token prefix and no manual mint — which is exactly why they need tests: nothin
 in an ordinary session *looks* different when they silently stop working. The
 symptom arrives an hour later as `Bad credentials (HTTP 401)`.
 
-Three properties are worth pinning, and all three are one-line-edit fragile:
+Five properties are worth pinning, and all five are one-line-edit fragile:
 
   * **Inert without `GH_TOKEN_APP`.** PAT-mode users and marketplace-only users
     must pay one test and see no behaviour change.
@@ -18,13 +18,34 @@ Three properties are worth pinning, and all three are one-line-edit fragile:
     unauthenticated `gh`, never to a failing SessionStart or a blocked Bash
     call. So both exit 0 on every path, and the refresh hook emits no permission
     decision at all.
+  * **A failed mint never reaches `gh` at all.** This one is here because the
+    original design got it wrong and shipped (2026-07-30). `gh auth login
+    --with-token` does not fail on empty stdin — gh 2.96.0 falls through to the
+    interactive OAuth *device flow*, prints a one-time code and blocks forever.
+    So `gh-tok | gh auth login --with-token` converted every failed mint into a
+    HUNG SessionStart and a hung PreToolUse hook: no session would start, and
+    the reverting fix was to tear both hooks out of settings.json. "Exit 0 on
+    every path" is not enough — a hook that hangs never reaches its exit.
+  * **Nothing assumes the container's toolchain.** The kit also runs bare on a
+    Mac: /bin/bash 3.2 (no $EPOCHSECONDS, no printf '%(...)T'), no GNU
+    coreutils (no `timeout`), BSD date. The store-call bound falls back to a
+    perl alarm, the clock to a single `date` fork, and `gh-tok` mints via the
+    local `multiplai-gh-token` instead of ssh'ing to a bridge hostname that
+    only resolves inside a container.
 
 Everything is driven by stubs: a fake `gh-tok` in the hooks directory and a fake
 `gh` on `PATH`, both recording their invocations. No network, no bridge, no
 `gh` install required.
+
+`GH_STUB` is deliberately forgiving (it `cat`s whatever it gets and exits 0),
+which is what let the hang ship green. `GH_STUB_REALISTIC` models the real
+thing, including the block, and the tests that matter use it with a hard
+subprocess timeout so a regression fails the suite instead of wedging it.
 """
 
 import os
+import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -50,11 +71,39 @@ printf 'gh-tok: bridge unreachable\\n' >&2
 exit 1
 """
 
+# A mint that never returns — what a black-hole bridge (SYN drop, no RST) looks
+# like. Used to model the outer settings.json "timeout": 30 killing the hook.
+GH_TOK_HANGING_STUB = """\
+#!/bin/bash
+echo "$@" >> "$GH_TOK_CALLS"
+sleep 60
+"""
+
 GH_STUB = """\
 #!/bin/bash
 echo "$@" >> "$GH_CALLS"
 cat > "$GH_STDIN"
 """
+
+# What `gh auth login --with-token` actually does, measured on gh 2.96.0: an
+# empty token on stdin is not an error, it is a cue to start the interactive
+# device flow — which prints a code and then waits on a terminal forever.
+GH_STUB_REALISTIC = """\
+#!/bin/bash
+echo "$@" >> "$GH_CALLS"
+tok=$(cat)
+printf '%s' "$tok" > "$GH_STDIN"
+if [ -z "$tok" ]; then
+    printf '! First copy your one-time code: 89DC-8B53\\n'
+    printf 'Open this URL to continue in your web browser: https://github.com/login/device\\n'
+    sleep 60
+    exit 1
+fi
+"""
+
+# Long enough that a real bridge call would finish, far shorter than the 60s
+# block in the realistic stub: a hang fails, a working hook passes.
+HANG_BUDGET = 15
 
 
 class Session:
@@ -80,9 +129,7 @@ class Session:
         self.gh_stdin = root / "gh-stdin.txt"
         self.set_minter(GH_TOK_STUB)
 
-        gh = self.bin / "gh"
-        gh.write_text(GH_STUB)
-        gh.chmod(0o755)
+        self.set_gh(GH_STUB)
 
         self.cache_dir = self.home / ".cache" / "multiplai" / "gh"
 
@@ -90,6 +137,11 @@ class Session:
         stub = self.hooks / "gh-tok"
         stub.write_text(body)
         stub.chmod(0o755)
+
+    def set_gh(self, body):
+        gh = self.bin / "gh"
+        gh.write_text(body)
+        gh.chmod(0o755)
 
     def write_sidecar(self, app, text):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -102,9 +154,9 @@ class Session:
     def fail_marker(self, app="acme"):
         return self.cache_dir / f"{app}.json.fail"
 
-    def run(self, hook, app="acme", **extra):
+    def run(self, hook, app="acme", timeout=None, path=None, **extra):
         env = {
-            "PATH": f"{self.bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "PATH": path or f"{self.bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
             "HOME": str(self.home),
             "CLAUDE_CONFIG_DIR": str(self.config),
             "CLAUDE_MULTIPLAI_HOME": str(self.home),
@@ -115,13 +167,27 @@ class Session:
         if app is not None:
             env["GH_TOKEN_APP"] = app
         env.update(extra)
-        return subprocess.run(
+        # Popen + killpg, not subprocess.run: run() only kills the direct child
+        # on timeout, and an orphaned stub (the realistic gh's device-flow
+        # `sleep 60`) then holds the captured pipes open — the post-kill read
+        # blocks until the stub exits, turning a 15s regression failure into a
+        # ~75s one. A fresh session group lets one kill take out the whole tree.
+        proc = subprocess.Popen(
             ["bash", str(self.hooks / hook)],
             env=env,
-            input="",
-            capture_output=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
+            start_new_session=True,
         )
+        try:
+            out, err = proc.communicate(input="", timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+            raise
+        return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
     @property
     def mint_attempts(self):
@@ -192,10 +258,12 @@ def test_auth_hook_survives_a_failed_mint(session):
 
 
 def test_auth_hook_never_stores_an_empty_credential(session):
-    """`gh-tok` prints nothing on failure, so the store call must get nothing —
-    a truncated or stale credential that *looks* valid is worse than none."""
+    """`gh-tok` prints nothing on failure, so the store call must never happen —
+    a truncated or stale credential that *looks* valid is worse than none, and
+    handing `gh` an empty token is worse still (see the device-flow tests)."""
     session.set_minter(GH_TOK_FAILING_STUB)
     session.run("gh-app-auth.sh")
+    assert session.gh_invocations == []
     if session.gh_stdin.exists():
         assert session.gh_stdin.read_text().strip() == ""
 
@@ -331,6 +399,229 @@ def test_auth_hook_failure_spares_the_first_bash_call_the_same_stall(session):
     assert session.mint_attempts == 1, "the refresh hook re-entered the mint path"
 
 
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+def test_a_killed_hook_leaves_the_backoff_marker_behind(session, hook):
+    """The hook entries in settings.json carry "timeout": 30, and a slow bridge
+    plus a slow store can exceed it. A hook Claude Code kills mid-mint never
+    reaches any failure branch — so the marker must be written BEFORE the mint,
+    or the next Bash call re-pays the very stall the marker exists to prevent."""
+    session.set_minter(GH_TOK_HANGING_STUB)
+    session.write_sidecar("acme", "0")
+    with pytest.raises(subprocess.TimeoutExpired):
+        session.run(hook, timeout=3)
+    assert session.fail_marker().exists(), (
+        "no backoff marker after a mid-mint kill: the marker is being written "
+        "on the failure branch, which a killed hook never reaches"
+    )
+
+
+# --- a failed mint must never reach `gh` ------------------------------------
+#
+# The regression these pin shipped in multiplai-kit#21 and made every session
+# unstartable. `gh auth login --with-token` treats empty stdin as "no token
+# supplied" and starts the interactive OAuth device flow, which blocks forever.
+# Piping a failed `gh-tok` straight into it therefore hangs the hook — at
+# SessionStart that is "Claude will not start", and on PreToolUse it is "every
+# Bash call stalls". Both hooks now mint into a variable and test it first.
+
+
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+def test_failed_mint_never_invokes_gh(session, hook):
+    """The emptiness check is the fix: with nothing to store, `gh` is not run."""
+    session.set_minter(GH_TOK_FAILING_STUB)
+    session.write_sidecar("acme", "0")
+    result = session.run(hook, timeout=HANG_BUDGET)
+    assert result.returncode == 0
+    assert session.gh_invocations == [], "a failed mint was handed to gh anyway"
+
+
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+def test_failed_mint_does_not_hang_against_a_realistic_gh(session, hook):
+    """The whole bug, end to end, with a `gh` that behaves like the real one.
+
+    A `subprocess.TimeoutExpired` here IS the regression — it means the hook is
+    sitting in a device flow. Before the fix this hung indefinitely; the harness
+    timeout converts that into a failing test instead of a wedged suite.
+    """
+    session.set_minter(GH_TOK_FAILING_STUB)
+    session.set_gh(GH_STUB_REALISTIC)
+    session.write_sidecar("acme", "0")
+    result = None
+    try:
+        result = session.run(hook, timeout=HANG_BUDGET)
+    except subprocess.TimeoutExpired:
+        pass
+    assert result is not None, (
+        f"{hook} hung: a failed mint reached gh and started a device flow"
+    )
+    assert result.returncode == 0
+    combined = result.stdout + result.stderr
+    assert "login/device" not in combined, combined
+
+
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+def test_successful_mint_still_stores_against_a_realistic_gh(session, hook):
+    """The realistic stub must not be passing the tests above for the wrong
+    reason: given a real token it accepts it exactly like the forgiving one."""
+    session.set_gh(GH_STUB_REALISTIC)
+    session.write_sidecar("acme", "0")
+    result = session.run(hook, timeout=HANG_BUDGET)
+    assert result.returncode == 0
+    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+    assert session.gh_stdin.read_text().strip() == "ghs_stub_token"
+
+
+@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+def test_the_minter_is_never_piped_straight_into_gh(hook):
+    """Shape guard on the exact construct that broke. The token must be captured
+    and tested before it goes anywhere near `gh`; a pipe straight off the minter
+    reintroduces the hang no matter what the surrounding logic says."""
+    code = [
+        ln for ln in hook.read_text().splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    # Rejoin backslash continuations: the broken form spanned two physical lines,
+    # so a per-physical-line check would have missed it.
+    logical, buf = [], ""
+    for ln in code:
+        buf += ln.rstrip("\\") if ln.rstrip().endswith("\\") else ln
+        if not ln.rstrip().endswith("\\"):
+            logical.append(buf)
+            buf = ""
+    joined = "\n".join(logical)
+
+    assert "gh-tok" in joined, "the minter call vanished"
+    assert '[ -n "$tok" ]' in joined, "the emptiness check is gone"
+    for stmt in logical:
+        if "gh-tok" in stmt and "gh auth login" in stmt:
+            pytest.fail(f"minter piped straight into gh auth login:\n{stmt}")
+
+
+@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+def test_the_store_call_is_bounded(hook):
+    """Belt-and-braces behind the emptiness check: whatever `gh` decides to do
+    with its stdin in some future version, it cannot stall a session. The bound
+    goes through `bounded` (GNU timeout / perl alarm), never bare `timeout` —
+    macOS ships no coreutils, and `timeout: command not found` there turned a
+    valid mint into a failed store."""
+    body = hook.read_text()
+    for line in body.splitlines():
+        if "gh auth login" in line and not line.lstrip().startswith("#"):
+            assert "bounded " in line, f"unbounded store call: {line}"
+            break
+    else:
+        pytest.fail("no `gh auth login` call found")
+    assert "command -v timeout" in body and "alarm" in body, (
+        "bounded() must try GNU timeout and fall back to a perl alarm"
+    )
+
+
+# --- the kit also runs bare on a Mac -----------------------------------------
+#
+# No container means: /bin/bash 3.2 (no $EPOCHSECONDS, no printf '%(...)T'),
+# no GNU coreutils (no `timeout`), BSD date. The functional tests below run the
+# hooks against a PATH that models the missing-coreutils half; the static test
+# pins the bash-3.2 constructs, which CI's bash 5 cannot exercise directly.
+
+
+def _restricted_path(session):
+    """A PATH carrying everything the hooks legitimately need EXCEPT GNU
+    `timeout` — the shape of a bare Mac, where coreutils is not installed."""
+    nobin = session.root / "nobin"
+    nobin.mkdir(exist_ok=True)
+    for tool in ("bash", "mkdir", "rm", "date", "perl", "sleep", "cat", "dirname"):
+        src = shutil.which(tool)
+        assert src, f"{tool} not found on the real PATH"
+        dst = nobin / tool
+        if not dst.exists():
+            dst.symlink_to(src)
+    return f"{session.bin}:{nobin}"
+
+
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+def test_store_works_without_gnu_timeout(session, hook):
+    """The regression the perl fallback exists for: an unguarded `timeout 20
+    gh ...` on a Mac is `command not found` (exit 127) — a perfectly good mint
+    turned into a failed store, and gh silently unauthenticated."""
+    session.write_sidecar("acme", "0")
+    result = session.run(hook, timeout=HANG_BUDGET, path=_restricted_path(session))
+    assert result.returncode == 0
+    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+    assert session.gh_stdin.read_text().strip() == "ghs_stub_token"
+    assert not session.fail_marker().exists(), "success must clear the backoff marker"
+
+
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+def test_failed_mint_does_not_hang_without_gnu_timeout(session, hook):
+    """The device-flow protection must not itself depend on GNU timeout."""
+    session.set_minter(GH_TOK_FAILING_STUB)
+    session.set_gh(GH_STUB_REALISTIC)
+    session.write_sidecar("acme", "0")
+    result = session.run(hook, timeout=HANG_BUDGET, path=_restricted_path(session))
+    assert result.returncode == 0
+    assert session.gh_invocations == []
+
+
+def _bounded_fn(hook):
+    lines = hook.read_text().splitlines()
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("bounded()"))
+    end = next(i for i, ln in enumerate(lines) if i > start and ln.rstrip() == "}")
+    return "\n".join(lines[start : end + 1])
+
+
+@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+@pytest.mark.parametrize("with_gnu_timeout", [True, False])
+def test_bounded_actually_bounds(session, hook, with_gnu_timeout):
+    """Both branches of `bounded` must genuinely kill a stuck command —
+    otherwise the fallback is decoration and a Mac regains the hang. (The perl
+    alarm(2) survives exec(2), which is what makes the fallback a real bound.)"""
+    probe = session.root / "probe.sh"
+    probe.write_text(f"{_bounded_fn(hook)}\nbounded 1 sleep 30\n")
+    path = (
+        os.environ.get("PATH", "/usr/bin:/bin")
+        if with_gnu_timeout
+        else _restricted_path(session)
+    )
+    result = subprocess.run(
+        ["bash", str(probe)],
+        env={"PATH": path},
+        capture_output=True,
+        text=True,
+        timeout=10,  # TimeoutExpired here means the bound did nothing
+    )
+    assert result.returncode != 0, "a stuck store call survived its bound"
+
+
+@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+def test_hooks_carry_no_bash5_only_constructs(hook):
+    """A bare Mac runs these under /bin/bash 3.2. Bare $EPOCHSECONDS is silently
+    empty there (the guard would compare against nothing), and printf '%(...)T'
+    is a hard printf error. CI's bash can't exercise 3.2, so pin the constructs
+    themselves; the clock must go through the documented fallback idiom."""
+    code = [
+        ln for ln in hook.read_text().splitlines() if not ln.lstrip().startswith("#")
+    ]
+    joined = "\n".join(code)
+    assert "%(" not in joined, "printf '%(...)T' is bash 4.2+; a bare Mac has 3.2"
+    stripped = joined.replace("${EPOCHSECONDS:-$(date +%s)}", "")
+    assert "EPOCHSECONDS" not in stripped, (
+        "bare $EPOCHSECONDS is bash 5+; use ${EPOCHSECONDS:-$(date +%s)}"
+    )
+
+
+# --- the log is for debugging, so it must stay readable ----------------------
+
+
+def test_missing_sidecars_produce_no_stderr_noise(session):
+    """`read -r x < missing 2>/dev/null` does NOT silence the shell: bash applies
+    redirections left to right, so the failing `<` is reported before the stderr
+    redirect takes effect. That spammed hook-errors.log with "No such file or
+    directory" on exactly the missing-cache path you go to the log to debug."""
+    result = session.run("gh-app-refresh.sh", timeout=HANG_BUDGET)
+    assert result.returncode == 0
+    assert "No such file or directory" not in result.stderr, result.stderr
+
+
 # --- the hot path must fork nothing -----------------------------------------
 
 
@@ -341,15 +632,23 @@ def test_refresh_guard_forks_zero_processes():
     single tool call, and removing that cost is why the sidecar exists at all.
     """
     body = REFRESH_HOOK.read_text()
-    guard = body.split("gh-tok")[0]
+    # Sliced on the renew banner, which is the actual semantic boundary. (It used
+    # to slice on the first "gh-tok" occurrence, which broke the moment the mint
+    # became `tok=$(... gh-tok ...)` — the `$(` then landed inside the slice.)
+    assert "--- renew" in body, "renew section banner is gone; the slice is wrong"
+    guard = body.split("--- renew")[0]
     code = [
         ln for ln in guard.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
     ]
     joined = "\n".join(code)
-    for forker in ("$(", "`", "jq", "date ", "stat ", "openssl"):
-        assert forker not in joined, f"{forker!r} in the hot path:\n{joined}"
     assert "EPOCHSECONDS" in joined, "guard does not use the builtin clock"
     assert ".exp" in joined, "guard does not read the bare-integer sidecar"
+    # The ONE sanctioned fork is the bash-3.2 clock fallback (a bare Mac has no
+    # $EPOCHSECONDS), and only as this exact idiom — on the container's bash 5
+    # the parameter expansion short-circuits and nothing forks.
+    joined = joined.replace("${EPOCHSECONDS:-$(date +%s)}", "<clock>")
+    for forker in ("$(", "`", "jq", "date ", "stat ", "openssl"):
+        assert forker not in joined, f"{forker!r} in the hot path:\n{joined}"
 
 
 # --- shape ------------------------------------------------------------------
@@ -377,3 +676,68 @@ def test_gh_tok_never_prints_a_token_on_a_failure_path():
         stripped = line.strip()
         if stripped.startswith("die()"):
             assert ">&2" in stripped, "die() must write to stderr, not stdout"
+
+
+# --- gh-tok picks its route: local host script, or the SSH bridge -------------
+#
+# Bare on a Mac, `multiplai-gh-token` sits on PATH (setup.sh installs it) and
+# `host.docker.internal` does not resolve — ssh'ing to a bridge would fail every
+# mint. Inside the container it is the exact opposite. `command -v` decides.
+
+HOST_MINTER_STUB = """\
+#!/bin/bash
+echo "$@" >> "$HOST_MINTER_CALLS"
+printf '{"token":"ghs_local_token","expires_at":"2099-01-01T00:00:00Z"}\\n'
+"""
+
+SSH_JSON_STUB = """\
+#!/bin/bash
+echo "$@" >> "$SSH_CALLS"
+printf '{"token":"ghs_bridge_token","expires_at":"2099-01-01T00:00:00Z"}\\n'
+"""
+
+
+def _run_gh_tok(tmp_path, with_host_minter):
+    bin_dir = tmp_path / "bin"
+    home = tmp_path / "home"
+    bin_dir.mkdir()
+    home.mkdir()
+    ssh_calls = tmp_path / "ssh-calls.txt"
+    minter_calls = tmp_path / "minter-calls.txt"
+    ssh = bin_dir / "ssh"
+    ssh.write_text(SSH_JSON_STUB)
+    ssh.chmod(0o755)
+    if with_host_minter:
+        minter = bin_dir / "multiplai-gh-token"
+        minter.write_text(HOST_MINTER_STUB)
+        minter.chmod(0o755)
+    result = subprocess.run(
+        [str(HOOKS_DIR / "gh-tok"), "acme"],
+        env={
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "HOME": str(home),
+            "SSH_CALLS": str(ssh_calls),
+            "HOST_MINTER_CALLS": str(minter_calls),
+        },
+        capture_output=True,
+        text=True,
+        timeout=HANG_BUDGET,
+    )
+    return result, ssh_calls, minter_calls
+
+
+def test_gh_tok_mints_locally_when_the_host_script_is_present(tmp_path):
+    """Bare on a Mac the script is right there — no ssh, no bridge hostname."""
+    result, ssh_calls, minter_calls = _run_gh_tok(tmp_path, with_host_minter=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ghs_local_token"
+    assert not ssh_calls.exists(), "gh-tok ssh'd to the bridge despite a local script"
+    assert minter_calls.read_text().strip() == "--json acme"
+
+
+def test_gh_tok_uses_the_bridge_without_the_host_script(tmp_path):
+    """Inside the container the App key stays on the Mac: ssh is the only route."""
+    result, ssh_calls, _ = _run_gh_tok(tmp_path, with_host_minter=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ghs_bridge_token"
+    assert "multiplai-gh-token --json acme" in ssh_calls.read_text()

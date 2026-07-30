@@ -56,6 +56,62 @@ public repo has shipped without in-tree memory hooks from day one (see the
   script `multiplai-gh-token` into `~/.local/bin/` from the pinned `container/`
   checkout, under the same verification gates as the SSH gateway.
 
+### Fixed
+
+- **A failed App-token mint hung the session instead of degrading it.** In App
+  mode a mint failure — a wrong `org` in the host profile, a dead bridge, a
+  revoked key — made sessions **unstartable**: `SessionStart` stalled before
+  Claude was usable and, once past it, every Bash call stalled again. The only
+  way out was deleting both hooks from `settings.json`.
+
+  Cause: both hooks piped `gh-tok` straight into `gh auth login --with-token`,
+  on the documented assumption that an empty stdout plus a non-zero status would
+  make the store call "abort visibly". It does not. Measured on gh 2.96.0,
+  `gh auth login --with-token` treats **empty stdin as "no token supplied"** and
+  falls through to the interactive OAuth **device flow** — it prints a one-time
+  code and then blocks forever on a terminal a hook does not have. `exit 0 on
+  every path` never helped, because a hook that hangs never reaches its exit.
+
+  Both hooks now mint into a variable and only invoke `gh` once it is non-empty
+  (still piped, never on argv), and the store call is time-bounded so no
+  future change in how `gh` reads its stdin can stall a session again. The two
+  hook entries in `dotfiles/settings.json` also carry an explicit
+  `"timeout": 30`. Eleven tests were added, including a `gh` stub that models
+  the real device-flow block: the previous stub accepted empty stdin and exited
+  0, which is why 179 green tests said nothing about any of this.
+
+- **App mode now works bare on a Mac (no container).** The App hooks and
+  `gh-tok` quietly assumed the container's toolchain, and every assumption
+  broke under a bare-Mac launch (`--local`, or Docker absent): GNU `timeout`
+  does not exist on macOS (the store call died with exit 127, turning a valid
+  mint into a failed store); `/bin/bash` is 3.2, so `$EPOCHSECONDS` is silently
+  empty (the renew guard compared against nothing) and `printf '%(...)T'` is a
+  printf error; BSD `date` has no `-d` (every mint fell to the 30-minute cache
+  fallback, with a warning each time); and `gh-tok` ssh'd to
+  `host.docker.internal`, which only resolves from inside a container. Now: the
+  store call goes through `bounded()` — GNU `timeout` where present, else a
+  perl `alarm`, which survives `exec` and so is a real bound; the clock is
+  `${EPOCHSECONDS:-$(date +%s)}` (one `date` fork on bash 3.2, still zero forks
+  on the container's bash 5); log timestamps come from `date -u`; expiry
+  parsing tries BSD `date -j -f` after GNU `-d`; and `gh-tok` calls
+  `multiplai-gh-token` directly when it is on PATH (the bare-Mac case) instead
+  of ssh'ing to a bridge hostname that cannot resolve there.
+
+- **A hook killed by its `settings.json` timeout no longer forfeits the
+  backoff marker.** The marker was written on the failure branch — but a slow
+  bridge plus a slow store can exceed the entry's `"timeout": 30`, and a hook
+  Claude Code kills mid-mint never reaches any branch. The next Bash call then
+  re-paid the very stall the marker exists to prevent. Both hooks now write the
+  marker BEFORE attempting the mint and remove it on success, so being killed
+  leaves the backoff behind — one extra tiny write per renewal (hourly).
+
+- **`gh-app-refresh.sh` spammed the hook log on the missing-cache path.**
+  `read -r x < missing 2>/dev/null` does not silence the shell: bash applies
+  redirections left to right, so the failing `<` is reported before the stderr
+  redirect takes effect. Every session with no token cache yet wrote two
+  `No such file or directory` lines into `hook-errors.log` — noise in exactly
+  the file you open to debug the cache. Now a brace group carries the redirect.
+
 ### Removed
 
 - **`--gcp <name>` flag and the `env.gcp.*` overlay convention.** GCP wiring is

@@ -21,7 +21,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_CONFIG_DIR/hooks/gh-app-auth.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
+            "command": "bash $CLAUDE_CONFIG_DIR/hooks/gh-app-auth.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true",
+            "timeout": 30
           },
           {
             "type": "command",
@@ -40,7 +41,8 @@
           },
           {
             "type": "command",
-            "command": "bash $CLAUDE_CONFIG_DIR/hooks/gh-app-refresh.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
+            "command": "bash $CLAUDE_CONFIG_DIR/hooks/gh-app-refresh.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true",
+            "timeout": 30
           }
         ]
       }

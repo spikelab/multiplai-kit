@@ -56,6 +56,37 @@ public repo has shipped without in-tree memory hooks from day one (see the
   script `multiplai-gh-token` into `~/.local/bin/` from the pinned `container/`
   checkout, under the same verification gates as the SSH gateway.
 
+### Fixed
+
+- **A failed App-token mint hung the session instead of degrading it.** In App
+  mode a mint failure — a wrong `org` in the host profile, a dead bridge, a
+  revoked key — made sessions **unstartable**: `SessionStart` stalled before
+  Claude was usable and, once past it, every Bash call stalled again. The only
+  way out was deleting both hooks from `settings.json`.
+
+  Cause: both hooks piped `gh-tok` straight into `gh auth login --with-token`,
+  on the documented assumption that an empty stdout plus a non-zero status would
+  make the store call "abort visibly". It does not. Measured on gh 2.96.0,
+  `gh auth login --with-token` treats **empty stdin as "no token supplied"** and
+  falls through to the interactive OAuth **device flow** — it prints a one-time
+  code and then blocks forever on a terminal a hook does not have. `exit 0 on
+  every path` never helped, because a hook that hangs never reaches its exit.
+
+  Both hooks now mint into a variable and only invoke `gh` once it is non-empty
+  (still piped, never on argv), and the store call is wrapped in `timeout` so no
+  future change in how `gh` reads its stdin can stall a session again. The two
+  hook entries in `dotfiles/settings.json` also carry an explicit
+  `"timeout": 30`. Eleven tests were added, including a `gh` stub that models
+  the real device-flow block: the previous stub accepted empty stdin and exited
+  0, which is why 179 green tests said nothing about any of this.
+
+- **`gh-app-refresh.sh` spammed the hook log on the missing-cache path.**
+  `read -r x < missing 2>/dev/null` does not silence the shell: bash applies
+  redirections left to right, so the failing `<` is reported before the stderr
+  redirect takes effect. Every session with no token cache yet wrote two
+  `No such file or directory` lines into `hook-errors.log` — noise in exactly
+  the file you open to debug the cache. Now a brace group carries the redirect.
+
 ### Removed
 
 - **`--gcp <name>` flag and the `env.gcp.*` overlay convention.** GCP wiring is

@@ -22,10 +22,15 @@
 # Contract, relied on by both hooks:
 #   * on success: the token on stdout, nothing else, exit 0
 #   * on ANY failure: NOTHING on stdout, a diagnosis on stderr, non-zero exit
-#     (the hooks pipe stdout straight into `gh auth login --with-token`, so an
-#     empty stdout + non-zero status makes them abort visibly instead of storing
-#     a truncated or stale credential)
 #   * the token is never printed to stderr, never logged, never on argv
+#
+# What that contract does NOT do — it used to claim it did, and the claim cost a
+# day: an empty stdout does not make a caller "abort visibly". `gh auth login
+# --with-token` reads empty stdin and starts the interactive OAuth device flow,
+# printing a one-time code and blocking forever (measured, gh 2.96.0). So both
+# hooks capture this output into a variable and test it for emptiness before they
+# hand it to `gh` — never `gh-tok | gh auth login`. Keep it that way if either
+# hook is ever rewritten.
 
 set -euo pipefail
 umask 077

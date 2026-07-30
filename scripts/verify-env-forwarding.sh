@@ -40,6 +40,27 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf '  \033[31mFAIL\033[0m  %s\n' "$1"; }
 
+# Run one launch; set OUT (combined output) and STATUS (the launcher's exit code).
+#
+# Two details that are easy to get wrong and produced four false FAILs the first
+# time this ran on a host:
+#
+#   * stdin is /dev/null so `claude.sh` sees a non-TTY and uses `docker run -i`
+#     rather than `-it`. A pseudo-TTY turns every line into CRLF, and a trailing
+#     \r makes `grep -x 'V=value'` miss a line that is otherwise exactly right —
+#     while the \r drags the cursor to column 0 so the printed diagnostic looks
+#     scrambled. It also stops any interactive prompt from stalling the script.
+#   * CRs are stripped anyway, so the assertions hold no matter how the launcher
+#     decides to allocate a TTY later.
+#
+# STATUS is captured before the CR strip: putting `tr` in a pipeline would make
+# $? the exit code of `tr` instead of the launcher's.
+launch() {
+    OUT=$(env "$@" ./claude.sh --shell -c "$LAUNCH_CMD" </dev/null 2>&1)
+    STATUS=$?
+    OUT=$(printf '%s' "$OUT" | tr -d '\r')
+}
+
 echo
 echo "Launching real containers — each check takes a few seconds."
 echo
@@ -53,13 +74,14 @@ echo
 # So the failure condition is specifically an EMPTY GH_TOKEN. A non-empty one is
 # the container's own and is the fix working, not a leak.
 echo "4. empty variables are not forwarded"
-out=$(GH_TOKEN= ./claude.sh --shell -c 'env' 2>&1)
-if printf '%s\n' "$out" | grep -qE '^GH_TOKEN=$'; then
+LAUNCH_CMD='env'
+launch GH_TOKEN=
+if printf '%s\n' "$OUT" | grep -qE '^GH_TOKEN=$'; then
     fail "GH_TOKEN arrived present-but-empty — the shadowing bug is back"
 else
     pass "no empty GH_TOKEN in the container"
 fi
-if printf '%s\n' "$out" | grep -qE '^(SLACK_TOKEN|GMAIL_[A-Z_]*)=$'; then
+if printf '%s\n' "$OUT" | grep -qE '^(SLACK_TOKEN|GMAIL_[A-Z_]*)=$'; then
     fail "a messaging secret arrived present-but-empty"
 else
     pass "no empty SLACK_TOKEN / GMAIL_* in the container"
@@ -67,11 +89,12 @@ fi
 
 # --- 5. shell-env-wins precedence -------------------------------------------
 echo "5. the launching shell overrides the env files"
-out=$(GIT_AUTHOR_NAME=OverrideTest ./claude.sh --shell -c 'echo "GAN=$GIT_AUTHOR_NAME"' 2>&1)
-if printf '%s\n' "$out" | grep -qx 'GAN=OverrideTest'; then
+LAUNCH_CMD='echo "GAN=$GIT_AUTHOR_NAME"'
+launch GIT_AUTHOR_NAME=OverrideTest
+if printf '%s\n' "$OUT" | grep -qx 'GAN=OverrideTest'; then
     pass "exported GIT_AUTHOR_NAME beat the value in .env"
 else
-    fail "shell value did not win (got: $(printf '%s\n' "$out" | grep '^GAN=' || echo '<no output>'))"
+    fail "shell value did not win (got: $(printf '%s\n' "$OUT" | grep '^GAN=' || echo '<no output>'))"
 fi
 
 # --- 6. dynamic forwarding --------------------------------------------------
@@ -81,45 +104,46 @@ fi
 # which silently forwarded nothing when forgotten.
 echo "6. a newly declared variable arrives with no launcher edit"
 printf '\nVERIFY_SMOKE_VAR="reached-the-container"\n' >> .env
-out=$(./claude.sh --shell -c 'echo "V=$VERIFY_SMOKE_VAR"' 2>&1)
-if printf '%s\n' "$out" | grep -qx 'V=reached-the-container'; then
+LAUNCH_CMD='echo "V=$VERIFY_SMOKE_VAR"'
+launch
+if printf '%s\n' "$OUT" | grep -qx 'V=reached-the-container'; then
     pass "VERIFY_SMOKE_VAR arrived from .env alone"
 else
-    fail "declared variable did not arrive (got: $(printf '%s\n' "$out" | grep '^V=' || echo '<no output>'))"
+    fail "declared variable did not arrive (got: $(printf '%s\n' "$OUT" | grep '^V=' || echo '<no output>'))"
 fi
 cp "$ENV_BACKUP" .env
 
 # --- 7. GCP activation ------------------------------------------------------
 echo "7. GCP_KEY_FILE activates the mount, and a missing key fails loudly"
-out=$(GCP_KEY_FILE=/nonexistent/key.json ./claude.sh --shell -c true 2>&1)
-status=$?
-if [ "$status" -ne 0 ] && printf '%s\n' "$out" | grep -q '/nonexistent/key.json'; then
+LAUNCH_CMD='true'
+launch GCP_KEY_FILE=/nonexistent/key.json
+if [ "$STATUS" -ne 0 ] && printf '%s\n' "$OUT" | grep -q '/nonexistent/key.json'; then
     pass "missing key exits non-zero and names the path"
 else
-    fail "missing key should abort naming the path (exit $status)"
+    fail "missing key should abort naming the path (exit $STATUS)"
 fi
 
 printf '{"type":"service_account"}' > "$KEY_FILE"
-out=$(GCP_KEY_FILE="$KEY_FILE" ./claude.sh --shell -c \
-    'echo "C=$GOOGLE_APPLICATION_CREDENTIALS"
-     echo "K=${GCP_KEY_FILE:-<unset>}"
-     cat /home/agent/.gcp/key.json' 2>&1)
-if printf '%s\n' "$out" | grep -qx 'C=/home/agent/.gcp/key.json'; then
+LAUNCH_CMD='echo "C=$GOOGLE_APPLICATION_CREDENTIALS"
+            echo "K=${GCP_KEY_FILE:-<unset>}"
+            cat /home/agent/.gcp/key.json'
+launch GCP_KEY_FILE="$KEY_FILE"
+if printf '%s\n' "$OUT" | grep -qx 'C=/home/agent/.gcp/key.json'; then
     pass "credentials point at the in-container path"
 else
-    fail "GOOGLE_APPLICATION_CREDENTIALS wrong or unset"
+    fail "GOOGLE_APPLICATION_CREDENTIALS wrong or unset (got: $(printf '%s\n' "$OUT" | grep '^C=' || echo '<no output>'))"
 fi
-if printf '%s\n' "$out" | grep -q 'service_account'; then
+if printf '%s\n' "$OUT" | grep -q 'service_account'; then
     pass "the key is actually readable at that path"
 else
     fail "key not readable inside the container — the mount did not happen"
 fi
 # Asserted against the container's own environment rather than by grepping the
 # whole transcript for the path: launcher chatter would make that a false alarm.
-if printf '%s\n' "$out" | grep -qx 'K=<unset>'; then
+if printf '%s\n' "$OUT" | grep -qx 'K=<unset>'; then
     pass "host-side GCP_KEY_FILE path not forwarded"
 else
-    fail "the host-side key path is set inside the container ($(printf '%s\n' "$out" | grep '^K=' || true))"
+    fail "the host-side key path is set inside the container ($(printf '%s\n' "$OUT" | grep '^K=' || true))"
 fi
 
 echo

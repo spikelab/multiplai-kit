@@ -72,15 +72,18 @@ env.spikelab    → GIT_* identity + GH_TOKEN_KEYCHAIN="gh-token-spikelab"
 env.dolce       → GIT_* identity + GH_TOKEN_APP="dolce"
 ```
 
-One exception, by design: a `GH_TOKEN` exported in your **shell** is an
-override, not a conflict. `GH_TOKEN=$(mint) ./claude.sh --profile dolce`
-launches, uses that token, and leaves the App hooks inert for that session —
-the same "your shell wins" rule that applies to every other variable.
+One exception, by design: a **shell** export is an override, not a conflict —
+in either direction. `GH_TOKEN=$(mint) ./claude.sh --profile dolce` launches,
+uses that token, and leaves the App hooks inert for that session; a shell
+`GH_TOKEN_APP=<app>` likewise beats a file-declared PAT. The same "your shell
+wins" rule that applies to every other variable — and never silently: the
+launcher prints a notice naming the variable being dropped and the file that
+declared it.
 
 In App mode the launcher forwards no `GH_TOKEN` at all (an environment token
 beats gh's credential store and would block it), and there is **no PAT
-fallback**: if minting fails you get an unauthenticated `gh`, not a silent
-switch to a different identity.
+fallback**: if minting fails you get an unauthenticated `gh` (with the mint
+retried at most once a minute), not a silent switch to a different identity.
 
 ---
 

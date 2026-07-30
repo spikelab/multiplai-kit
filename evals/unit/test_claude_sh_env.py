@@ -529,6 +529,24 @@ def test_shell_token_overrides_a_file_declared_app(kit):
     assert not result.mentions("GH_TOKEN_APP")
 
 
+def test_shell_app_name_overrides_a_file_declared_pat_and_says_so(kit):
+    """The same rule in the other direction: GH_TOKEN_APP exported in the shell
+    beats the PAT declared in .env. Also an override, not a conflict — but never
+    a silent one: the notice must name the variable being dropped and the file
+    that declared it, exactly like the mirror case above prints its own."""
+    _pretend_macos(kit)
+    _install_host_minter(kit)
+
+    # The default .env declares GH_TOKEN="token-from-env-file".
+    result = kit.launch("--shell", "-c", "true", GH_TOKEN_APP="acme")
+    assert result.status == 0, result.output
+    assert result.forwarded_bare("GH_TOKEN_APP")
+    assert result.resolved("GH_TOKEN_APP") == "acme"
+    assert not result.mentions("GH_TOKEN"), "App mode must forward no PAT"
+    assert "overrides GH_TOKEN" in result.output
+    assert ".env" in result.output
+
+
 def test_app_mode_without_the_host_script_refuses_to_launch(kit):
     """Every `gh` call in that session would fail; failing at the door names the
     fix (`./setup.sh`) instead of surfacing as an unauthenticated container."""

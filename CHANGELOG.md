@@ -40,9 +40,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
   `GH_TOKEN_KEYCHAIN` is a hard launch error naming both variables and the file
   each came from — they select different GitHub identities, and a silent winner
   means running as the wrong user. Give each identity its own profile (see
-  `docs/PROFILES.md`). A `GH_TOKEN` exported in your **shell** is still an
-  override, not a conflict: it wins for that launch and the hooks stay inert.
-  PAT mode is otherwise unchanged and remains the default.
+  `docs/PROFILES.md`). A shell export is still an override, not a conflict, in
+  **either direction** — `GH_TOKEN` from the shell wins over a file-declared
+  `GH_TOKEN_APP` and vice versa — and the launcher prints a notice naming the
+  variable being dropped and the file that declared it, so the override is
+  never silent. PAT mode is otherwise unchanged and remains the default.
+
+  A dead bridge degrades, it never blocks: a failed mint writes a 60-second
+  backoff marker beside the token cache, so `gh` runs unauthenticated and the
+  renew path is retried at most once a minute — instead of every Bash call
+  paying the SSH connect timeout inside the PreToolUse hook.
 
   Host-side setup (creating the App, installing its key) lives in the container
   repo: `container/docs/gh-app-token.md`. `setup.sh` installs the host minting

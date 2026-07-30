@@ -95,6 +95,13 @@ class Session:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         (self.cache_dir / f"{app}.json.exp").write_text(text)
 
+    def write_fail_marker(self, app, text):
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        (self.cache_dir / f"{app}.json.fail").write_text(text)
+
+    def fail_marker(self, app="acme"):
+        return self.cache_dir / f"{app}.json.fail"
+
     def run(self, hook, app="acme", **extra):
         env = {
             "PATH": f"{self.bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
@@ -265,6 +272,63 @@ def test_refresh_hook_emits_no_permission_decision(session):
         setup()
         result = session.run("gh-app-refresh.sh")
         assert result.stdout == "", result.stdout
+
+
+# --- a dead bridge must not stall every Bash call ----------------------------
+#
+# The mint path pays an SSH connect timeout (up to 10s) when the bridge is down.
+# Without a backoff, a dead bridge plus an expired cache re-enters that path on
+# EVERY Bash call — a per-call stall inside a PreToolUse hook. One failed mint
+# writes a short-lived marker; the guard honours it; success removes it.
+
+
+def test_failed_mint_writes_a_backoff_marker(session):
+    session.set_minter(GH_TOK_FAILING_STUB)
+    session.write_sidecar("acme", "0")
+    session.run("gh-app-refresh.sh")
+    assert session.mint_attempts == 1
+    until = session.fail_marker().read_text().strip()
+    assert until.isdigit() and int(until) > _now(), until
+
+
+def test_no_retry_while_the_backoff_marker_is_fresh(session):
+    """The second call must not reach the minter at all — reaching it is the
+    stall this marker exists to prevent."""
+    session.set_minter(GH_TOK_FAILING_STUB)
+    session.write_sidecar("acme", "0")
+    session.run("gh-app-refresh.sh")
+    result = session.run("gh-app-refresh.sh")
+    assert result.returncode == 0
+    assert session.mint_attempts == 1
+
+
+@pytest.mark.parametrize("marker", ["expired", "not-a-number", ""])
+def test_stale_or_unreadable_backoff_marker_does_not_block_the_retry(session, marker):
+    """The marker self-expires by timestamp, and an unparseable one counts as
+    absent — backoff must never turn into a permanent lockout."""
+    session.write_sidecar("acme", "0")
+    session.write_fail_marker("acme", str(_now() - 1) if marker == "expired" else marker)
+    session.run("gh-app-refresh.sh")
+    assert session.mint_attempts == 1
+
+
+def test_successful_mint_clears_the_backoff_marker(session):
+    session.write_sidecar("acme", "0")
+    session.write_fail_marker("acme", str(_now() - 1))
+    session.run("gh-app-refresh.sh")
+    assert session.mint_attempts == 1
+    assert not session.fail_marker().exists()
+
+
+def test_auth_hook_failure_spares_the_first_bash_call_the_same_stall(session):
+    """A failed SessionStart mint already proved the bridge dead; it writes the
+    marker too, so the refresh hook's first run skips straight past the mint."""
+    session.set_minter(GH_TOK_FAILING_STUB)
+    session.run("gh-app-auth.sh")
+    assert session.fail_marker().exists()
+    result = session.run("gh-app-refresh.sh")
+    assert result.returncode == 0
+    assert session.mint_attempts == 1, "the refresh hook re-entered the mint path"
 
 
 # --- the hot path must fork nothing -----------------------------------------

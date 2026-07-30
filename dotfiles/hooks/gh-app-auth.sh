@@ -33,10 +33,18 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 # from somewhere else cannot silently block the store. Local to this hook.
 unset GH_TOKEN GITHUB_TOKEN
 
+CACHE_DIR="$HOME/.cache/multiplai/gh"
 if ! "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-tok" "$GH_TOKEN_APP" 2>>"$LOG" \
      | gh auth login --with-token --hostname github.com >>"$LOG" 2>&1; then
     printf '%(%Y-%m-%dT%H:%M:%SZ)T gh-app-auth: mint/store failed for app "%s"; gh will be unauthenticated\n' \
         -1 "$GH_TOKEN_APP" >>"$LOG" 2>/dev/null || true
+    # This failure just proved the mint path dead; write the same backoff marker
+    # the refresh hook honours, so the FIRST Bash call doesn't pay the SSH
+    # connect-timeout stall a second time (see gh-app-refresh.sh).
+    mkdir -p "$CACHE_DIR" 2>/dev/null || true
+    printf '%s\n' "$((EPOCHSECONDS + 60))" > "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
+else
+    rm -f "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
 fi
 
 # A failed mint must never block session start.

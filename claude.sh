@@ -521,6 +521,21 @@ if [ -n "${GH_TOKEN_APP:-}" ]; then
         fi
         GH_AUTH_MODE=app
     else
+        # GH_TOKEN_APP itself came from the launching shell: the same "your
+        # shell wins" override as above, in the other direction — but never
+        # silently. A file-declared PAT is being dropped for this launch; name
+        # it and the file it lives in, exactly like the mirror case, or the
+        # session runs as an unexpected GitHub user with no visible cause.
+        _pat_var=""
+        if [ -n "${GH_TOKEN:-}" ] && ! _gh_from_shell GH_TOKEN; then
+            _pat_var=GH_TOKEN
+        elif [ -n "${GH_TOKEN_KEYCHAIN:-}" ] && ! _gh_from_shell GH_TOKEN_KEYCHAIN; then
+            _pat_var=GH_TOKEN_KEYCHAIN
+        fi
+        if [ -n "$_pat_var" ]; then
+            _pat_file=$(_gh_decl_file "$_pat_var" || true)
+            echo "[claude] GH_TOKEN_APP='$GH_TOKEN_APP' from the shell overrides $_pat_var (declared in ${_pat_file:-a file}) for this launch."
+        fi
         GH_AUTH_MODE=app
     fi
 fi

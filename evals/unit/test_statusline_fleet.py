@@ -17,6 +17,7 @@ all (vanilla Claude Code with no kit and no plugin). All three render nothing
 and none of them may disturb the rest of the line.
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -87,6 +88,27 @@ class TestRendering:
 
         assert READING in render(workspace)
 
+    def test_control_characters_are_stripped(self, workspace):
+        """The content derives from other sessions' registry/checkpoint state.
+        ESC and BEL bytes (ANSI/OSC injection) must never reach the terminal —
+        stripped, not passed through, while multibyte UTF-8 (the `·`
+        separators) survives."""
+        fleet_file(workspace).write_text("\x1b]0;evil\x07\x1b[2J" + READING + "\n")
+
+        out = render(workspace)
+
+        assert "\x1b" not in out and "\x07" not in out
+        assert READING in out
+
+    def test_an_oversized_line_is_capped(self, workspace):
+        """A malformed multi-KB line must not smear the status line."""
+        fleet_file(workspace).write_text("x" * 5000 + "\n")
+
+        out = render(workspace)
+
+        assert "x" * 120 in out
+        assert "x" * 121 not in out
+
 
 class TestDegradation:
 
@@ -109,14 +131,22 @@ class TestDegradation:
 
         assert render(workspace).count("|") == 1
 
-    def test_no_workspace_variable_renders_nothing(self):
+    def test_no_workspace_variable_renders_nothing(self, tmp_path):
         """Vanilla Claude Code: no kit, no container, no WORKSPACE. The
-        degradation contract says work anyway, and say nothing about the kit."""
-        out = render(workspace=None)
+        degradation contract says work anyway, and say nothing about the kit.
+
+        HOME points at a directory that DOES contain a fleet.txt: without
+        WORKSPACE there is no writer, so a $HOME fallback would render a
+        permanently stale reading. This pins the fallback's absence."""
+        (tmp_path / ".multiplai" / "data").mkdir(parents=True)
+        (tmp_path / ".multiplai" / "data" / "fleet.txt").write_text(READING + "\n")
+
+        out = render(workspace=None, HOME=str(tmp_path))
 
         assert "front" not in out
         assert "multiplai" not in out.lower()
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="chmod 000 does not stop root reading")
     def test_an_unreadable_file_does_not_break_the_line(self, workspace):
         f = fleet_file(workspace)
         f.write_text(READING + "\n")
@@ -127,6 +157,7 @@ class TestDegradation:
             f.chmod(0o644)
 
         assert "?" in out  # the rest of the line still rendered
+        assert READING not in out  # and the unreadable segment stayed absent
 
     def test_the_rest_of_the_line_is_unaffected(self, workspace):
         """Adding a segment must not perturb the ones already there."""
@@ -167,13 +198,17 @@ class TestHotPathCost:
 
     def test_it_touches_exactly_one_path(self, segment):
         """`fleet.txt` and nothing else — never the 140 registry entries or the
-        183 checkpoint directories behind it."""
-        assert segment.count("fleet_file") == 3  # assign, -s test, read redirect
+        183 checkpoint directories behind it. Asserted loosely (the paths that
+        must be absent) rather than by token counts, which broke on benign
+        refactors."""
+        assert "fleet_file" in segment
         assert "checkpoints" not in segment
         assert "sessions" not in segment
 
     def test_it_uses_a_builtin_not_a_fork(self, segment):
-        """`cat`, `head` or `jq` here would fork a process per prompt render."""
+        """`cat`, `head` or `jq` here would fork a process per prompt render,
+        and so would any command substitution."""
         assert "read -r fleet" in segment
+        assert "$(" not in segment and "`" not in segment
         for forked in ("cat ", "head ", "tail ", "jq ", "awk ", "sed "):
             assert forked not in segment

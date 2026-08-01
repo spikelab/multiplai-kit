@@ -85,12 +85,26 @@ fi
 # `cat`) and inherently takes only the first line.
 #
 # Absent, empty, or no WORKSPACE (vanilla Claude Code, no kit) → render
-# nothing. `-s` covers absent and empty in one test.
+# nothing. There is deliberately no $HOME fallback: without WORKSPACE there
+# is no writer, so a stale $HOME/.multiplai/data/fleet.txt would render
+# forever. `-s` covers absent and empty in one test; `2>/dev/null` comes
+# BEFORE the input redirect so a race (file unreadable or deleted after the
+# `-s` check) stays off stderr — bash applies redirects left to right.
+#
+# The content is written by other sessions, so treat it defensively: strip
+# control characters (neuters ANSI/OSC escape injection) and cap the length.
+# `[[:cntrl:]]` rather than `[^[:print:]]` because under the C locale the
+# latter also strips multibyte UTF-8 (the `·` separators). Both are
+# parameter expansions — the hot path stays fork-free.
 fleet_info=""
-fleet_file="${WORKSPACE:-$HOME}/.multiplai/data/fleet.txt"
-if [ -s "$fleet_file" ]; then
-  IFS= read -r fleet < "$fleet_file"
-  [ -n "$fleet" ] && fleet_info=" ${SEP} ${MAGENTA}${fleet}${RST}"
+if [ -n "$WORKSPACE" ]; then
+  fleet_file="$WORKSPACE/.multiplai/data/fleet.txt"
+  if [ -s "$fleet_file" ]; then
+    IFS= read -r fleet 2>/dev/null < "$fleet_file"
+    fleet=${fleet//[[:cntrl:]]/}
+    fleet=${fleet:0:120}
+    [ -n "$fleet" ] && fleet_info=" ${SEP} ${MAGENTA}${fleet}${RST}"
+  fi
 fi
 
 # Assemble

@@ -930,6 +930,100 @@ filter_resume_args() {
     done
 }
 
+# --- Post-exit extraction drain ---
+# The multiplai-context plugin defers learnings/diary extraction: SessionEnd is
+# killed within seconds, so it only drops a marker in
+# $WORKSPACE/.multiplai/data/pending_extractions/. Something else has to run
+# the (multi-minute) extraction. Until now that something was the *next*
+# SessionStart in any project — so closing your last tab on a Friday evening
+# produced Friday's diary entry on Monday morning.
+#
+# It cannot be done in-container: `docker run --rm` tears the container down
+# when PID 1 exits, taking any detached child with it. So the launcher runs it
+# here, on the host, right after the container is gone — no daemon, no timer,
+# and it fires exactly when a marker was just written.
+#
+# Strictly best-effort and strictly silent. Every unmet precondition is a
+# `return 0`, and the whole call is `|| true`: `exit $DOCKER_STATUS` below is
+# documented behaviour with tests on it, and a diary entry is never worth
+# changing what the launcher reports about the session.
+
+# Resolve the installed plugin's scripts/ directory. The install path is
+# recorded in Claude Code's own manifest; the fallback picks the most recently
+# installed copy in the plugin cache, which is the same answer without jq.
+# Both can come up empty (plugin not installed, or an older version that
+# predates the script) — the caller treats that as "nothing to do".
+resolve_drain_script() {
+    local manifest="$DOTFILES_DIR/plugins/installed_plugins.json"
+    local install_path=""
+    if [ -f "$manifest" ] && command -v jq >/dev/null 2>&1; then
+        install_path=$(jq -r '
+            .plugins // {}
+            | to_entries[]
+            | select(.key | startswith("multiplai-context@"))
+            | .value[0].installPath // empty
+        ' "$manifest" 2>/dev/null | head -n 1)
+        if [ -n "$install_path" ] && [ -f "$install_path/scripts/drain_extractions.py" ]; then
+            printf '%s\n' "$install_path/scripts/drain_extractions.py"
+            return 0
+        fi
+    fi
+    local newest=""
+    newest=$(ls -t "$DOTFILES_DIR"/plugins/cache/*/multiplai-context/*/scripts/drain_extractions.py \
+        2>/dev/null | head -n 1)
+    [ -n "$newest" ] && printf '%s\n' "$newest"
+    return 0
+}
+
+post_exit_drain() {
+    local data_dir="$WORKSPACE/.multiplai/data"
+
+    # Only spend a process when there is actually something queued.
+    # (No nullglob here, so an unmatched glob stays literal — hence -e.)
+    local -a queued=( "$data_dir"/pending_extractions/*.json )
+    [ -e "${queued[0]}" ] || return 0
+
+    # No uv, no PEP 723 script. Silent — a host without uv is a supported
+    # configuration, it just drains at the next SessionStart as before.
+    command -v uv >/dev/null 2>&1 || return 0
+
+    local script
+    script=$(resolve_drain_script)
+    [ -n "$script" ] || return 0
+
+    # Point the Agent SDK at the LIVE credentials — never a copy. The CLI
+    # refreshes the OAuth token in place, so a copy goes stale and then fails
+    # auth. Claude Code reads $CLAUDE_CONFIG_DIR/.credentials.json, but the
+    # host file is credentials.json (no leading dot) — the container gets it
+    # via a renaming bind mount, which is not available here. Bridge the two
+    # names with a symlink beside the real file; a symlink still resolves to
+    # the same inode after every in-place refresh.
+    local creds_dir creds_base creds_link
+    creds_dir=$(dirname "$CREDS_FILE")
+    creds_base=$(basename "$CREDS_FILE")
+    if [ "$creds_base" != ".credentials.json" ]; then
+        creds_link="$creds_dir/.credentials.json"
+        if [ ! -e "$creds_link" ] && [ ! -L "$creds_link" ]; then
+            ln -s "$creds_base" "$creds_link" 2>/dev/null || return 0
+        fi
+    fi
+
+    # WORKSPACE is what makes the diary land in the workspace rather than
+    # silently in ~/.multiplai/ — the plugin resolves every output path from
+    # it (pluginConfigs sets workspace_dir empty, so the env var is the live
+    # answer on both sides). --data-dir alone would fix only the queue's
+    # location, not the diary's.
+    #
+    # CLAUDE_PLUGIN_OPTION_anthropic_api_key is deliberately NOT exported: its
+    # absence is what keeps create_client() on the OAuth-backed Agent SDK
+    # rather than billing a separate API key.
+    WORKSPACE="$WORKSPACE" CLAUDE_CONFIG_DIR="$creds_dir" \
+        nohup uv run --no-project "$script" --data-dir "$data_dir" \
+        >/dev/null 2>&1 </dev/null &
+    disown 2>/dev/null || true
+    return 0
+}
+
 # --- Run, with the hub adoption take-back loop ---
 # The multiplai hub (multiplai-gui) can adopt a terminal-born session: it
 # writes <sid>.adopt beside the session registry entry the multiplai-context
@@ -1061,4 +1155,11 @@ while :; do
 
     RESUME_ARGS=(--resume "$SID")
 done
+
+# After the loop, so it runs on every way out of it — shell mode's early
+# break, no registry, no marker, a declined take-back, or a hub that would not
+# release. A take-back relaunch loops back into `docker run` instead, and its
+# own SessionStart drains as it always did.
+post_exit_drain || true
+
 exit "$DOCKER_STATUS"

@@ -17,6 +17,30 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **Your last session of the day now gets written up that evening, not the next
+  time you open one.** The `multiplai-context` plugin defers diary/learnings
+  extraction to a marker file, because the `SessionEnd` hook is killed within
+  seconds — and until now the only thing that ever picked a marker up was the
+  *next* `SessionStart`. Close your last tab on a Friday and Friday's diary
+  entry appeared on Monday. It cannot be fixed inside the container either:
+  `docker run --rm` tears everything down when the session's process exits.
+
+  `claude.sh` now runs the plugin's `drain_extractions.py` **on your Mac, right
+  after the container exits** — no daemon, no timer, and only when a marker was
+  actually written. It runs detached and silently, and it never changes the
+  exit status `claude.sh` reports.
+
+  Nothing to configure. It's inert unless all of these hold: a marker is
+  queued, `uv` is on your PATH, and an installed `multiplai-context` new enough
+  to ship the script (0.11.0+). Any of them missing and you simply get the old
+  behaviour — drained at the next session start.
+
+  One host-side detail worth knowing about: the drain authenticates with your
+  existing credentials by **symlinking** `~/.claude-container/.credentials.json`
+  to the `credentials.json` beside it (Claude Code looks for the dotted name).
+  It is never a copy — the CLI refreshes the OAuth token in place, so a copy
+  would go stale and then fail.
+
 - **`GH_TOKEN_APP` — GitHub App authentication, as an alternative to a PAT**
   (macOS + host bridge). Set `GH_TOKEN_APP=<app>` in `.env` or an
   `env.<profile>` and the session authenticates `gh` and `git` off a fresh

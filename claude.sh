@@ -978,10 +978,27 @@ resolve_drain_script() {
 post_exit_drain() {
     local data_dir="$WORKSPACE/.multiplai/data"
 
-    # Only spend a process when there is actually something queued.
-    # (No nullglob here, so an unmatched glob stays literal — hence -e.)
-    local -a queued=( "$data_dir"/pending_extractions/*.json )
-    [ -e "${queued[0]}" ] || return 0
+    # Only spend a process when there is actually something to do.
+    #
+    # Both queues count. A marker sitting in processing_extractions/ is not
+    # necessarily live work: a container torn down mid-extraction (which is the
+    # normal way a session ends) kills the detached child and strands its
+    # marker there, and the drain's recover_stale_processing is the only thing
+    # that ever requeues it. Checking pending_extractions/ alone made this
+    # launcher skip precisely the case it is best placed to repair.
+    #
+    # (No nullglob here, so an unmatched glob stays literal — hence -e per
+    # entry rather than trusting ${queued[0]}, which would be the literal
+    # pattern whenever the first directory happens to be empty.)
+    local -a queued=(
+        "$data_dir"/pending_extractions/*.json
+        "$data_dir"/processing_extractions/*.json
+    )
+    local q work=""
+    for q in "${queued[@]}"; do
+        [ -e "$q" ] && { work=1; break; }
+    done
+    [ -n "$work" ] || return 0
 
     # No uv, no PEP 723 script. Silent — a host without uv is a supported
     # configuration, it just drains at the next SessionStart as before.

@@ -102,6 +102,19 @@ def _queue_marker(kit, sid="11111111-2222-3333-4444-555555555555"):
     return pending
 
 
+def _strand_marker(kit, sid="99999999-8888-7777-6666-555555555555"):
+    """A marker orphaned in processing_extractions/.
+
+    This is what a container torn down mid-extraction leaves behind: the
+    detached child died with it, and only the drain's recover_stale_processing
+    ever puts the marker back.
+    """
+    processing = kit.workspace / ".multiplai" / "data" / "processing_extractions"
+    processing.mkdir(parents=True, exist_ok=True)
+    (processing / f"{sid}.json").write_text(json.dumps({"session_id": sid}))
+    return processing
+
+
 def _creds(kit):
     """The host credentials file the launcher mounts into the container."""
     d = kit.home / ".claude-container"
@@ -170,6 +183,59 @@ def test_no_marker_means_no_drain(drainkit):
     on every session; the queue check is what keeps it free."""
     _install_plugin(drainkit)
     # No marker queued.
+
+    d = _run(drainkit, "--shell", "-c", "true", expect_drain=False)
+
+    assert d.launch.status == 0, d.launch.output
+    assert not d.ran
+
+
+def test_a_stranded_marker_still_triggers_the_drain(drainkit):
+    """The repair case, and the one this launcher is best placed to serve.
+
+    A session whose container died mid-extraction leaves its marker in
+    processing_extractions/, never in pending_extractions/. Checking only the
+    pending queue meant the launcher returned early and the orphan waited for
+    whenever a *new* session next happened to start — which, for the last tab
+    of the day, is the exact wait this whole feature exists to remove.
+    """
+    _install_plugin(drainkit)
+    _strand_marker(drainkit)
+    # Deliberately nothing in pending_extractions/.
+
+    d = _run(drainkit, "--shell", "-c", "true")
+
+    assert d.launch.status == 0, d.launch.output
+    assert d.ran
+
+
+def test_an_empty_pending_dir_alongside_an_orphan_still_drains(drainkit):
+    """Guards the glob subtlety.
+
+    Without nullglob an unmatched glob stays literal, so testing only the first
+    array element sees the literal pattern whenever pending_extractions/ is the
+    empty one — and reports "no work" while an orphan sits in the next
+    directory. Creating the empty dir makes that ordering explicit.
+    """
+    _install_plugin(drainkit)
+    (drainkit.workspace / ".multiplai" / "data" / "pending_extractions").mkdir(
+        parents=True, exist_ok=True
+    )
+    _strand_marker(drainkit)
+
+    d = _run(drainkit, "--shell", "-c", "true")
+
+    assert d.launch.status == 0, d.launch.output
+    assert d.ran
+
+
+def test_both_queues_empty_means_no_drain(drainkit):
+    """The saving must survive the widened check: empty dirs are not work."""
+    _install_plugin(drainkit)
+    for name in ("pending_extractions", "processing_extractions"):
+        (drainkit.workspace / ".multiplai" / "data" / name).mkdir(
+            parents=True, exist_ok=True
+        )
 
     d = _run(drainkit, "--shell", "-c", "true", expect_drain=False)
 

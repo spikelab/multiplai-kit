@@ -35,6 +35,13 @@ public repo has shipped without in-tree memory hooks from day one (see the
   to ship the script (0.11.0+). Any of them missing and you simply get the old
   behaviour — drained at the next session start.
 
+  It also **repairs extractions that were interrupted**. When a container is
+  torn down while an extraction is still running — which is the ordinary way a
+  session ends — the child dies with it and leaves its marker behind, mid-flight
+  rather than queued. The launcher counts that as work too, so the write-up is
+  recovered on the next exit instead of waiting for whenever a new session
+  happens to start.
+
   One host-side detail worth knowing about: the drain authenticates with your
   existing credentials by **symlinking** `~/.claude-container/.credentials.json`
   to the `credentials.json` beside it (Claude Code looks for the dotted name).

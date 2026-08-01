@@ -128,7 +128,9 @@ What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings
 
 **Hook protocol:** Hooks receive JSON on stdin, write JSON to stdout. See Claude Code docs for the schema per event type.
 
-**Key constraint (plugin side):** SessionEnd hooks are killed within seconds — they cannot run long-running scripts. The plugin uses the deferred pattern (write a marker at SessionEnd, process at next SessionStart via a detached subprocess). See the plugin's `scripts/session_end.py` and `scripts/extract_learnings.py`.
+**Key constraint (plugin side):** SessionEnd hooks are killed within seconds — they cannot run long-running scripts. The plugin uses the deferred pattern: write a marker at SessionEnd, process it later via a detached subprocess. See the plugin's `scripts/session_end.py` and `scripts/extract_learnings.py`.
+
+**The kit is one of the two drains.** Processing "later" used to mean the next `SessionStart`, which is why closing the last tab of the day left its write-up until the next session. `post_exit_drain()` in `claude.sh` now runs the plugin's `scripts/drain_extractions.py` on the host once the container has exited — it cannot be done in-container, because `docker run --rm` takes any detached child down with PID 1. Both paths call the same `lib/extraction_drain.py`, so the dequeue (an atomic rename) is race-safe and the two cannot diverge. The launcher's decision logic — when it fires, what environment it hands the child, that it never changes the exit status — is pinned by `evals/unit/test_claude_sh_drain.py` against a stub `uv`; whether extraction then succeeds depends on a real container and host OAuth, neither of which exists in CI.
 
 **Testing the in-tree hook locally:**
 ```bash

@@ -169,7 +169,7 @@ BuildMe is a deterministic Python pipeline shipped by the `multiplai-dev` plugin
 # Session Lifecycle (Hooks)
 - **Session diary** written to `.multiplai/diary/YYYY-MM-DD.md` — a per-day narrative (what happened, decisions, rationale).
 - **Learnings** captured to `.multiplai/learnings/` — pending insights to be processed into memory files.
-- **Deferred extraction:** `Stop` is a lightweight checkpoint; heavy LLM diary/learnings extraction never runs inside a kill-within-seconds hook. `SessionEnd`/`PreCompact` write a marker, and the next `SessionStart` drains the queue via a detached subprocess.
+- **Deferred extraction:** `Stop` is a lightweight checkpoint; heavy LLM diary/learnings extraction never runs inside a kill-within-seconds hook. `SessionEnd`/`PreCompact` write a marker, and a drain runs the extraction later as a detached subprocess. Two things drain, through one shared implementation: `claude.sh` on the host once the container exits (so the last tab of the day is written up that evening), and the next `SessionStart` as the fallback when the launcher couldn't. Dequeue is an atomic rename, so both firing at once is safe.
 - **First reply rule:** If the SessionStart hook reports pending learnings (the "N unprocessed learnings" nudge), mention it to the user in your first response. The nudge lands in a system-reminder that only you see — the user cannot see it, so you must surface it.
 
 # Nudge Protocol

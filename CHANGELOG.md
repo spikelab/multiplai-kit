@@ -17,6 +17,22 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **The status line now carries a fleet reading.** If you run several Claude
+  Code tabs at once, every one of them ends with something like
+  `6 fronts · 2 need you · oldest 3d · 1 collision` — how many sessions are
+  live, how many are waiting on you, how long the quietest has been quiet, and
+  how many files two live sessions are both holding. It is ambient: no
+  thresholds, no warnings, nothing to dismiss.
+
+  It costs one read of one small file. The multiplai-context plugin (v0.12.0+)
+  precomputes the line into `$WORKSPACE/.multiplai/data/fleet.txt`; the status
+  line only displays it, so nothing is scanned or summarized per prompt
+  render. Without that plugin — or without `WORKSPACE`, or with no session
+  live — the segment renders nothing and the rest of the line is unchanged.
+
+  The full version of the same reading, one entry per agent with intent, next
+  action, files and collisions, is `.multiplai/data/AGENTS.md`.
+
 - **`GH_TOKEN_APP` — GitHub App authentication, as an alternative to a PAT**
   (macOS + host bridge). Set `GH_TOKEN_APP=<app>` in `.env` or an
   `env.<profile>` and the session authenticates `gh` and `git` off a fresh

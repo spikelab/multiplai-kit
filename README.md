@@ -306,7 +306,7 @@ All of the following is the **`multiplai-context` plugin** — summarized here; 
 
 Heavy LLM extraction never runs inside a kill-within-seconds hook — it's deferred via a marker queue (`data/pending_extractions/`) and run by `extract_learnings.py` as a detached subprocess.
 
-Two things drain that queue, through the same code so they cannot drift apart: the next `SessionStart` in any project, and — since the queue would otherwise sit untouched from the moment you close your last tab until you open the next one — `claude.sh` itself, on the host, right after the container exits. The launcher half needs `uv` on your PATH and `multiplai-context` 0.11.0+; without either you get the old session-start-only behaviour.
+Two things drain that queue, through the same code so they cannot drift apart: the next `SessionStart` in any project, and — since the queue would otherwise sit untouched from the moment you close your last tab until you open the next one — `claude.sh`, which launches a disposable, detached drain container (same image as the session, with `drain_extractions.py` as its process) right after a **container-mode** session exits. The host never executes plugin code itself — it only checks whether markers exist and starts the container; script resolution happens inside. The launcher half needs `multiplai-context` 0.11.0+; without it — or for `--local`/bare sessions and hub driver containers, which never return to the launcher — you get the old session-start-only behaviour.
 
 ### How It Learns
 
@@ -316,8 +316,10 @@ Session conversation
 SessionEnd / PreCompact writes a marker  (instant — no LLM in the hook)
     ↓
 a drain spawns extract_learnings.py (detached) → diary + learnings
-  · claude.sh, on the host, once the container exits — same evening
-  · or the next SessionStart, if the launcher couldn't (no uv, older plugin)
+  · claude.sh, via a disposable drain container, once the session
+    container exits — same evening
+  · or the next SessionStart, if the launcher couldn't (older plugin,
+    or a --local / bare / driver session that never returns to it)
     ↓
 .multiplai/learnings/*.md   (pending — per-day)
     ↓

@@ -938,47 +938,69 @@ filter_resume_args() {
 # SessionStart in any project — so closing your last tab on a Friday evening
 # produced Friday's diary entry on Monday morning.
 #
-# It cannot be done in-container: `docker run --rm` tears the container down
-# when PID 1 exits, taking any detached child with it. So the launcher runs it
-# here, on the host, right after the container is gone — no daemon, no timer,
-# and it fires exactly when a marker was just written.
+# The session container itself can't do it — `docker run --rm` tears the
+# container down when PID 1 exits, taking any detached child with it. And the
+# host must not: an earlier design ran the plugin's drain_extractions.py
+# directly on the Mac, which meant executing code resolved from
+# installed_plugins.json / the plugin cache — state that lives in the
+# rw-mounted dotfiles dir and is therefore writable by in-container code. A
+# compromised session could plant a script the host would then run with the
+# launcher's environment. That design was rejected (2026-08-02): no claude —
+# and no plugin-resolved code — runs on the host.
+#
+# So the launcher's only job here is deciding WHETHER to launch (markers
+# present?) and assembling a `docker run`: a disposable, detached container
+# from the SAME image the session just ran in, with the drain as its process.
+# Resolving which script to run happens inside that container — the trust
+# domain designed to execute plugin state.
+#
+# Scope: this fires for container-mode sessions only. `--local` and in-container
+# bare sessions, and hub `driver` containers, all `exec` and never return here —
+# those still drain at the next SessionStart, as before.
 #
 # Strictly best-effort and strictly silent. Every unmet precondition is a
 # `return 0`, and the whole call is `|| true`: `exit $DOCKER_STATUS` below is
 # documented behaviour with tests on it, and a diary entry is never worth
 # changing what the launcher reports about the session.
 
-# Resolve the installed plugin's scripts/ directory. The install path is
-# recorded in Claude Code's own manifest; the fallback picks the most recently
-# installed copy in the plugin cache, which is the same answer without jq.
-# Both can come up empty (plugin not installed, or an older version that
-# predates the script) — the caller treats that as "nothing to do".
-resolve_drain_script() {
-    local manifest="$DOTFILES_DIR/plugins/installed_plugins.json"
-    local install_path=""
-    if [ -f "$manifest" ] && command -v jq >/dev/null 2>&1; then
-        install_path=$(jq -r '
-            .plugins // {}
-            | to_entries[]
-            | select(.key | startswith("multiplai-context@"))
-            | .value[0].installPath // empty
-        ' "$manifest" 2>/dev/null | head -n 1)
-        if [ -n "$install_path" ] && [ -f "$install_path/scripts/drain_extractions.py" ]; then
-            printf '%s\n' "$install_path/scripts/drain_extractions.py"
-            return 0
-        fi
-    fi
-    local newest=""
-    newest=$(ls -t "$DOTFILES_DIR"/plugins/cache/*/multiplai-context/*/scripts/drain_extractions.py \
-        2>/dev/null | head -n 1)
-    [ -n "$newest" ] && printf '%s\n' "$newest"
-    return 0
-}
+# The drain container's command. Runs under the image's bash; every $var here
+# is a CONTAINER-side expansion (quoted heredoc — the host expands nothing).
+#
+# Resolution mirrors what the in-container SessionStart drain gets from Claude
+# Code: the manifest's installPath for the installed multiplai-context, exactly
+# — no newest-in-cache fallback, so a rolled-back install can never run a
+# newer cached version against its queue. Plugin missing, too old to ship the
+# script, or no jq/uv in the image: silent exit 0, the queue drains at the
+# next SessionStart as before.
+#
+# --wait is load-bearing: drain_extractions.py normally fires detached
+# extraction children and exits, but this container is `--rm` — PID 1 exiting
+# would tear it down, children and all. --wait keeps the drain in the
+# foreground until every child has finished.
+DRAIN_CONTAINER_CMD=$(cat <<'DRAIN_EOF'
+command -v jq >/dev/null 2>&1 || exit 0
+command -v uv >/dev/null 2>&1 || exit 0
+manifest="$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json"
+[ -f "$manifest" ] || exit 0
+install_path=$(jq -r '
+    .plugins // {}
+    | to_entries[]
+    | select(.key | startswith("multiplai-context@"))
+    | .value[0].installPath // empty
+' "$manifest" 2>/dev/null | head -n 1)
+[ -n "$install_path" ] || exit 0
+script="$install_path/scripts/drain_extractions.py"
+[ -f "$script" ] || exit 0
+exec uv run --no-project "$script" --wait --data-dir "$WORKSPACE/.multiplai/data"
+DRAIN_EOF
+)
 
 post_exit_drain() {
     local data_dir="$WORKSPACE/.multiplai/data"
 
-    # Only spend a process when there is actually something to do.
+    # Only spend a container when there is actually something to do. Marker
+    # filenames are the whole read — the host treats the queue strictly as
+    # data and never opens, parses, or resolves anything from it.
     #
     # Both queues count. A marker sitting in processing_extractions/ is not
     # necessarily live work: a container torn down mid-extraction (which is the
@@ -1000,44 +1022,51 @@ post_exit_drain() {
     done
     [ -n "$work" ] || return 0
 
-    # No uv, no PEP 723 script. Silent — a host without uv is a supported
-    # configuration, it just drains at the next SessionStart as before.
-    command -v uv >/dev/null 2>&1 || return 0
+    # Defensive: this point is only reached in container mode, so docker and
+    # the image were both present at launch — but "were" is not "are", and
+    # either going missing mid-session must stay silent, not error at exit.
+    command -v docker >/dev/null 2>&1 || return 0
+    docker image inspect "$IMAGE_NAME" >/dev/null 2>&1 || return 0
 
-    local script
-    script=$(resolve_drain_script)
-    [ -n "$script" ] || return 0
+    # Two launchers exiting at once may both reach this point and both launch
+    # a drain container. Fine: the dequeue in the plugin's lib/extraction_drain
+    # is an atomic os.rename, so each marker is processed by exactly one of
+    # them and the rename loser just moves on — no host-side lock needed.
+    # $$ keeps a same-second exit from failing the second `docker run` on a
+    # duplicate --name; even that loss would be benign (the winner drains the
+    # shared queue).
+    local drain_name
+    drain_name="multiplai-drain-$(date +%Y%m%d%H%M%S)-$$"
 
-    # Point the Agent SDK at the LIVE credentials — never a copy. The CLI
-    # refreshes the OAuth token in place, so a copy goes stale and then fails
-    # auth. Claude Code reads $CLAUDE_CONFIG_DIR/.credentials.json, but the
-    # host file is credentials.json (no leading dot) — the container gets it
-    # via a renaming bind mount, which is not available here. Bridge the two
-    # names with a symlink beside the real file; a symlink still resolves to
-    # the same inode after every in-place refresh.
-    local creds_dir creds_base creds_link
-    creds_dir=$(dirname "$CREDS_FILE")
-    creds_base=$(basename "$CREDS_FILE")
-    if [ "$creds_base" != ".credentials.json" ]; then
-        creds_link="$creds_dir/.credentials.json"
-        if [ ! -e "$creds_link" ] && [ ! -L "$creds_link" ]; then
-            ln -s "$creds_base" "$creds_link" 2>/dev/null || return 0
-        fi
-    fi
-
-    # WORKSPACE is what makes the diary land in the workspace rather than
-    # silently in ~/.multiplai/ — the plugin resolves every output path from
-    # it (pluginConfigs sets workspace_dir empty, so the env var is the live
-    # answer on both sides). --data-dir alone would fix only the queue's
-    # location, not the diary's.
+    # Deliberately NOT the session container's plumbing:
+    #   * mounts are only what the drain reads and writes — the workspace
+    #     (queue in, diary/learnings out), the config dir (plugin manifest +
+    #     cache, session transcripts under projects/), and the same renaming
+    #     credentials bind a session gets, pointing the Agent SDK at the LIVE
+    #     OAuth file (never a copy — the CLI refreshes the token in place).
+    #     No kit mount, no kit venv, no SSH agent, no CLI dir.
+    #   * env is exactly two variables, both non-secret paths. None of the
+    #     .env sweep (ENV_ARGS) and none of the CLAUDE_PLUGIN_OPTION_* pass-
+    #     through reach it — in particular CLAUDE_PLUGIN_OPTION_anthropic_api_key
+    #     cannot arrive even if .env sets one, so the drain always runs on the
+    #     OAuth-backed Agent SDK and never bills a separate API key. WORKSPACE
+    #     is what routes the diary into the workspace instead of ~/.multiplai/.
     #
-    # CLAUDE_PLUGIN_OPTION_anthropic_api_key is deliberately NOT exported: its
-    # absence is what keeps create_client() on the OAuth-backed Agent SDK
-    # rather than billing a separate API key.
-    WORKSPACE="$WORKSPACE" CLAUDE_CONFIG_DIR="$creds_dir" \
-        nohup uv run --no-project "$script" --data-dir "$data_dir" \
-        >/dev/null 2>&1 </dev/null &
-    disown 2>/dev/null || true
+    # -d detaches the CLIENT immediately (the launcher's exit is never delayed
+    # by the multi-minute extraction); --rm reaps the container when the drain
+    # finishes. Stdio is fully detached; failure to launch is silent by design.
+    docker run -d --rm \
+        --name "$drain_name" \
+        -v "$WORKSPACE:$WORKSPACE" \
+        -v "$DOTFILES_DIR:$DOTFILES_DIR" \
+        -v "$CREDS_FILE:$DOTFILES_DIR/.credentials.json" \
+        -e WORKSPACE="$WORKSPACE" \
+        -e CLAUDE_CONFIG_DIR="$DOTFILES_DIR" \
+        --cap-drop=ALL \
+        --security-opt=no-new-privileges \
+        "$IMAGE_NAME" \
+        bash -c "$DRAIN_CONTAINER_CMD" \
+        >/dev/null 2>&1 </dev/null || return 0
     return 0
 }
 

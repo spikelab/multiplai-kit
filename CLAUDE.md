@@ -113,6 +113,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 | `evals/unit/test_guard_destructive.py` | PreToolUse destructive-command guard |
 | `evals/unit/test_log_retention.py` | Log rotation/retention helper |
 | `evals/unit/test_gh_app_hooks.py` | GitHub App SessionStart/PreToolUse hooks (stub `gh-tok` + stub `gh`) |
+| `evals/unit/test_claude_sh_exit_marker.py` | The `<sid>.exited` marker written when a session container dies (stub `docker` plays the container) |
 
 **The memory / routing / learnings evals are gone** — they tested the retired in-tree hooks and were removed with them. Those mechanisms now live in the `multiplai-context` plugin, which has its own `tests/` (run from the plugin dir). Threshold for the kit tests: 100% (any failure is a bug).
 
@@ -129,6 +130,21 @@ What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings
 **Hook protocol:** Hooks receive JSON on stdin, write JSON to stdout. See Claude Code docs for the schema per event type.
 
 **Key constraint (plugin side):** SessionEnd hooks are killed within seconds — they cannot run long-running scripts. The plugin uses the deferred pattern: write a marker at SessionEnd, process it later via a detached subprocess. See the plugin's `scripts/session_end.py` and `scripts/extract_learnings.py`.
+
+**The launcher is the only thing that can see a session die.** Hooks report from
+inside a session, so a container killed before `SessionEnd` fires — reboot,
+`docker kill`, OOM, closing the tab, all routine under `--rm` — leaves a registry
+entry that looks live forever, and the plugin's fleet view reads it as an agent
+waiting on you. After `docker run` returns, `claude.sh` writes an empty
+`$WORKSPACE/.multiplai/data/sessions/<sid>.exited` beside the entry (same
+hostname lookup the hub take-back uses). A **marker, not an `end` event written
+into the JSON**: the host may have no `jq`, and a second writer of registry state
+is exactly the drift the entry format prevents — outside observers leave markers
+(the hub's `.adopt` is the same convention) and the plugin owns the JSON, clearing
+this one on the session's next event. The filename is a contract with
+`multiplai-context`'s `session_registry.EXITED_SUFFIX`; renaming it here turns the
+mechanism off silently, which is why `evals/unit/test_claude_sh_exit_marker.py`
+asserts on the shipped source as well as the behaviour.
 
 **The kit is one of the two drains.** Processing "later" used to mean the next `SessionStart`, which is why closing the last tab of the day left its write-up until the next session. `post_exit_drain()` in `claude.sh` now launches a disposable drain container (same image, `docker run -d --rm`, `drain_extractions.py --wait` as its process) once a container-mode session has exited. The host never executes plugin-resolved code — an earlier host-side design was rejected because the plugin manifest/cache are container-writable; the launcher only checks marker filenames and assembles the `docker run`, and script resolution happens inside the container. `--wait` is load-bearing: the session container can't drain itself because `--rm` takes detached children down with PID 1, and the drain container avoids the same fate by staying in the foreground until its children finish. `--local`/bare and hub driver sessions `exec` and never reach the drain. Both drain paths call the same `lib/extraction_drain.py`, so the dequeue (an atomic rename) is race-safe and the two cannot diverge — which is also why two launchers exiting at once need no host-side lock. The launcher's decision logic — when it fires, the drain container's exact mounts and two-variable env (no `.env` secrets, no API key), the in-container resolution payload, that it never changes the exit status — is pinned by `evals/unit/test_claude_sh_drain.py` against a stub `docker`; whether extraction then succeeds depends on a real docker daemon and host OAuth, neither of which exists in CI.
 

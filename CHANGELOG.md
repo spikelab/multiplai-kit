@@ -15,6 +15,33 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Fixed
+
+- **The fleet reading in the status line counted sessions that were long
+  dead.** It read `36 fronts · 5 need you · oldest 19d · 9 collisions` over a
+  fleet of one running session — and the numbers were right, they were just
+  describing a graveyard. The registry that feeds them is written by the
+  `multiplai-context` plugin's hooks, and a hook can only ever report from
+  *inside* a session. A container killed before its `SessionEnd` could fire
+  — reboot, `docker kill`, OOM, or simply closing the tab, all routine with
+  `--rm` — left an entry whose last recorded event was a Notification from
+  two weeks ago, which reads exactly like a live agent waiting on you.
+
+  `claude.sh` is the only observer standing outside the container at the
+  moment it dies, so it now writes an empty `<session-id>.exited` file beside
+  the registry entry once `docker run` returns. A marker rather than an edit
+  to the entry itself: the host may have no `jq`, and a second writer of
+  registry *state* is the drift that entry format exists to prevent — this is
+  the same convention the multiplai hub already uses for `.adopt`. The plugin
+  reads the marker as *ended* and clears it on the session's next event, so a
+  hub take-back that resumes the session un-marks itself.
+
+  Best-effort throughout: no registry (plugin not installed), no matching
+  entry, or an unwritable directory all leave the exit exactly as it was, and
+  the exit status `claude.sh` reports never changes. **Needs
+  `multiplai-context` ≥ 0.15.1** to be read — with an older plugin the marker
+  is written and ignored.
+
 ### Added
 
 - **Your last session of the day now gets written up that evening, not the next

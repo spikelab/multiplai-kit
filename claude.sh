@@ -1114,9 +1114,10 @@ while :; do
     # Shell mode runs bash — there is no claude session to adopt.
     [[ "$MODE" == "shell" ]] && break
 
-    # Map this container back to its session via the registry, then look for
-    # an adoption marker. Every step is best-effort: no registry (plugin not
-    # installed), no entry, or no marker all mean "normal exit".
+    # Map this container back to its session via the registry, then record
+    # that the container exited and look for an adoption marker. Every step is
+    # best-effort: no registry (plugin not installed), no entry, or no marker
+    # all mean "normal exit".
     # Newest entry by mtime wins (the registry refreshes hostname on every
     # event, so the just-ended session is the most recently updated match);
     # the hostname match is whitespace-tolerant, not coupled to the plugin's
@@ -1136,6 +1137,26 @@ while :; do
     # SID is a filename from a container-writable dir and is interpolated
     # into the hub URL and `--resume` — accept only canonical UUIDs.
     [[ "$SID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || break
+
+    # Record that this session's process is gone. Hooks can only report from
+    # *inside* a session, so a container killed before SessionEnd could fire —
+    # reboot, `docker kill`, OOM, or simply closing the tab, all routine with
+    # `--rm` — leaves an entry whose last event is a week-old Notification.
+    # The fleet view then reads it as a live agent waiting on you; against the
+    # real registry that inflated "36 fronts, 5 need you" out of one running
+    # session. This line is the only place in the system that can tell the
+    # difference, because it is the only observer standing outside the
+    # container at the moment it dies.
+    #
+    # An empty marker file, not an `end` event written into the entry: the
+    # host may have no `jq`, and a second writer of registry *state* is
+    # exactly the drift the JSON entry format exists to prevent. Outside
+    # observers leave markers (the hub's `.adopt` is the same convention) and
+    # the plugin owns the JSON — it clears this one on the next in-session
+    # event, so a take-back resume below un-marks itself. Best-effort: a
+    # read-only or vanished registry dir is not a reason to fail an exit.
+    : > "$SESSIONS_DIR/$SID.exited" 2>/dev/null || true
+
     MARKER="$SESSIONS_DIR/$SID.adopt"
     [ -f "$MARKER" ] || break
 

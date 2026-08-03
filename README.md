@@ -301,10 +301,12 @@ All of the following is the **`multiplai-context` plugin** — summarized here; 
 | `SessionStart` | `session_start.py` | Init session state; drain deferred extractions; emit dream-due nudge |
 | `UserPromptSubmit` | `context_manager.py` | Route the prompt and inject relevant memory |
 | `Stop` | `session_stop.py` | Lightweight checkpoint |
-| `SessionEnd` | `session_end.py` | Write a deferred-extraction marker for the next session to process |
+| `SessionEnd` | `session_end.py` | Write a deferred-extraction marker for a drain to pick up |
 | `PreCompact` | `pre_compact.py` | Enqueue a deferred-extraction marker; clear the cooldown map |
 
-Heavy LLM extraction never runs inside a kill-within-seconds hook — it's deferred via a marker queue (`data/pending_extractions/`) and processed by `extract_learnings.py` as a detached subprocess from the next `SessionStart`.
+Heavy LLM extraction never runs inside a kill-within-seconds hook — it's deferred via a marker queue (`data/pending_extractions/`) and run by `extract_learnings.py` as a detached subprocess.
+
+Two things drain that queue, through the same code so they cannot drift apart: the next `SessionStart` in any project, and — since the queue would otherwise sit untouched from the moment you close your last tab until you open the next one — `claude.sh`, which launches a disposable, detached drain container (same image as the session, with `drain_extractions.py` as its process) right after a **container-mode** session exits. The host never executes plugin code itself — it only checks whether markers exist and starts the container; script resolution happens inside. The launcher half needs `multiplai-context` 0.11.0+; without it — or for `--local`/bare sessions and hub driver containers, which never return to the launcher — you get the old session-start-only behaviour.
 
 ### How It Learns
 
@@ -313,7 +315,11 @@ Session conversation
     ↓
 SessionEnd / PreCompact writes a marker  (instant — no LLM in the hook)
     ↓
-next SessionStart spawns extract_learnings.py (detached) → diary + learnings
+a drain spawns extract_learnings.py (detached) → diary + learnings
+  · claude.sh, via a disposable drain container, once the session
+    container exits — same evening
+  · or the next SessionStart, if the launcher couldn't (older plugin,
+    or a --local / bare / driver session that never returns to it)
     ↓
 .multiplai/learnings/*.md   (pending — per-day)
     ↓

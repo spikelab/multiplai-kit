@@ -308,6 +308,36 @@ Heavy LLM extraction never runs inside a kill-within-seconds hook — it's defer
 
 Two things drain that queue, through the same code so they cannot drift apart: the next `SessionStart` in any project, and — since the queue would otherwise sit untouched from the moment you close your last tab until you open the next one — `claude.sh`, which launches a disposable, detached drain container (same image as the session, with `drain_extractions.py` as its process) right after a **container-mode** session exits. The host never executes plugin code itself — it only checks whether markers exist and starts the container; script resolution happens inside. The launcher half needs `multiplai-context` 0.11.0+; without it — or for `--local`/bare sessions and hub driver containers, which never return to the launcher — you get the old session-start-only behaviour.
 
+#### Telling the plugin a session is over
+
+The hooks above maintain a **session registry** under
+`$WORKSPACE/.multiplai/data/sessions/`, which the plugin's fleet view reads to
+tell you which of your sessions needs you. There is a gap in it that no hook can
+close: a hook is code running *inside* a session, so a session cannot report its
+own death. Only a clean `/exit` fires `SessionEnd`; a container killed by a
+reboot, a `docker kill`, the OOM killer, or simply closing the terminal — all
+routine under `docker run --rm` — leaves an entry whose last recorded event is
+whatever happened before it died. A Notification from last Tuesday then looks
+exactly like an agent waiting on you right now.
+
+`claude.sh` is the only observer standing outside the container at the moment it
+dies, so once `docker run` returns it writes an empty
+`sessions/<session-id>.exited` beside that session's entry (found by matching the
+container name it just assigned). The plugin reads the marker as *ended* and
+clears it on the session's next event, so a hub take-back that resumes the
+session un-marks itself.
+
+It is a **marker, not an edit to the entry**: the host may have no `jq`, and a
+second writer of registry *state* is how two stores start disagreeing silently —
+so anything outside a session leaves a one-bit file and the plugin owns the JSON
+(the same convention the hub already uses for `.adopt`). Best-effort throughout:
+no registry, no matching entry, or an unwritable directory all leave the exit
+untouched, and the status `claude.sh` reports never changes.
+
+Needs `multiplai-context` 0.15.1+ to be read. The full state model — every field,
+who writes it, and how each way of stopping a session is detected — is documented
+once, in the plugin: [Session accounting](https://github.com/spikelab/multiplai-cc-mktplace/blob/main/plugins/multiplai-context/README.md#session-accounting).
+
 ### How It Learns
 
 ```

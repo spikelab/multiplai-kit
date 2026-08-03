@@ -314,11 +314,11 @@ The hooks above maintain a **session registry** under
 `$WORKSPACE/.multiplai/data/sessions/`, which the plugin's fleet view reads to
 tell you which of your sessions needs you. There is a gap in it that no hook can
 close: a hook is code running *inside* a session, so a session cannot report its
-own death. Only a clean `/exit` fires `SessionEnd`; a container killed by a
-reboot, a `docker kill`, the OOM killer, or simply closing the terminal — all
-routine under `docker run --rm` — leaves an entry whose last recorded event is
-whatever happened before it died. A Notification from last Tuesday then looks
-exactly like an agent waiting on you right now.
+own death. Only a clean quit fires `SessionEnd`; a container killed by a
+`docker kill`, the OOM killer, or a crash — all routine under `docker run --rm`
+— leaves an entry whose last recorded event is whatever happened before it died.
+A Notification from last Tuesday then looks exactly like an agent waiting on you
+right now.
 
 `claude.sh` is the only observer standing outside the container at the moment it
 dies, so once `docker run` returns it writes an empty
@@ -326,6 +326,12 @@ dies, so once `docker run` returns it writes an empty
 container name it just assigned). The plugin reads the marker as *ended* and
 clears it on the session's next event, so a hub take-back that resumes the
 session un-marks itself.
+
+**The launcher has to survive to write it**, which bounds what this can catch:
+a reboot or a closed terminal kills `claude.sh` together with the container (the
+script installs no `HUP`/`TERM` trap), so those leave no marker and the entry
+ages out on the plugin's long cutoff instead. A clean quit sets both an `end`
+event and a marker — they agree, and the plugin treats them identically.
 
 It is a **marker, not an edit to the entry**: the host may have no `jq`, and a
 second writer of registry *state* is how two stores start disagreeing silently —

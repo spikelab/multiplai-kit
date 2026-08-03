@@ -132,12 +132,17 @@ What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings
 **Key constraint (plugin side):** SessionEnd hooks are killed within seconds — they cannot run long-running scripts. The plugin uses the deferred pattern: write a marker at SessionEnd, process it later via a detached subprocess. See the plugin's `scripts/session_end.py` and `scripts/extract_learnings.py`.
 
 **The launcher is the only thing that can see a session die.** Hooks report from
-inside a session, so a container killed before `SessionEnd` fires — reboot,
-`docker kill`, OOM, closing the tab, all routine under `--rm` — leaves a registry
-entry that looks live forever, and the plugin's fleet view reads it as an agent
-waiting on you. After `docker run` returns, `claude.sh` writes an empty
+inside a session, so a container killed before `SessionEnd` fires — `docker
+kill`, OOM, a crash, all routine under `--rm` — leaves a registry entry that
+looks live forever, and the plugin's fleet view reads it as an agent waiting on
+you. After `docker run` returns, `claude.sh` writes an empty
 `$WORKSPACE/.multiplai/data/sessions/<sid>.exited` beside the entry (same
-hostname lookup the hub take-back uses). A **marker, not an `end` event written
+hostname lookup the hub take-back uses). **Scope, and don't overstate it in
+docs:** that line only runs if the launcher is still alive, so a reboot or a
+closed terminal — which SIGHUP/SIGTERM `claude.sh` along with the container, and
+there is deliberately no trap — writes nothing, and the entry falls back to the
+plugin's 30-day cutoff. A clean quit writes both an `end` event and a marker.
+A **marker, not an `end` event written
 into the JSON**: the host may have no `jq`, and a second writer of registry state
 is exactly the drift the entry format prevents — outside observers leave markers
 (the hub's `.adopt` is the same convention) and the plugin owns the JSON, clearing

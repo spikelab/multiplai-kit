@@ -1140,8 +1140,13 @@ while :; do
 
     # Record that this session's process is gone. Hooks can only report from
     # *inside* a session, so a container killed before SessionEnd could fire —
-    # reboot, `docker kill`, OOM, or simply closing the tab, all routine with
-    # `--rm` — leaves an entry whose last event is a week-old Notification.
+    # `docker kill`, an OOM-kill, a crash, all routine with `--rm` — leaves an
+    # entry whose last event is a week-old Notification.
+    #
+    # Scope: this line needs US to be alive, so it does NOT cover a reboot or a
+    # closed terminal (both take this script down with the container; there is
+    # no HUP/TERM trap on purpose — a trap could not cover SIGKILL or a reboot
+    # anyway, so the plugin keeps a long age-out cutoff for exactly this case).
     # The fleet view then reads it as a live agent waiting on you; against the
     # real registry that inflated "36 fronts, 5 need you" out of one running
     # session. This line is the only place in the system that can tell the

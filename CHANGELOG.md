@@ -17,6 +17,52 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **Your last session of the day now gets written up that evening, not the next
+  time you open one.** The `multiplai-context` plugin defers diary/learnings
+  extraction to a marker file, because the `SessionEnd` hook is killed within
+  seconds — and until now the only thing that ever picked a marker up was the
+  *next* `SessionStart`. Close your last tab on a Friday and Friday's diary
+  entry appeared on Monday. It cannot be fixed inside the container either:
+  `docker run --rm` tears everything down when the session's process exits.
+
+  `claude.sh` now launches a **disposable drain container right after the
+  session container exits** — same image the session ran in, detached
+  (`docker run -d --rm`, named `multiplai-drain-<timestamp>-<pid>`), with the
+  plugin's `drain_extractions.py` as its process instead of claude. No daemon,
+  no timer, and only when a marker was actually written. It runs silently, and
+  it never changes the exit status `claude.sh` reports.
+
+  **Nothing plugin-resolved runs on the host — by decision, not accident.** An
+  earlier design ran the drain directly on the Mac; it was rejected because
+  that meant the host executing a script resolved from
+  `installed_plugins.json` / the plugin cache — state that is writable from
+  inside every container. The launcher now only checks for marker *filenames*
+  and assembles the `docker run`; resolving and running the script happens
+  inside the container, the trust domain built for it.
+
+  The drain container is deliberately narrower than a session: it mounts only
+  the workspace, the config dir, and the live OAuth credentials (the same
+  renaming bind a session gets — never a copy, the CLI refreshes the token in
+  place), and its environment is exactly `WORKSPACE` and `CLAUDE_CONFIG_DIR`.
+  None of your `.env` secrets are forwarded, and
+  `CLAUDE_PLUGIN_OPTION_anthropic_api_key` structurally cannot reach it — the
+  drain always runs on your existing OAuth session, never a billed API key.
+
+  Nothing to configure. It's inert unless a marker is queued and the installed
+  `multiplai-context` is new enough to ship the script (0.11.0+); otherwise
+  you simply get the old behaviour — drained at the next session start. Scope
+  worth knowing: this fires for **container-mode sessions only**. `--local` /
+  bare sessions and hub `driver` containers never return to the launcher, so
+  they still drain at the next `SessionStart`.
+
+  It also **repairs extractions that were interrupted**. When a container is
+  torn down while an extraction is still running — which is the ordinary way a
+  session ends — the child dies with it and leaves its marker behind, mid-flight
+  rather than queued. The launcher counts that as work too, so the write-up is
+  recovered on the next exit instead of waiting for whenever a new session
+  happens to start. (Two launchers exiting at once may both fire; the queue's
+  atomic-rename dequeue means each marker is processed exactly once.)
+
 - **The status line now carries a fleet reading.** If you run several Claude
   Code tabs at once, every one of them ends with something like
   `6 fronts · 2 need you · oldest 3d · 1 collision` — how many sessions are

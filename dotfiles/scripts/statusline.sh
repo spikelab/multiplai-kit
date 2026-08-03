@@ -1,6 +1,6 @@
 #!/bin/bash
 # Claude Code statusline — reads JSON from stdin, outputs formatted status
-# Shows: model | dir | git branch | context % (color-coded) | output style
+# Shows: model | dir | git branch | context % (color-coded) | output style | fleet
 
 input=$(cat)
 
@@ -12,6 +12,7 @@ RED=$'\033[31m'
 GREEN=$'\033[32m'
 YELLOW=$'\033[33m'
 CYAN=$'\033[36m'
+MAGENTA=$'\033[35m'
 SEP="${DIM}|${RST}"
 
 # Extract fields via jq
@@ -72,5 +73,39 @@ if [ -n "$style" ] && [ "$style" != "null" ] && [ "$style" != "default" ]; then
   style_info=" ${SEP} ${CYAN}${style}${RST}"
 fi
 
+# Fleet reading — how many other agents are running, and whether any of them
+# is waiting on you. Written by the multiplai-context plugin
+# (scripts/synthesize_agents.py) at every session start and again on the host
+# after the last container exits.
+#
+# The one hard rule here: this status line re-renders on every prompt, so the
+# segment is ONE read of ONE small pre-computed file. Never scan a directory,
+# never open the checkpoints, never shell out to python — the aggregation
+# already happened elsewhere. `read` is a shell builtin (no fork, unlike
+# `cat`) and inherently takes only the first line.
+#
+# Absent, empty, or no WORKSPACE (vanilla Claude Code, no kit) → render
+# nothing. There is deliberately no $HOME fallback: without WORKSPACE there
+# is no writer, so a stale $HOME/.multiplai/data/fleet.txt would render
+# forever. `-s` covers absent and empty in one test; `2>/dev/null` comes
+# BEFORE the input redirect so a race (file unreadable or deleted after the
+# `-s` check) stays off stderr — bash applies redirects left to right.
+#
+# The content is written by other sessions, so treat it defensively: strip
+# control characters (neuters ANSI/OSC escape injection) and cap the length.
+# `[[:cntrl:]]` rather than `[^[:print:]]` because under the C locale the
+# latter also strips multibyte UTF-8 (the `·` separators). Both are
+# parameter expansions — the hot path stays fork-free.
+fleet_info=""
+if [ -n "$WORKSPACE" ]; then
+  fleet_file="$WORKSPACE/.multiplai/data/fleet.txt"
+  if [ -s "$fleet_file" ]; then
+    IFS= read -r fleet 2>/dev/null < "$fleet_file"
+    fleet=${fleet//[[:cntrl:]]/}
+    fleet=${fleet:0:120}
+    [ -n "$fleet" ] && fleet_info=" ${SEP} ${MAGENTA}${fleet}${RST}"
+  fi
+fi
+
 # Assemble
-echo -n "${BOLD}${model}${RST} ${SEP} ${short_cwd}${git_info}${ctx_info}${cost_info}${style_info}"
+echo -n "${BOLD}${model}${RST} ${SEP} ${short_cwd}${git_info}${ctx_info}${cost_info}${style_info}${fleet_info}"

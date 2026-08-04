@@ -15,6 +15,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Security
+
+- **A "never print a secret value" section now ships in the always-loaded
+  `dotfiles/CLAUDE.md`.** The rule existed, but only in a memory file, and
+  memory routing is prompt-driven — so it loaded only when the prompt already
+  looked security-shaped. Every observed leak happened as a side effect of
+  unrelated work (a sprint sync, a config edit), which is exactly the case
+  retrieval-gated memory cannot cover. The section names the two allowlisted
+  safe forms (names-only, presence-test) and forbids redaction-by-regex, which
+  fails open whenever the variable *name* doesn't match the pattern keyword.
+
 ### Added
 
 - **Your last session of the day now gets written up that evening, not the next

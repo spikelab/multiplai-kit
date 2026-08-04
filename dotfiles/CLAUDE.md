@@ -220,7 +220,10 @@ Load from `$CLAUDE_CONFIG_DIR/reference/dev/` when working on relevant coding ta
 | FastAPI backend | `fastapi-best-practices.md`, `python-async-llm-patterns.md` |
 | AI/LLM integration | `python-async-llm-patterns.md`, `mlx-inference-best-practices.md` |
 | Data pipelines | `data-pipeline-patterns.md` |
-| React frontend | `bun-vite-react-best-practices.md` |
+| React SPA (Vite, no SSR) | `bun-vite-react-best-practices.md` |
+| React + Next.js App Router | `react-nextjs-best-practices.md` |
+| Django / DRF backend | `django-drf-best-practices.md` |
+| Django + React full stack | `django-drf-best-practices.md`, `react-nextjs-best-practices.md` |
 | Database setup | `database-best-practices.md` |
 | Authentication | `authentication-best-practices.md` |
 | Architecture decisions | `stage-appropriate-choices.md` |

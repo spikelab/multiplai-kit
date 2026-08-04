@@ -28,12 +28,14 @@ Claude Code agents automatically load relevant docs based on task triggers defin
 | [authentication-best-practices.md](./authentication-best-practices.md) | Sessions, JWT, OAuth, password handling, RBAC, API keys, frontend integration |
 | [docker-container-patterns.md](./docker-container-patterns.md) | Dockerfiles, layer caching, multi-stage builds, non-root users, compose |
 | [prompt-engineering.md](./prompt-engineering.md) | Prompt structure, few-shot, tool use, evaluation, LLM-judge patterns |
+| [django-drf-best-practices.md](./django-drf-best-practices.md) | Django 5.2 + DRF monolith: where logic lives, app boundaries, serializers/validation, ORM performance, Celery, Channels, MySQL migration safety, settings, security, caching, testing |
 
 ### Frontend
 
 | Document | Topics |
 |----------|--------|
-| [bun-vite-react-best-practices.md](./bun-vite-react-best-practices.md) | Bun runtime, Vite setup, React patterns, TypeScript, TanStack Query, Tailwind |
+| [react-nextjs-best-practices.md](./react-nextjs-best-practices.md) | React 19 + Next.js 15 App Router: server/client boundaries, caching, Server Actions, React Compiler, state management, MUI, auth, testing |
+| [bun-vite-react-best-practices.md](./bun-vite-react-best-practices.md) | Bun runtime, Vite setup, React patterns, TypeScript, TanStack Query, Tailwind — client-only SPA, no SSR |
 
 ### Swift / Apple Platforms
 

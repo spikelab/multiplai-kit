@@ -15,6 +15,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Removed
+
+- **The status line no longer carries a fleet reading.** The segment read a
+  one-line `$WORKSPACE/.multiplai/data/fleet.txt` precomputed by the
+  `multiplai-context` plugin; as of plugin `0.18.0` that file is retired (and
+  actively deleted if left over) in favour of the richer `/fleet-status`
+  digest and `AGENTS.md`, so the segment had nothing to display. The
+  `evals/unit/test_statusline_fleet.py` suite went with it. Update the plugin
+  to `0.18.0` alongside this pull — an older plugin would keep writing a file
+  nothing reads.
+
 ### Security
 
 - **A "never print a secret value" section now ships in the always-loaded

@@ -11,11 +11,20 @@ For a **client-only SPA** (Vite, no server rendering), use
 most of this document is about the server/client boundary, which that stack
 doesn't have.
 
-**Version anchor:** React 19.2, Next.js 15.5, TypeScript 5.7 strict.
-Next.js documentation on the web is currently versioned ahead of 15.x, and several
-caching and rendering behaviours differ between 15 and 16 — §4 labels which is
-which. **When in doubt, check the changelog for your pinned version, not the docs
-site.**
+**Version posture (as of 2026-08):** Next.js **16.2.x is the Active LTS**; **15.5.x
+is Maintenance LTS**. React 19.2. TypeScript 5.1+ required by Next 16; 5.7 is a
+sane floor.
+
+Two warnings that will save you real time:
+
+1. **A version tag on a docs page is not a release announcement.** `nextjs.org`
+   pages render with a version tag (e.g. `16.3.0`) that may be a *canary* line —
+   16.3 was still canary/preview in late July 2026. Verify against the
+   [releases page](https://github.com/vercel/next.js/releases) or a security-release
+   post, not the docs tag.
+2. **The caching model changed materially between 15 and 16.** §4 documents both
+   and labels which is which. Following a 16-era caching guide on a 15.x codebase
+   produces configs that build and then fail at runtime.
 
 ---
 
@@ -225,7 +234,113 @@ both is fine — just be deliberate about which one owns writes.
 
 ## 4. Data fetching and caching
 
-<!-- GAPFILL:caching -->
+**This is the section where version matters most.** Read the row for your version
+before writing any caching code.
+
+### The two models
+
+| | **Next.js 15.x** | **Next.js 16.x (Cache Components)** |
+|---|---|---|
+| Config | `experimental.dynamicIO`, `experimental.useCache`, `experimental.ppr` — three separate experimental flags | one `cacheComponents` flag |
+| `fetch` default | **not cached** (reversed from the Next 14 default) | dynamic by default; caching is opt-in |
+| Opt into caching | `fetch(url, { next: { revalidate: 60 } })`, `unstable_cache` | `'use cache'` + `cacheLife()` |
+| PPR | opt-in via `experimental.ppr` + `experimental_ppr` segment config | default behaviour; both flags **removed** |
+| `revalidateTag` | `revalidateTag(tag)` | `revalidateTag(tag, profile)` — the one-arg form is deprecated |
+| Read-your-writes | — | `updateTag` (Server Actions only) |
+
+Next 16 also requires **Node 20.9+**, ships Turbopack as the default bundler, and
+runs the App Router on the React 19.2 canary track.
+
+**Upgrade caveat worth knowing:** PPR in 16 works differently than in the Next 15
+canaries, and the Next docs explicitly advise teams already running PPR on a 15
+canary to **stay there** rather than upgrade. It's the one place the upgrade guide
+counsels against moving.
+
+### If you are on 15.x
+
+The mental model people carry over from Next 14 — "`fetch` is cached by default" —
+is **wrong for 15**. Caching is opt-in:
+
+```ts
+await fetch(url);                                       // not cached
+await fetch(url, { next: { revalidate: 60 } });         // cached, 60s
+await fetch(url, { next: { tags: ["bookings"] } });     // cached, tag-invalidated
+```
+
+Invalidate with `revalidateTag("bookings")` / `revalidatePath("/bookings")` from a
+Server Action or Route Handler after a write.
+
+### If you are on 16.x
+
+Caching is explicit and function-scoped:
+
+```ts
+async function getBookings(orgId: string) {
+  "use cache";
+  cacheLife("hours");
+  cacheTag(`bookings-${orgId}`);
+  return api.get(`/bookings/?org=${orgId}`);
+}
+```
+
+`'use cache'` constraints — these bite:
+
+- A cached function **cannot access `cookies()`, `headers()` or `searchParams`**,
+  transitively up the call stack. Violating this throws `next-request-in-use-cache`,
+  and the failure can pass `next build` yet blow up at runtime.
+- The default store is **in-memory per instance** — with multiple replicas behind
+  nginx, each has its own cache.
+- **Every deploy invalidates all caches**, because the build id is part of the key.
+- Unsupported with static export.
+- The `default` cacheLife profile is: stale 5 min (client), revalidate 15 min
+  (server), expire never. Name a profile explicitly rather than inheriting it by
+  accident.
+
+### Three caches, not one
+
+Regardless of version, don't collapse these:
+
+1. **Next's Data Cache** — server-side, persists across requests, what
+   `revalidate`/`'use cache'` controls.
+2. **React's `cache()`** — per-request memoization on the server. It lives for one
+   request only. Arguments are compared with `Object.is`, so passing a freshly
+   constructed object defeats it. Define the wrapped function **once** and import
+   it — calling `cache(fn)` in two modules creates two independent caches.
+3. **The client Router Cache** — the browser's cache of RSC payloads for
+   navigation. Configured via `staleTimes`; it is why a client-side back
+   navigation can show data your server just revalidated.
+
+### Fetch in Server Components; stream what's slow
+
+```tsx
+export default async function Page() {
+  // Independent — run concurrently.
+  const [summary, bookings] = await Promise.all([getSummary(), getBookings()]);
+  return (
+    <>
+      <Summary data={summary} />
+      <Suspense fallback={<TableSkeleton />}>
+        <SlowReport />          {/* streams in; doesn't block the shell */}
+      </Suspense>
+    </>
+  );
+}
+```
+
+**Layout gotcha:** a layout that reads runtime data (`cookies()`, `headers()`, an
+uncached fetch) **blocks navigation and will not fall back to a sibling
+`loading.tsx`**. Isolate that read behind its own `<Suspense>`, or move it into the
+page.
+
+### Rules
+
+- ✅ Fetch in Server Components; `Promise.all` for independent calls.
+- ✅ Opt into caching explicitly, and tag it so you can invalidate it.
+- ✅ `revalidateTag`/`revalidatePath` after every mutation that changes a cached read.
+- ✅ Wrap slow subtrees in `<Suspense>`.
+- ❌ Assuming `fetch` is cached (Next 14 muscle memory).
+- ❌ Copying a `'use cache'` snippet into a 15.x codebase.
+- ❌ Reading cookies/headers inside a cached function.
 
 ---
 
@@ -366,19 +481,181 @@ and correct with the back button — for free.
 
 ### SWR vs TanStack Query
 
-<!-- GAPFILL:state -->
+Both are good. **Pick one and never run both** — two bundles and two disconnected
+caches means a mutation through one library leaves the other showing stale data.
+
+| | SWR | TanStack Query |
+|---|---|---|
+| Size / API surface | smaller, fewer concepts | larger, more built-in |
+| Reads | `useSWR(key, fetcher)`, dedupes by key, revalidates on focus/reconnect | `useQuery`, same plus richer cache control |
+| Mutations & invalidation | `mutate()` — you wire invalidation yourself | `useMutation` + `invalidateQueries` with prefix/fuzzy key matching |
+| Pagination | manual | `useInfiniteQuery` |
+| Devtools | minimal | strong |
+
+**Default to TanStack Query for a CRUD dashboard**; use SWR when reads dominate,
+mutations are few, and you value the smaller surface. Note this head-to-head is a
+judgement call — there is no authoritative source that settles it, so it is not
+worth an argument or a migration of working code.
+
+TanStack specifics that matter against a paginated DRF API:
+
+- **`invalidateQueries` refetches active queries and marks inactive ones stale**,
+  overriding `staleTime`. Key matching is prefix-based by default (`["bookings"]`
+  invalidates `["bookings", {page: 2}]`), with `exact` and `predicate` escape
+  hatches.
+- **There is deliberately no automatic mutation→invalidation link.** For a
+  dashboard where nearly every write should refresh nearly every list, a global
+  `MutationCache.onSuccess` is the idiomatic answer — global callbacks fire before
+  per-mutation ones.
+- **`useInfiniteQuery` v5 requires `initialPageParam` and `getNextPageParam`**, and
+  DRF's `next` link maps onto it directly — return `undefined` to stop:
+
+```ts
+useInfiniteQuery({
+  queryKey: ["bookings"],
+  initialPageParam: "/bookings/",
+  queryFn: ({ pageParam }) => apiFetch<Page<Booking>>(pageParam),
+  getNextPageParam: (last) => last.next ?? undefined,   // DRF gives a full URL
+});
+```
+
+Data arrives as `data.pages` / `data.pageParams`; bound growth with `maxPages`. A
+refetch replays pages sequentially from the first — worth knowing before you build
+an infinite table over thousands of rows. **v4 docs do not apply to v5** (e.g.
+`refetchPage` is gone); check the version on any snippet you copy.
+
+### Forms hold both kinds of state
+
+A form editing server data mixes server state and client state, and the failure
+mode is a background refetch overwriting what the user is typing. TkDodo's rule:
+**initialize form state from query data once, set `staleTime: Infinity` for that
+query while the form is open**, and on successful submit invalidate and `reset()`.
 
 ---
 
 ## 8. Routing, layouts, and error handling
 
-<!-- GAPFILL:routing -->
+### File conventions
+
+| File | Role |
+|---|---|
+| `layout.tsx` | wraps a segment and persists across navigation within it — state is **not** reset |
+| `template.tsx` | like a layout but **remounts** on every navigation — use when you need state reset or an enter animation |
+| `page.tsx` | the route's own UI |
+| `loading.tsx` | Suspense fallback for the segment |
+| `error.tsx` | Error Boundary for the segment (must be a Client Component) |
+| `global-error.tsx` | catches root-layout errors; **replaces** the root layout, so it must render its own `<html>` and `<body>` |
+| `not-found.tsx` | rendered by `notFound()` and for unmatched routes |
+| `(group)/` | route group — organises files without adding a URL segment |
+
+### What `error.tsx` does *not* catch
+
+This is the part that surprises people:
+
+- **It does not wrap its own segment's `layout.tsx` or `template.tsx`.** An error
+  thrown in `app/dashboard/layout.tsx` is not caught by `app/dashboard/error.tsx`
+  — it propagates to the *parent* segment's boundary. Root layout errors need
+  `global-error.tsx`.
+- **It does not catch errors in event handlers or async code that runs after
+  render.** An `onClick` that throws goes nowhere near an Error Boundary. Handle
+  it locally, or route it through `startTransition` — errors inside a transition
+  *do* bubble to the nearest boundary.
+- Since 15.2, `global-error` also displays in development, where it used to be
+  masked by the dev overlay.
+
+```tsx
+// app/dashboard/error.tsx
+"use client";                       // required
+export default function Error({ error, reset }: { error: Error; reset: () => void }) {
+  useEffect(() => { logToSentry(error); }, [error]);
+  return <ErrorPanel onRetry={reset} />;
+}
+```
+
+In 16.x the boundary also receives a stabilized `retry` prop for re-rendering,
+with `reset` narrowed to clearing state.
+
+### Suspense and Error Boundaries are different mechanisms
+
+**Suspense handles loading. Error Boundaries handle errors.** They compose, but
+neither substitutes for the other:
+
+- A promise read via `use()` that **rejects** surfaces at the nearest Error
+  Boundary and **cannot be caught with try/catch**.
+- `React.lazy` throws to the nearest boundary if the chunk fails to load — which is
+  a real production event on a deploy that invalidates chunk hashes.
+- Suspense does **not** activate for data fetched in Effects or event handlers.
+
+So a robust segment usually needs both a `loading.tsx` (or inline `<Suspense>`) and
+an `error.tsx`.
+
+### Known rough edge
+
+Parallel routes (`@slot`) are documented as supporting independent `error` and
+`loading` states per slot, but a long-running community bug reports these being
+ignored for slot conventions. If you rely on it, verify on your version before
+building around it.
 
 ---
 
 ## 9. Forms and validation
 
-<!-- GAPFILL:forms -->
+### Return errors, don't throw them
+
+The single most important rule, and it comes from both React and Next: **model
+expected errors as return values.** A thrown error in an action cancels queued
+actions and escalates to the nearest Error Boundary — so a failed field validation
+blows away the whole page instead of showing a red message under an input.
+
+```ts
+"use server";
+export async function updateBooking(prev: State, formData: FormData): Promise<State> {
+  const parsed = BookingSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { ok: false, fieldErrors: parsed.error.flatten().fieldErrors };  // returned
+  }
+  const res = await api.patch(`/bookings/${parsed.data.id}/`, parsed.data);
+  if (!res.ok) return { ok: false, formError: await readApiError(res) };    // returned
+  revalidateTag("bookings");
+  return { ok: true };
+}
+```
+
+State and payload must be **serializable** — they cross the server boundary.
+
+### Which form approach
+
+| Approach | Use when |
+|---|---|
+| `<form action={serverAction}>` + `useActionState` | the submit is a server-side write, you want progressive enhancement, and validation feedback on submit is enough |
+| **react-hook-form + a schema resolver** | rich client-side UX — per-field validation on blur, dependent fields, dynamic arrays, wizards |
+| Controlled `useState` | genuinely trivial forms (one or two fields) |
+
+For a dashboard talking to a DRF API, react-hook-form is usually the better fit —
+the interactions are rich and there is no progressive-enhancement requirement
+behind an authenticated wall. Use Server Actions where a server-held credential
+must not reach the browser (§3).
+
+Note: the specific react-hook-form + resolver recommendation is a judgement call —
+React's docs don't compare third-party form libraries.
+
+### Validate on both sides, for different reasons
+
+- **Client-side validation is UX.** It gives fast feedback and stops obviously bad
+  submissions.
+- **Server-side validation is correctness and security.** It is not optional and
+  is not made redundant by the client check.
+- **The API's validation is the authority.** Your DRF serializer already validates;
+  the frontend schema is a convenience copy that *will* drift. Where they disagree,
+  the API wins — so always render API field errors back onto the form rather than
+  assuming your client schema caught everything.
+
+```ts
+// Map DRF's {"field": ["msg"]} onto react-hook-form
+for (const [field, msgs] of Object.entries(apiError.fields ?? {})) {
+  setError(field as Path<FormValues>, { message: msgs.join(" ") });
+}
+```
 
 ---
 
@@ -475,13 +752,140 @@ Two things to take from it:
 
 ### Where authorization belongs with a separate backend
 
-<!-- GAPFILL:auth -->
+**The API is the trust boundary. The frontend is not.**
+
+DRF makes the distinction cleanly, and it's the right mental model regardless of
+backend framework:
+
+- **Authentication** establishes identity. It "won't allow or disallow" a request —
+  it only populates `request.user` / `request.auth`.
+- **Authorization** is the permission decision, made server-side at the start of
+  the view, against a `request.user` the client **cannot forge**.
+
+So: 401 means authentication failed; 403 means an authenticated caller was denied.
+Your frontend consumes those outcomes; it does not make them.
+
+### Session vs token
+
+| | Session cookie | Token (DRF `TokenAuthentication` / JWT) |
+|---|---|---|
+| Fits | frontend and API on the same site | separate origins, mobile clients |
+| CSRF | **required** — the browser attaches the cookie automatically | not applicable in the same way; DRF enforces CSRF only for session-authenticated requests |
+| Storage | httpOnly cookie, unreadable by JS | must live somewhere the JS or the Next server can reach |
+
+DRF documents `TokenAuthentication` for client-server setups and **requires HTTPS**
+for it. Choosing tokens sidesteps the session-CSRF/SameSite interplay entirely,
+which is why it's the common choice for a separately-deployed frontend.
+
+### Handling the credential in Next
+
+**Do not put a long-lived token in `localStorage`.** Any XSS anywhere on the origin
+exfiltrates it, and it never expires from the attacker's point of view.
+
+Preferred shape for an App Router frontend:
+
+1. The browser holds an **httpOnly, `Secure`, `SameSite=Lax`** cookie set by your
+   auth route — unreadable by JavaScript.
+2. **Server Components and Server Actions read that cookie** and attach the
+   credential when calling the API, so the token never enters the client bundle.
+3. If Client Components must call the API directly, proxy through a Route Handler
+   rather than shipping the token to the browser.
+
+Where cookie auth is used cross-site, `SameSite=None; Secure` plus CORS credentials
+is required on both ends — and then CSRF protection becomes mandatory again.
+
+Note: the token-storage and refresh-flow specifics here are standard practice
+rather than claims traced to a primary source in this research — the sourced part
+is the trust-boundary and session-vs-token distinction above.
+
+### The rules
+
+- ✅ Every API endpoint authorizes independently, whatever the UI did.
+- ✅ Credentials live in httpOnly cookies or server-side only.
+- ✅ Middleware for redirects and cheap optimistic checks only.
+- ❌ Authorization decisions in the frontend.
+- ❌ Tokens in `localStorage`.
+- ❌ Trusting a `role` claim decoded client-side to gate anything that matters.
 
 ---
 
 ## 13. Testing
 
-<!-- GAPFILL:testing -->
+### The guiding principle
+
+> "The more your tests resemble the way your software is used, the more confidence
+> they can give you." — Testing Library
+
+That is not a slogan, it's a decision procedure. When choosing between two ways to
+write a test, pick the one closer to what a user does.
+
+Concretely, from Testing Library's own docs:
+
+- Utilities operate on **DOM nodes, not component instances**.
+- **`data-testid` is a fallback**, not a first choice. Query by role, label, then
+  text. If you can't find an element by role or label, that's often an
+  accessibility bug the test just caught.
+- **Don't test internal state or lifecycle methods.** Test rendered output and
+  observable behaviour.
+- Testing Library is **not a runner** — it sits on top of Jest or Vitest.
+
+### What can and cannot be unit-tested
+
+**Async Server Components cannot be unit-tested** with Vitest or Jest. Next's own
+testing guide says so and recommends **E2E for those**. Synchronous Server
+Components and all Client Components are unit-testable normally.
+
+That's the practical split:
+
+| Thing | Test with |
+|---|---|
+| Client Components, hooks, pure logic | Jest or Vitest + React Testing Library |
+| Sync Server Components | same |
+| **Async Server Components** | Playwright (E2E) |
+| Server Actions | extract the logic into a plain function and unit-test that; E2E the wiring |
+| Full auth/nav/data flows | Playwright |
+
+The Server Action lesson mirrors the Celery-task lesson on the backend: **keep the
+boundary function thin and put the logic somewhere testable.**
+
+### Jest or Vitest
+
+Next.js documents both, so either is a defensible choice.
+
+- **Staying on Jest is fine.** There is no correctness reason to migrate a working
+  Jest suite. Migration costs are real and the benefit is speed.
+- **Choose Vitest for a new project** — faster, ESM-native, and it shares Vite
+  config. Setup needs `@vitejs/plugin-react`, `jsdom`, and `vite-tsconfig-paths`.
+
+This is a preference call; no authoritative source ranks them for App Router.
+
+### E2E with Playwright
+
+- **Isolate every test.** No shared mutable state between tests.
+- **Reuse authenticated state via `storageState`** rather than logging in through
+  the UI in every test — it is the single biggest E2E speed win.
+- Test the handful of flows that would be a crisis if broken (login, the primary
+  create/edit path, billing). E2E is expensive; spend it where failure costs most.
+
+### Mocking the API
+
+Mock at the **network boundary**, not by stubbing your own modules — a mocked
+`apiFetch` tests your mock, while a mocked network response tests your real client
+code including error handling and parsing. MSW is the usual tool.
+
+Keep fixtures honest: generate them from real API responses (or from the OpenAPI
+schema) so they drift when the contract drifts.
+
+### What not to test
+
+- **Don't test the framework.** No tests for "does `useState` update", "does Next
+  route to `/about`".
+- **Don't test implementation details.** If a refactor that changes no behaviour
+  breaks the test, the test was wrong.
+- **Don't snapshot large component trees.** Nobody reviews a 400-line snapshot
+  diff; they run `-u` and move on.
+- **Don't chase a coverage number.** Coverage tells you what's untested, not what's
+  well tested.
 
 ---
 

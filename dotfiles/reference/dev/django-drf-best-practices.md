@@ -668,29 +668,394 @@ files → release again.
 `migrate --fake-initial`, which is only safe if the models haven't changed since
 the tables were created and nobody hand-edited the schema.
 
+### Large tables: know which ALTERs are cheap
+
+Before assuming you need a tool, check whether InnoDB can do it natively:
+
+| Algorithm | Cost | Notes |
+|---|---|---|
+| `INSTANT` | metadata only | add column (8.0.12+), drop column (8.0.29+). **Not** available on `ROW_FORMAT=COMPRESSED`, FULLTEXT-indexed or temp tables; capped at 64 row versions before a rebuild is forced |
+| `INPLACE` | rebuilds without a temp table | DML usually allowed |
+| `COPY` | full copy | **blocks DML** — this is the one that takes the site down |
+
+Django doesn't let you pick the algorithm directly; for a large table, run the DDL
+yourself and mark the migration as already-applied
+(`migrations.SeparateDatabaseAndState`), or use an external tool.
+
+### External online-schema-change tools
+
+Django provides no online-DDL strategy, and the well-known zero-downtime packages
+(`django-pg-zero-downtime-migrations`, and friends) are **PostgreSQL-oriented with
+no MySQL equivalent**. On MySQL the options are:
+
+| | **pt-online-schema-change** (Percona) | **gh-ost** (GitHub) |
+|---|---|---|
+| Mechanism | triggers + chunked copy + atomic rename | triggerless — tails the binlog (requires RBR, MySQL 5.7+) |
+| Foreign keys | supported via `--alter-foreign-keys-method` | **not supported** |
+| Resumable | yes (`--resume`) | no — if it dies, start over |
+| Throttling | pauses/aborts on `Threads_running` (25/50 defaults) or replica lag | true pause/resume, can test against a replica |
+| Managed MySQL (Cloud SQL, RDS) | trigger overhead on the primary | generally friendlier |
+
+**Rule of thumb:** foreign keys → pt-osc. No foreign keys and a managed instance →
+gh-ost. Neither integrates with Django migrations, so the workflow is: run the tool
+manually, then fake the migration.
+
+Preflight checklist for any large-table change: free disk ≥ table size, no
+long-running transactions holding metadata locks, replica lag healthy, no existing
+triggers that would collide with pt-osc.
+
+**Metadata locks are the usual surprise** — a single long-running `SELECT` or an
+idle-in-transaction connection blocks the `ALTER`, and then everything queues
+behind the `ALTER`. Check `performance_schema.metadata_locks` before you start.
+
 ---
 
 ## 9. Settings, configuration, secrets
 
-<!-- GAPFILL:settings -->
+### One settings module, environment-driven
+
+The `settings/base.py` + `settings/dev.py` + `settings/prod.py` split is the common
+pattern and the common source of "works on my machine": the environments diverge in
+ways nobody reviews, and the module that runs in production is the one least
+exercised. Prefer **a single `settings.py` whose values come from the
+environment**, with the differences between environments expressed as
+*environment variables*, not as *different code paths*.
+
+```python
+# settings.py
+import environ
+
+env = environ.Env(DEBUG=(bool, False))
+environ.Env.read_env(BASE_DIR / ".env")     # local dev only; absent in prod
+
+SECRET_KEY   = env("SECRET_KEY")             # no default → fails fast if unset
+DEBUG        = env("DEBUG")
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
+DATABASES    = {"default": env.db("DATABASE_URL")}
+CACHES       = {"default": env.cache("REDIS_URL")}
+```
+
+`django-environ` gives you the URL parsers (`env.db()`, `env.cache()`) that turn a
+single connection string into the nested dict Django wants. `pydantic-settings` is
+the alternative if you want typed validation of the whole config object; it costs
+you the URL parsers.
+
+The rules that matter more than the library choice:
+
+- **No default for a secret.** `env("SECRET_KEY")` with no fallback means a
+  misconfigured deploy crashes at import time instead of running with a known-public
+  key. A default of `"dev-insecure"` will reach production eventually.
+- **Where a `settings/` package is genuinely justified** — test settings that must
+  differ structurally (a different `DATABASES` for xdist, `MIGRATION_MODULES`
+  overrides) — keep the override module tiny and have it `from .settings import *`.
+  Everything else stays environment-driven.
+- **`DEBUG = True` must be impossible in production.** It leaks settings and SQL in
+  tracebacks and disables `ALLOWED_HOSTS` enforcement.
+- **Fail loudly on unparseable config.** A `try/except` around config reading that
+  falls back to a default converts a deploy-time error into a runtime mystery.
+
+### Secrets
+
+Environment variables are the interface; they are not the store. In order of
+preference:
+
+1. **The platform's secret manager** (GCP Secret Manager, AWS Secrets Manager,
+   Vault) injected into the process environment by the deployment layer. The app
+   reads `os.environ` and knows nothing about the backend.
+2. **A mounted secrets file** the app reads at startup.
+3. **`.env` files — local development only.** Gitignored, never committed, never
+   shipped in an image.
+
+Never bake secrets into a Docker image (they persist in layer history), never pass
+them as build args, and never log the settings object.
+
+Rotation matters more than storage: assume every credential will leak eventually and
+make sure you can rotate `SECRET_KEY` (which invalidates sessions and password-reset
+tokens — plan for that), database passwords and API keys without a code change.
+
+### The deploy gate
+
+`python manage.py check --deploy --fail-level WARNING` in CI, against the production
+settings. It catches `DEBUG=True`, a missing `SECURE_HSTS_SECONDS`,
+`SESSION_COOKIE_SECURE = False`, weak `ALLOWED_HOSTS`, and a handful of other
+foot-guns. It's a five-minute integration that pays for itself the first time.
 
 ---
 
 ## 10. Security
 
-<!-- GAPFILL:security -->
+### Authorization: the queryset is the permission boundary
+
+DRF gives you two hooks and they cover different things. Confusing them is the most
+common authorization bug in DRF codebases:
+
+| | `has_permission` | `has_object_permission` |
+|---|---|---|
+| Runs on | every request | a single object |
+| List endpoints | ✅ | ❌ **never called** |
+| Detail endpoints | ✅ | ✅ — but only via `get_object()` |
+
+**`has_object_permission` is never invoked for list actions.** There is no object
+yet. If your authorization lives only there, `GET /api/bookings/` returns every
+booking in the database to every authenticated user, and the detail endpoint looks
+correct in review.
+
+So: **scope in `get_queryset()`, and treat `has_object_permission` as
+defence-in-depth**, not as the control.
+
+```python
+def get_queryset(self):
+    return Booking.objects.filter(property__owner=self.request.user)
+```
+
+This also gives you the right status code for free — an out-of-scope ID becomes a
+404 rather than a 403, which avoids confirming that the object exists.
+
+Two follow-on traps:
+
+- **`check_object_permissions` only runs if you go through `get_object()`.** Any
+  custom action that fetches with `Model.objects.get(pk=...)` directly skips
+  permission checks entirely.
+- **A `queryset` class attribute plus a custom `get_queryset()`** — DRF uses
+  `get_queryset()`, but router basename inference and some third-party filters read
+  the attribute. Keep them consistent or set `basename` explicitly.
+
+### Throttling: understand what it is and isn't
+
+DRF throttling is a **cache-counter, not a rate limiter**. Two facts govern how you
+use it:
+
+1. **It is not atomic.** Read-modify-write against the cache races under
+   concurrency, so the effective limit under load is higher than configured.
+2. **It is only as shared as your cache.** With `LocMemCache`, each Gunicorn worker
+   keeps its own counter — 8 workers means 8× the configured limit. Throttling
+   requires a shared Redis or Memcached backend to mean anything.
+
+Therefore: DRF throttling is for **shaping legitimate client behaviour** (protecting
+an expensive report endpoint, discouraging polling). **DoS protection belongs at the
+edge** — Cloud Armor, a WAF, nginx `limit_req`. Never present DRF throttling as your
+abuse defence.
+
+Configure per-scope rather than globally:
+
+```python
+class ReportViewSet(ViewSet):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "reports"
+
+# settings.py
+REST_FRAMEWORK = {
+    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle"],
+    "DEFAULT_THROTTLE_RATES": {"anon": "60/hour", "reports": "10/hour"},
+}
+```
+
+`AnonRateThrottle` keys on IP, so it is defeated by rotation and mis-fires behind a
+proxy unless `X-Forwarded-For` handling is correct — an incorrectly trusted
+forwarding header lets a client set their own throttle key. `UserRateThrottle` keys
+on the authenticated user and is the more meaningful of the two.
+
+**Decide what happens when the cache is down.** DRF's throttle will raise, turning a
+Redis outage into a total API outage. If throttling is a convenience rather than a
+control, catch and allow.
+
+### Keep up with security releases
+
+Django ships security releases on a regular cadence, and 2025–2026 saw a run of them
+covering SQL-injection vectors (notably through `FilteredRelation` and column
+aliases reachable via `annotate()` / `order_by()`), DoS via pathological input to
+several parsers and validators, and log-injection issues.
+
+The `order_by` class matters directly to DRF: **`OrderingFilter` passes
+client-supplied strings into `order_by()`.** Always constrain it —
+`ordering_fields = ["created_at", "name"]`, never `ordering_fields = "__all__"` —
+and never interpolate request data into `extra()`, `RawSQL`, or `.raw()`.
+
+Operationally:
+
+- Pin to a **LTS** release and subscribe to `django-announce`.
+- Run `pip-audit` (or `uv pip audit`) in CI and fail the build on a known-vulnerable
+  dependency.
+- Treat a Django patch release as a same-week deploy, not a quarterly chore.
+
+⚠️ *Verify specific CVE identifiers and their fixed-version ranges against
+[the Django security archive](https://docs.djangoproject.com/en/dev/releases/security/)
+before acting — the mapping between individual CVEs and patch versions was not
+independently confirmed for this document.*
+
+### The unglamorous baseline
+
+Most Django compromises aren't framework CVEs:
+
+- `SECURE_SSL_REDIRECT`, `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`,
+  `SECURE_HSTS_SECONDS` — all covered by `check --deploy` (§9).
+- **CSRF applies to session-authenticated DRF endpoints.** `SessionAuthentication`
+  enforces it; token/JWT auth does not need it. A SPA on the same origin using
+  session cookies must send the token.
+- **CORS is not authorization.** `CORS_ALLOW_ALL_ORIGINS = True` with
+  `CORS_ALLOW_CREDENTIALS = True` is the combination to never ship.
+- **File uploads**: validate content type server-side, never trust the filename,
+  and serve user uploads from a separate origin so a stored HTML file can't run in
+  your domain's context.
 
 ---
 
 ## 11. Caching
 
-<!-- GAPFILL:caching -->
+### Backend: built-in `RedisCache` first
+
+Django has shipped a first-party `django.core.cache.backends.redis.RedisCache`
+since 4.0. Start there. Reach for **django-redis** only when you need something it
+provides — richer client configuration, `get_or_set` semantics you rely on, master/
+replica routing, pattern-based `delete_pattern()`, or the raw client via
+`get_redis_connection()`.
+
+⚠️ *The exact feature delta between the built-in backend and django-redis (connection-pool
+customisation, replica support) was not verified for this document — check the
+current Django docs before assuming parity in either direction.*
+
+```python
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": env("REDIS_URL"),
+        "KEY_PREFIX": "dolce",     # namespace — lets you share one Redis
+        "TIMEOUT": 300,
+    }
+}
+```
+
+**Never use `LocMemCache` for anything that must be consistent across processes.**
+It is per-process: each Gunicorn worker has its own copy, so invalidation in one
+worker doesn't reach the others, and throttle counters (§10) multiply by worker
+count. It's fine as the *test* backend and nowhere else.
+
+**Give sessions, cache and Celery separate Redis databases or key prefixes.** A
+`cache.clear()` that also drops every session is a bad afternoon.
+
+### Timeout semantics are a foot-gun
+
+| Value | Meaning |
+|---|---|
+| `timeout=None` | **cache forever** |
+| `timeout=0` | **don't cache at all** (expires immediately) |
+| omitted | use the backend's `TIMEOUT` setting |
+
+`None` and `0` read as "no timeout" to most people and mean opposite things. Be
+explicit.
+
+### Invalidation: prefer expiry and key versioning over deletion
+
+Chasing down every write path that should invalidate a key is how caches go stale.
+Two more durable approaches:
+
+1. **Short TTLs.** If 60 seconds of staleness is acceptable, a 60-second TTL removes
+   the entire invalidation problem. Most read-heavy endpoints tolerate this.
+2. **Version the key, don't delete it.** Include a mutable component in the key —
+   `f"property:{pk}:v{obj.updated_at.timestamp()}"` — so a write produces a new key
+   and the old one ages out on its own. No delete call to forget.
+
+If you do delete explicitly, do it **in `transaction.on_commit()`**, for the same
+reason Celery dispatch does (§5): invalidating before commit lets a concurrent read
+repopulate the cache with the pre-commit value.
+
+### Cache stampede
+
+When a hot key expires, every concurrent request misses simultaneously and all of
+them run the expensive query. `cache.get_or_set()` does **not** prevent this — it is
+not atomic across processes.
+
+Mitigations, in increasing order of effort:
+
+- **Jitter the TTL** (`300 + random.randint(0, 60)`) so keys spread out rather than
+  expiring in lockstep. Solves the correlated case cheaply.
+- **A lock around recomputation** (`cache.add(lock_key, ...)` as a mutex; `add` is
+  atomic where `set` isn't) — one worker recomputes, the others serve stale or wait.
+- **Recompute ahead of expiry** from a Celery beat task for genuinely expensive,
+  genuinely hot values.
+
+### What to cache
+
+Cache **computed results**, not ORM objects. Pickled model instances go stale in
+ways that are hard to reason about and break across model changes. Cache the
+serialized payload, the aggregate, the rendered fragment.
+
+**Per-site and per-view caching (`UpdateCacheMiddleware`, `@cache_page`) are almost
+never right for an authenticated API.** They key on the URL, so unless every varying
+input is in `Vary:`, you will eventually serve one user's data to another. For DRF,
+cache inside the view — around the expensive call — where you control the key and
+it includes the user.
+
+Before adding a cache, confirm the query is actually the problem. A cache layered
+over an N+1 (§4) hides the bug and doubles the failure modes.
 
 ---
 
 ## 12. Logging and observability
 
-<!-- GAPFILL:logging -->
+### Structured logs, correlated by request
+
+Plain-text logs stop being useful the moment you have more than one worker. Use
+**structlog** with **django-structlog**, which does the part you'd otherwise write
+badly yourself: it binds a `request_id` to a context-local at the start of each
+request and emits it on every log line produced downstream — including,
+crucially, **inside Celery tasks dispatched from that request**. That one field is
+what turns "an error happened" into "here is the entire causal chain".
+
+```python
+MIDDLEWARE = [
+    "django_structlog.middlewares.RequestMiddleware",   # early in the list
+    ...
+]
+```
+
+It also emits `request_started` / `request_finished` / `request_failed` events with
+timing, and Django/Celery signals you can subscribe to for audit purposes.
+
+Write logs as events with fields, never as interpolated prose:
+
+```python
+logger.info("booking.confirmed", booking_id=booking.pk, amount=str(total))
+# not: logger.info(f"Confirmed booking {booking.pk} for {total}")
+```
+
+The first is queryable; the second requires a regex forever.
+
+### Configuration rules
+
+- **JSON to stdout in production, human-readable in dev.** The container runtime
+  collects stdout. Do not write log files inside a container, and do not configure
+  `RotatingFileHandler` there — you'll get interleaved rotation from multiple
+  workers and lose lines.
+- **`"disable_existing_loggers": True`** in a `LOGGING` dictConfig silently kills
+  library loggers, including Django's own. Leave it `False` unless you know exactly
+  what you're switching off.
+- **`django.db.backends` at DEBUG logs every query.** Invaluable locally, ruinous in
+  production. Guard it on `DEBUG`.
+- **Never log secrets, tokens, session keys or full request bodies.** Add a
+  structlog processor that redacts known-sensitive keys, so redaction is a property
+  of the pipeline rather than of each call site.
+
+### Errors, traces, metrics
+
+- **Sentry** for exceptions. Set `send_default_pii = False` unless you've decided
+  otherwise deliberately, configure `traces_sample_rate` well below 1.0 in
+  production, and set the `release` so regressions are attributable to a deploy.
+- **OpenTelemetry** if you need distributed traces across engine → Celery →
+  external services. Auto-instrumentation for Django, DB drivers and requests gets
+  you most of the way; the manual work is propagating context into Celery.
+- **Health endpoints**: a liveness check that only proves the process is up, and a
+  readiness check that proves DB and cache are reachable. Conflating them means a
+  Redis blip restarts your pods.
+
+### Development-time profiling
+
+`django-debug-toolbar` for pages, **`django-silk`** for API endpoints (it records
+SQL per request and works where the toolbar's HTML injection can't). Both are
+development-only — mounting Silk in production exposes request bodies.
+
+For the specific problem of "which endpoint is doing N+1", `nplusone` in CI (§4)
+catches it earlier and more cheaply than any observability tool catches it later.
 
 ---
 
@@ -778,7 +1143,36 @@ warnings.filterwarnings("error", r"DateTimeField .* received a naive datetime")
 
 ### External HTTP
 
-<!-- GAPFILL:testing-http -->
+Never let the test suite make a real outbound request. It makes tests slow, flaky,
+dependent on someone else's uptime, and occasionally expensive.
+
+| Tool | Model | Use when |
+|---|---|---|
+| **responses** / **respx** | you declare the expected request and the canned response | the interaction is simple and you want the contract visible in the test |
+| **vcrpy** (`pytest-recording`) | records real traffic once to a cassette, replays after | the API is complex enough that hand-writing responses is unrealistic |
+
+Prefer **responses** (for `requests`) or **respx** (for `httpx`) as the default: an
+explicit stub documents what your code sends, and a test that breaks when you change
+the outbound call is doing its job.
+
+Use **vcrpy** when the payloads are large or the flow is multi-step, but treat
+cassettes as a liability:
+
+- **Scrub credentials before the cassette is written** (`filter_headers`,
+  `filter_query_parameters`). Cassettes are committed; a recorded `Authorization`
+  header is a leaked token. Configure this *before* the first recording, not after.
+- **Re-record on a schedule.** A cassette is a snapshot of an API that will change
+  without telling you; a green suite against a stale cassette is a false negative.
+- Set `record_mode="none"` in CI so a cache miss fails loudly rather than silently
+  reaching the network.
+
+Whichever you use, **block the network at the suite level** so an un-stubbed call is
+an error rather than a slow success — `pytest-socket`'s `--disable-socket
+--allow-unix-socket` is the blunt, effective version.
+
+For your *own* provider integrations, wrap the third party behind a thin adapter and
+stub the adapter in most tests, keeping HTTP-level stubs for the adapter's own tests.
+That way a provider change touches one module, not fifty test files.
 
 ### Conventions
 
@@ -793,7 +1187,33 @@ warnings.filterwarnings("error", r"DateTimeField .* received a naive datetime")
   coverage percentage target produces tests written to touch lines. Use coverage
   to notice untested *new* code.
 
-<!-- GAPFILL:testing-ci -->
+### The CI suite
+
+Run these as separate, independently-failing jobs — a single "tests" job that
+bundles them hides which guarantee broke:
+
+| Job | What it protects |
+|---|---|
+| `pytest --reuse-db -n auto` | the suite itself, against **MySQL**, never SQLite |
+| `pytest` with migrations applied from zero | that a fresh deploy works (§8) |
+| `makemigrations --check --dry-run` | that no model change shipped without a migration |
+| `check --deploy --fail-level WARNING` | production settings (§9) |
+| `lint-imports` | app-boundary layering (§2) |
+| `pip-audit` | known-vulnerable dependencies (§10) |
+
+**Match the CI database to production** — same MySQL major version, same collation,
+same `sql_mode`. A suite green on SQLite tells you nothing about `Decimal` rounding,
+case sensitivity of string comparison, or lock behaviour.
+
+**Coverage as a ratchet, not a target.** Configure the check to fail when coverage
+*drops*, not when it sits below a round number. `diff-cover` against the base branch
+is the sharper version of this: it asks "is the code you just wrote tested", which
+is the question you actually care about. A global percentage target reliably produces
+tests written to touch lines.
+
+Keep the whole suite under a few minutes. Past that, developers stop running it
+locally, and CI becomes the only place tests run — which is exactly when the
+feedback loop is too slow to prevent the bug.
 
 ---
 
@@ -865,6 +1285,24 @@ Migrations
 - [ ] `RunPython` uses `apps.get_model()` and the `schema_editor` DB alias
 - [ ] Backfill is batched with `atomic = False`
 - [ ] `migrate` from an empty database passes in CI
+- [ ] Large-table `ALTER` has a checked algorithm (INSTANT/INPLACE) or an osc plan
+
+Config & security
+- [ ] No new secret has a default value in settings
+- [ ] `check --deploy` passes at WARNING
+- [ ] Authorization is enforced in `get_queryset()`, not only `has_object_permission`
+- [ ] `OrderingFilter`/`filterset_fields` are an explicit allowlist, never `__all__`
+- [ ] No request data reaches `raw()`, `extra()` or `RawSQL`
+
+Caching & logging
+- [ ] Cache backend is shared across processes (not `LocMemCache`)
+- [ ] Cache invalidation is inside `transaction.on_commit()`, or the key is versioned
+- [ ] New log lines are structured events with fields, and log no secrets
+
+Testing
+- [ ] `assertNumQueries` covers any new list endpoint
+- [ ] No test makes a real outbound HTTP request
+- [ ] New code is covered — the diff, not the global percentage
 
 ---
 
@@ -895,3 +1333,14 @@ Migrations
 - [django-linear-migrations](https://adamj.eu/tech/2020/12/10/introducing-django-linear-migrations/)
 - [pytest-django database docs](https://pytest-django.readthedocs.io/en/latest/database.html)
 - [factory_boy](https://factoryboy.readthedocs.io/) · [time-machine vs freezegun](https://adamj.eu/tech/2021/02/19/freezegun-versus-time-machine/)
+- [responses](https://github.com/getsentry/responses) · [respx](https://lundberg.github.io/respx/) · [vcrpy](https://vcrpy.readthedocs.io/)
+- [pt-online-schema-change](https://docs.percona.com/percona-toolkit/pt-online-schema-change.html) · [gh-ost](https://github.com/github/gh-ost) · [MySQL online DDL](https://dev.mysql.com/doc/refman/8.0/en/innodb-online-ddl-operations.html)
+
+**Config, security, caching, logging**
+- [Deployment checklist](https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/) — what `check --deploy` enforces
+- [django-environ](https://django-environ.readthedocs.io/)
+- [Django security releases archive](https://docs.djangoproject.com/en/dev/releases/security/) — the authoritative CVE→version mapping
+- [DRF permissions](https://www.django-rest-framework.org/api-guide/permissions/) · [DRF throttling](https://www.django-rest-framework.org/api-guide/throttling/)
+- [Django caching](https://docs.djangoproject.com/en/5.2/topics/cache/) · [django-redis](https://github.com/jazzband/django-redis)
+- [django-structlog](https://django-structlog.readthedocs.io/) · [structlog](https://www.structlog.org/)
+- [django-silk](https://github.com/jazzband/django-silk)

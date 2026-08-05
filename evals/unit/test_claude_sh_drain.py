@@ -435,7 +435,14 @@ def test_container_resolution_follows_the_manifest(payloadkit):
     plugin can never have a newer cached version run against its queue. The
     drain runs with --wait: PID 1 exiting tears down a --rm container, and
     without --wait the detached extraction children would die with it —
-    reintroducing exactly the teardown this feature exists to survive."""
+    reintroducing exactly the teardown this feature exists to survive.
+
+    It also runs with --project pointed at the plugin's scripts/ directory —
+    the member dir, which is the only form that resolves both in-repo and on
+    an installed plugin (a copy of the plugin subtree, no workspace root above
+    it). That directory's pyproject.toml is what provides multiplai_core; this
+    assertion previously pinned the opposite, and the drain died on import
+    every run without anything logging it."""
     install_path = _install_plugin(payloadkit)
     # A newer cached version that the manifest does NOT point at must lose.
     newer = (
@@ -455,7 +462,8 @@ def test_container_resolution_follows_the_manifest(payloadkit):
     argv = payloadkit.uv_argv_out.read_text().splitlines()
     assert argv == [
         "run",
-        "--no-project",
+        "--project",
+        str(install_path / "scripts"),
         str(install_path / "scripts" / "drain_extractions.py"),
         "--wait",
         "--data-dir",

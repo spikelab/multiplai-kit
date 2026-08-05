@@ -17,6 +17,18 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **`multiplai-docker.py` is installed as a host tool on macOS.** The container
+  release ships a host-side runner for pre-frozen Docker Compose stacks, letting
+  a session start, inspect and tear down parallel named instances of allowlisted
+  stacks over the existing SSH bridge (`multiplai-docker up dolce --instance
+  wt1`). `setup.sh` now copies it into `~/.local/bin/` inside the same gated loop
+  as `container-build-gateway.sh` and `multiplai-gh-token` — the host script and
+  the gateway branch that allowlists it are two halves of one contract and must
+  never ship from different generations. **After updating, each stack must be
+  frozen once on the Mac** (`multiplai-docker freeze <name> -f <compose>…`); see
+  the container repo's `docs/multiplai-docker.md`. No `authorized_keys` change is
+  needed.
+
 - **tmux tabs are now named after the session's container.** Launching from
   inside tmux renames the window to the container name — `claude-personal-05212125`,
   the *same* string the `multiplai-context` fleet view prints — so a tab and an

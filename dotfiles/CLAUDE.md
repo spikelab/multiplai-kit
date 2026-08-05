@@ -212,7 +212,16 @@ When the system injects a SYSTEM NUDGE in additionalContext:
 
 # Reference Docs (for coding tasks)
 
-Load from `$CLAUDE_CONFIG_DIR/reference/dev/` when working on relevant coding tasks.
+`$CLAUDE_CONFIG_DIR/reference/dev/` holds prescriptive engineering standards — best practices, not personal context. Memory can be stale and is advisory; these are the conventions the code is expected to follow.
+
+**Two mechanisms load them for you; this table is the fallback, not the mechanism.**
+
+1. **Every session:** the `multiplai-context` `UserPromptSubmit` hook detects the project's stack from its manifests and injects a `DEV REFERENCES` block naming the applicable docs and their sections — once per session per project. When you see that block, **Read the named doc before writing or changing code** (at minimum the sections your change touches), cite it when a standard decides a design choice, and say so explicitly if you depart from one.
+2. **Every buildme run:** the pipeline inlines the same docs into its spec-generation prompts, so the design and task breakdown are written against them.
+
+Neither fires when the stack is unmapped (Rust, Go) or when cwd is a bare workspace root and no path was named. Then the table below applies — and it also covers the docs no stack maps to (prompt engineering, architecture staging, skill/hook authoring, Bruno).
+
+Full mechanism description and the renaming contract: `reference/dev/README.md`.
 
 | Task | Load these files |
 |------|------------------|
@@ -236,7 +245,7 @@ Load from `$CLAUDE_CONFIG_DIR/reference/dev/` when working on relevant coding ta
 | API testing / Bruno | `bruno-api-testing.md` |
 | Prompt engineering | `prompt-engineering.md` |
 
-**Rule:** Load relevant reference docs at start of coding sessions. These are prescriptive best practices, not personal context.
+**Renaming a doc here is a code change elsewhere.** Two stack→filename maps in `multiplai-cc-mktplace` name these files as literal strings and skip a name with no file, so a rename that misses them silently drops the doc from every session and every build. See `reference/dev/README.md` → "The renaming contract".
 
 # Skill Routing
 Skill suggestions are **automatic** — when skill routing is enabled (`enable_skills`), the `multiplai-context` plugin routes each prompt against its skill catalog and surfaces matching skills as context. No hardcoded trigger table needed.

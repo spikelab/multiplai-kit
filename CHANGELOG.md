@@ -15,6 +15,25 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **The launcher now records which containers are actually running**, so the
+  fleet view can stop guessing. `claude.sh` writes `docker ps` names to
+  `$WORKSPACE/.multiplai/data/live_containers.json` twice per launch — once
+  before starting the session container, once after it exits. A session cannot
+  observe its own death (a reboot, a closed terminal, a `docker kill` kills the
+  hooks too), and the container has no docker to ask, so only the host can
+  answer. With this, `multiplai-context` 0.22.0+ retires a session the moment
+  its container is gone instead of waiting out a 12-hour quiet window; on one
+  real registry that was 49 entries stuck in limbo. Parked sessions are never
+  retired this way — parking is a stated intent, not an inference.
+
+  Best-effort throughout: no docker, no `.multiplai/data/`, or a daemon that has
+  gone away are silent no-ops, and none of them can change a session's exit
+  status. Without the plugin the file is simply never read. This is a poll, not
+  the exit-marker design dropped in 0.15.1 — a marker dies with the launcher and
+  so covered nothing.
+
 ### Changed
 
 - **`reference/dev/` docs now document how they are actually loaded.** The old

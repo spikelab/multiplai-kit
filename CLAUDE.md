@@ -114,6 +114,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 | `evals/unit/test_guard_hook_wiring.py` | Whether the guard is reached at all (hook wiring, log-dir creation, fail-closed wrapper) |
 | `evals/unit/test_log_retention.py` | Log rotation/retention helper |
 | `evals/unit/test_gh_app_hooks.py` | GitHub App SessionStart/PreToolUse hooks (stub `gh-tok` + stub `gh`) |
+| `evals/unit/test_claude_sh_roster.py` | The live-container roster `claude.sh` writes for the fleet view (stub `docker`) |
 
 **The memory / routing / learnings evals are gone** — they tested the retired in-tree hooks and were removed with them. Those mechanisms now live in the `multiplai-context` plugin, which has its own `tests/` (run from the plugin dir). Threshold for the kit tests: 100% (any failure is a bug).
 
@@ -134,6 +135,25 @@ What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings
 **Key constraint (plugin side):** SessionEnd hooks are killed within seconds — they cannot run long-running scripts. The plugin uses the deferred pattern: write a marker at SessionEnd, process it later via a detached subprocess. See the plugin's `scripts/session_end.py` and `scripts/extract_learnings.py`.
 
 **The kit is one of the two drains.** Processing "later" used to mean the next `SessionStart`, which is why closing the last tab of the day left its write-up until the next session. `post_exit_drain()` in `claude.sh` now launches a disposable drain container (same image, `docker run -d --rm`, `drain_extractions.py --wait` as its process) once a container-mode session has exited. The host never executes plugin-resolved code — an earlier host-side design was rejected because the plugin manifest/cache are container-writable; the launcher only checks marker filenames and assembles the `docker run`, and script resolution happens inside the container. `--wait` is load-bearing: the session container can't drain itself because `--rm` takes detached children down with PID 1, and the drain container avoids the same fate by staying in the foreground until its children finish. `--local`/bare and hub driver sessions `exec` and never reach the drain. Both drain paths call the same `lib/extraction_drain.py`, so the dequeue (an atomic rename) is race-safe and the two cannot diverge — which is also why two launchers exiting at once need no host-side lock. The launcher's decision logic — when it fires, the drain container's exact mounts and two-variable env (no `.env` secrets, no API key), the in-container resolution payload, that it never changes the exit status — is pinned by `evals/unit/test_claude_sh_drain.py` against a stub `docker`; whether extraction then succeeds depends on a real docker daemon and host OAuth, neither of which exists in CI.
+
+**The kit is also the only thing that can see a session die.** Every liveness
+signal the `multiplai-context` plugin has is a hook — code running *inside* the
+session — so a reboot, a closed terminal, a `docker kill` or an OOM produces no
+event at all, and the fleet view was left inferring death from silence. The
+container cannot ask: no docker binary, no socket, not root, and the build
+gateway's allowlist has never carried `docker`. So `write_container_roster()`
+in `claude.sh` writes `docker ps --format '{{.Names}}'` to
+`$WORKSPACE/.multiplai/data/live_containers.json` — **before** the session
+`docker run` (which is what makes it seconds old at the SessionStart that
+renders `AGENTS.md`, with no daemon and no timer) and **again after it exits**
+(`--rm` has reaped the container by then, so this is the first reading that can
+see it gone). The reading carries `kind` and `observer` so a reader can refuse
+one it cannot interpret — a container name is globally meaningful, a pid only
+means something in the namespace that observed it, and session identity moves to
+a pid under the SDK. Best-effort on every path; it may cost accuracy in a status
+view, never a session. Pinned by `evals/unit/test_claude_sh_roster.py`. This is
+a **poll**, deliberately not the write-on-exit marker dropped in 0.15.1: that
+one died with the launcher, so it covered none of the cases it existed for.
 
 **Testing the in-tree hook locally:**
 ```bash

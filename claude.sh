@@ -1019,6 +1019,82 @@ exec uv run --project "$install_path/scripts" "$script" \
 DRAIN_EOF
 )
 
+# --- Live-container roster ---
+# A session cannot answer "am I still alive" and neither can anything inside
+# the container: there is no docker binary, no socket, no root, and the build
+# gateway's allowlist has never carried docker. So the fleet view has had to
+# guess death from silence — an entry quiet past a threshold is *filed* as
+# idle, deliberately without claiming it died, because a killed container and
+# a session you walked away from are indistinguishable from in there. On a real
+# registry that left 49 entries in permanent limbo.
+#
+# The Mac can just look. This writes the names of every running container to a
+# file in the shared workspace; the plugin reads it and treats "this entry's
+# container is absent from a roster observed AFTER the entry's last event" as
+# proof the session is over. Names only — no ports, no images, nothing that
+# could make this a second source of truth about sessions.
+#
+# **This is a poll, not a marker, and that is the whole point.** kit 0.15.1
+# tried the marker: the launcher dropped an `.exited` file beside the registry
+# entry when `docker run` returned. It was removed before release because the
+# launcher dies *with* the terminal on a reboot or a closed window, so the
+# marker only ever covered `docker kill` and OOM — worth zero entries in
+# practice. A poll does not care whether any launcher survived; it asks what
+# exists right now, which is exactly the case the marker could not reach.
+#
+# Called at two points, both of which the launcher already reaches: just before
+# `docker run`, and again after the session exits. The first is what makes this
+# work with no daemon and no timer — every hook-path render of AGENTS.md
+# happens at SessionStart, inside a container this launcher started seconds
+# earlier, so the roster it reads is seconds old. A stale roster is not a
+# wrong answer, only a missing one: the plugin falls back to the quiet
+# heuristic, which is what a vanilla Claude Code install does permanently.
+#
+# Best-effort throughout. No docker, no workspace, an unwritable data dir, or a
+# daemon that has gone away are all silent no-ops — losing the roster costs
+# accuracy in the fleet view and must never cost you a session.
+write_container_roster() {
+    local data_dir="$WORKSPACE/.multiplai/data"
+    [ -d "$data_dir" ] || return 0
+    command -v docker >/dev/null 2>&1 || return 0
+
+    local names
+    names=$(docker ps --format '{{.Names}}' 2>/dev/null) || return 0
+
+    # Hand-built JSON array: jq is optional on a host and container names are
+    # a closed alphabet (docker rejects anything outside [a-zA-Z0-9][a-zA-Z0-9_.-]),
+    # so there is nothing here that needs escaping. Guard anyway — a name that
+    # somehow carried a quote or a backslash must drop out, not corrupt the file.
+    local ids="" name
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        case "$name" in *[\"\\]*) continue ;; esac
+        ids="${ids:+$ids, }\"$name\""
+    done <<< "$names"
+
+    # `observer` and `kind` are not decoration. A container name is globally
+    # meaningful because there is one daemon; a pid would only mean something
+    # in the namespace that observed it, and this system already has that scar
+    # (the plugin's fleet_sources/jobs.py: "judge liveness by mtime, never by
+    # pid — the roster's pids belong to another process namespace"). Any future
+    # roster of pids must be refused by a reader expecting containers, and
+    # these two fields are how it can tell.
+    local tmp="$data_dir/.live_containers.json.$$"
+    {
+        printf '{\n'
+        printf '  "version": 1,\n'
+        printf '  "observed_at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '  "observer": "host",\n'
+        printf '  "kind": "container",\n'
+        printf '  "ids": [%s]\n' "$ids"
+        printf '}\n'
+    } > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
+
+    # Atomic: a reader in another container must never see a half-written file.
+    mv -f "$tmp" "$data_dir/live_containers.json" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    return 0
+}
+
 post_exit_drain() {
     local data_dir="$WORKSPACE/.multiplai/data"
 
@@ -1119,6 +1195,13 @@ while :; do
         CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE}"
     fi
     CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
+
+    # Before the run, not after: the session about to start is the one that
+    # renders AGENTS.md at SessionStart, so this is what makes the roster it
+    # reads seconds old. This container is deliberately NOT in that roster —
+    # its own entry does not exist yet, and an entry is only ever judged
+    # against a roster observed after its last event.
+    write_container_roster || true
 
     DOCKER_STATUS=0
     docker run --rm "${TTY_ARGS[@]}" \
@@ -1231,5 +1314,11 @@ done
 # release. A take-back relaunch loops back into `docker run` instead, and its
 # own SessionStart drains as it always did.
 post_exit_drain || true
+
+# And once more on the way out — the container that just exited is gone from
+# docker ps by now (`--rm`), so this is the observation that retires it. The
+# pre-run write alone would leave the last session of a run looking alive
+# until the next launch.
+write_container_roster || true
 
 exit "$DOCKER_STATUS"

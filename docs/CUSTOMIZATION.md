@@ -80,4 +80,20 @@ but is not registered by default; wire it up under a `fileSuggestion` key in
 
 ## Reference Docs
 
-Add best-practice docs to `dotfiles/reference/dev/`. Update the reference table in `dotfiles/CLAUDE.md` to tell Claude when to load them.
+Add best-practice docs to `dotfiles/reference/dev/`.
+
+How they reach Claude depends on whether the doc belongs to a *stack*:
+
+- **Stack- or framework-specific** (a Django doc, a Swift doc) — add it to the
+  two stack→filename maps in `multiplai-cc-mktplace` and it loads mechanically:
+  the `multiplai-context` hook injects a pointer to it whenever you are in a
+  project with that stack, and buildme inlines it into spec generation. Both
+  maps and the exact edit are listed in `dotfiles/reference/dev/README.md` →
+  "The renaming contract".
+- **Cross-cutting** (prompt engineering, architecture staging, tooling) — no map
+  applies. Add a row to the reference table in `dotfiles/CLAUDE.md`, which tells
+  Claude when to reach for it.
+
+**Renaming an existing doc requires updating those maps.** A name with no file
+on disk is skipped with a log line, not an error, so a missed rename removes the
+doc from every session and every build while everything still looks fine.

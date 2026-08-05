@@ -56,7 +56,7 @@ Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching 
 The kit is responsible for:
 - **Launcher** (`claude.sh`) — container/local/shell modes, git-identity profiles, GCP overlays.
 - **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely.
-- **Reference docs** (20+ reference docs in `dotfiles/reference/dev/`, including the README index) — prescriptive best-practice docs loaded per coding task.
+- **Reference docs** (20+ reference docs in `dotfiles/reference/dev/`, including the README index) — prescriptive engineering standards. Stack-specific ones load mechanically: the `multiplai-context` hook detects a project's stack from its manifests and points Claude at the matching docs, and buildme inlines them into spec generation. See `dotfiles/reference/dev/README.md` for the mechanisms and the renaming contract.
 - **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
 - **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
 

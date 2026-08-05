@@ -15,6 +15,29 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Changed
+
+- **`reference/dev/` docs now document how they are actually loaded.** The old
+  claim — "Claude Code agents automatically load relevant docs based on task
+  triggers defined in the global CLAUDE.md" — was not true of anything
+  executable: the table in `dotfiles/CLAUDE.md` is a hint to the model, and
+  nothing read it. There are two real mechanisms, both in
+  `multiplai-cc-mktplace` and both keyed on the project's manifests rather than
+  on prompt wording: a per-session pointer block from the `multiplai-context`
+  hook, and inlining into buildme's spec-generation prompts.
+
+  `reference/dev/README.md` now describes all three paths (including which docs
+  no stack map covers), and `dotfiles/CLAUDE.md` says what to do when the
+  `DEV REFERENCES` block appears instead of asking Claude to remember to go
+  looking.
+
+  It also states **the renaming contract**: two maps in the marketplace repo
+  name these files as literal strings and skip a name with no file on disk, so
+  renaming a doc here without updating them silently drops it from every session
+  and every build. That is not hypothetical — `django-best-practices.md` and
+  `react-best-practices.md` were renamed in July and both keys resolved nothing
+  until 2026-08-05.
+
 ### Fixed
 
 - **The destructive-command guard no longer switches itself off in a fresh

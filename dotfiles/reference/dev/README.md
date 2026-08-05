@@ -6,9 +6,105 @@ Reference documentation for building AI-powered applications with Python (FastAP
 
 ## Location
 
-These docs live at `$CLAUDE_CONFIG_DIR/reference/dev/` and are indexed in the global CLAUDE.md.
+These docs live at `$CLAUDE_CONFIG_DIR/reference/dev/` (this directory, symlinked
+from the kit's `dotfiles/reference/dev/`).
 
-Claude Code agents automatically load relevant docs based on task triggers defined in the global CLAUDE.md.
+---
+
+## How these docs get loaded
+
+Three mechanisms, in descending order of how mechanical they are. The first two
+are code; the third is a hint and should not be relied on.
+
+### 1. Per-session pointer block — `multiplai-context` (every ordinary session)
+
+The `UserPromptSubmit` hook detects the project's stack from its **manifests**
+and injects a `DEV REFERENCES` block naming the matching docs' paths and their
+section index — pointers, not contents. Once per session per project.
+
+This is not routed through the memory router, on purpose: memory is context
+about *you* and is picked by relevance to your wording, but a standards doc
+applies because of what the project **is**. It fires whether or not the prompt
+sounds like a coding prompt.
+
+Detection walks up from cwd to the nearest manifest, stopping at `$HOME`. When
+cwd is a workspace root holding many repos with no manifest of its own
+(`knowhere/PROJECTS/<name>/…`), path-like tokens in the prompt are resolved
+instead. Map: `STACK_DOCS` in
+`multiplai-context/scripts/lib/reference_docs.py`. Off switch:
+`enable_dev_references`.
+
+**Consequence:** if you never name a path and cwd is a bare workspace root,
+nothing is detected and nothing is injected. That is the known gap.
+
+### 2. Inlined into spec generation — `buildme` (every build)
+
+A buildme run resolves the same stack→docs mapping and **inlines the contents**
+into its spec-generation prompts, because that generator is given no tools and
+cannot read a path. A doc over 24000 chars is reduced on section boundaries and
+carries an index of every section, so nothing is silently missing. The same docs
+also reach the reviewer via `standards_files`, uncapped, and are overridable
+per-project with `reference_docs:` in `specs/config.yaml`.
+
+Map: `_DEFAULT_REFERENCE_DOCS` in
+`multiplai-dev/skills/buildme/scripts/build_pipeline/config.py`. The run prints
+`REFERENCES:<names>` — if that says `(none)` for a project with a real stack,
+the specs were written with no conventions to build to.
+
+### 3. The loader table in the global `CLAUDE.md`
+
+A hint to the model, not a mechanism — nothing executes it. Useful for docs no
+stack map covers (`prompt-engineering.md`, `stage-appropriate-choices.md`,
+`skill-dev.md`, `bruno-api-testing.md`), which is now its actual job.
+
+---
+
+## The renaming contract — read this before renaming a file here
+
+**Two maps live in another repository and name these files as literal strings.**
+Resolution does no fuzzy matching, and a name with no file on disk is skipped
+with a log line, not an error. So renaming a doc here without updating both maps
+**silently removes it from every session and every build**, while everything
+continues to look healthy.
+
+This is not hypothetical: `django-best-practices.md` → `django-drf-best-practices.md`
+and `react-best-practices.md` → `react-nextjs-best-practices.md` left both keys
+resolving nothing from 2026-07 until it was noticed on 2026-08-05.
+
+Renaming or adding a doc that a stack should pick up means editing, in
+`multiplai-cc-mktplace`:
+
+| File | Symbol |
+|---|---|
+| `plugins/multiplai-context/scripts/lib/reference_docs.py` | `STACK_DOCS` |
+| `plugins/multiplai-dev/skills/buildme/scripts/build_pipeline/config.py` | `_DEFAULT_REFERENCE_DOCS` |
+
+plus the index table below, and the loader table in `dotfiles/CLAUDE.md`.
+`test_builtin_map_names_only_docs_the_kit_actually_ships` (buildme) pins the
+current names, so a rename that forgets the map fails a test rather than a build.
+
+A doc that no stack maps to — a process or tooling doc — needs none of this.
+
+### What the stack maps currently say
+
+Both mechanisms use the same key vocabulary and must name the same files:
+
+| Detected in the project | Docs loaded |
+|---|---|
+| `pyproject.toml` / `requirements.txt` | `uv-python-best-practices.md`, `python-project-structure.md` |
+| `manage.py`, or a `django` dependency | `django-drf-best-practices.md` |
+| a `fastapi` dependency | `fastapi-best-practices.md` |
+| `package.json` | `bun-vite-react-best-practices.md` |
+| a `react` or `next` dependency | `react-nextjs-best-practices.md` |
+| `Package.swift` | `swift-best-practices.md`, `swift-testing-strategies.md` |
+| `Cargo.toml`, `go.mod` | — (no docs written yet) |
+
+Everything else in this directory loads only by mechanism 3 (the model reading
+the loader table) or because you ask for it by name. Notably unmapped and worth
+knowing about: `database-best-practices.md`, `authentication-best-practices.md`,
+`docker-container-patterns.md`, `python-async-llm-patterns.md`,
+`data-pipeline-patterns.md`, `swift-macos-best-practices.md`,
+`swift-autonomous-tdd.md`.
 
 ---
 

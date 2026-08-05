@@ -1095,6 +1095,77 @@ write_container_roster() {
     return 0
 }
 
+# --- tmux window naming -------------------------------------------------------
+# A wall of tabs called "bash" tells you nothing about which session is which.
+# The container name does, and it is the *same* string the fleet view prints
+# (`workspace claude-personal-05212125 — …`), so a tab and a fleet row can be
+# matched by eye with no lookup step in between.
+#
+# Deliberately NOT the Claude session id. `/clear` mints a fresh session — one
+# container in this registry carries nine session UUIDs — so a tab named after
+# the session would rename itself under you mid-work, and tracking it would
+# need a host-side watcher polling the session registry for the whole life of
+# the run. The container is the thing the tab actually *is*: one tab, one
+# `docker run`, one name, stable across every `/clear` inside it.
+#
+# Container mode only. `--local` and the in-container bare path `exec`, which
+# replaces this process — the EXIT trap would never fire and the window would
+# keep a dead session's name forever. Driver mode is detached and has no tab.
+#
+# Targeted at `$TMUX_PANE`, not the active window: renaming "the current
+# window" hits whatever the user happens to be looking at when the launch
+# lands, which on a take-back relaunch is frequently not this one.
+#
+# Best-effort throughout — a tab name is cosmetic and must never cost a
+# session. Every tmux call is guarded and returns 0.
+TMUX_ORIG_NAME=""
+TMUX_ORIG_AUTO=""
+TMUX_RENAMED=0
+
+tmux_available() {
+    [ -n "${TMUX:-}" ] || return 1
+    [ -n "${TMUX_PANE:-}" ] || return 1
+    command -v tmux >/dev/null 2>&1 || return 1
+    return 0
+}
+
+# Captured once, before the first rename. `automatic-rename` is what tmux was
+# doing on its own; `rename-window` silently turns it off, so restoring the
+# name alone would leave the window frozen on the last thing it was called.
+tmux_capture_window() {
+    tmux_available || return 0
+    TMUX_ORIG_NAME=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null) || TMUX_ORIG_NAME=""
+    TMUX_ORIG_AUTO=$(tmux show-window-options -v -t "$TMUX_PANE" automatic-rename 2>/dev/null) || TMUX_ORIG_AUTO=""
+    return 0
+}
+
+tmux_rename_window() {
+    tmux_available || return 0
+    tmux rename-window -t "$TMUX_PANE" "$1" 2>/dev/null || return 0
+    TMUX_RENAMED=1
+    return 0
+}
+
+# Runs from an EXIT trap, so it covers the ways a launch actually ends: a clean
+# exit, Ctrl-C, and `set -e` firing on something upstream. Only ever undoes a
+# rename this launcher made.
+tmux_restore_window() {
+    [ "$TMUX_RENAMED" -eq 1 ] || return 0
+    tmux_available || return 0
+    if [ "$TMUX_ORIG_AUTO" = "off" ]; then
+        # The name was pinned before we touched it — put that string back.
+        tmux rename-window -t "$TMUX_PANE" "$TMUX_ORIG_NAME" 2>/dev/null || true
+    else
+        # It was on (or unset, which defaults to on): re-enabling lets tmux
+        # re-derive the name from whatever the pane runs next. Restoring the
+        # captured string instead would pin a stale one — the shell's name at
+        # launch time, now permanently frozen.
+        tmux set-window-option -t "$TMUX_PANE" automatic-rename on 2>/dev/null || true
+    fi
+    TMUX_RENAMED=0
+    return 0
+}
+
 post_exit_drain() {
     local data_dir="$WORKSPACE/.multiplai/data"
 
@@ -1183,6 +1254,13 @@ post_exit_drain() {
 SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"
 RESUME_ARGS=()
 DOCKER_STATUS=0
+
+# Capture the tab's original name before the first rename, and arm the restore
+# for every way out of this script. Registered here rather than at the top of
+# the file so it cannot fire on a path that `exec`s away (bare/local/driver).
+tmux_capture_window
+trap tmux_restore_window EXIT
+
 while :; do
     # Container name — used by OrbStack for DNS (<name>.orb.local).
     # All container ports are reachable from macOS at that hostname, no -p
@@ -1202,6 +1280,11 @@ while :; do
     # its own entry does not exist yet, and an entry is only ever judged
     # against a roster observed after its last event.
     write_container_roster || true
+
+    # Inside the loop, not before it: a take-back relaunch computes a NEW
+    # container name, and the tab has to follow the container it is actually
+    # showing.
+    tmux_rename_window "$CONTAINER_NAME"
 
     DOCKER_STATUS=0
     docker run --rm "${TTY_ARGS[@]}" \

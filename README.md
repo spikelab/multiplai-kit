@@ -140,6 +140,8 @@ The plugin's routing is project-aware. When you start a session and mention a pr
 ./claude.sh --profile work --shell  # work profile, bash shell
 ```
 
+**In tmux, the tab names itself.** Launching a container session from inside tmux renames the window to the container name — `claude-personal-05212125` — which is the same string the fleet view (`AGENTS.md`, `/multiplai-context:fleet-status`) uses to identify the session, so a tab and a fleet row match by eye. The original name comes back when the session exits. It is the *container* name and not the Claude session id on purpose: `/clear` starts a new session id, and a tab that renamed itself mid-work would be worse than no name at all. Container mode only; without tmux, nothing happens.
+
 `claude.sh` also passes through `--plugin-dir` / `--add-dir` to the underlying `claude` invocation (and keeps them out of `bash` in `--shell` mode), plus `--strict-mcp-config` to isolate account-level MCP integrations.
 
 `claude.sh` also ships the kit half of a session-orchestration handshake (a `driver` subcommand and an adoption take-back loop) for the multiplai native cockpit — on the roadmap, not yet released. These code paths are inert without it; full documentation lands with the release.

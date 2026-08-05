@@ -15,6 +15,36 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Fixed
+
+- **The destructive-command guard no longer switches itself off in a fresh
+  clone or worktree.** Every hook command in `dotfiles/settings.json` ended
+  with `2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log`, and the shell
+  opens that redirect *before* running anything. `runtime/logs/` is created by
+  `setup.sh`, so in a checkout where setup had never run the command died at
+  `Directory nonexistent` and the hook never executed. A `PreToolUse` hook
+  that errors is reported once and then ignored, so the practical effect was
+  that **every Bash call in that session ran with the guard inert** — with one
+  line of stderr on the first call and silence after. Sessions run
+  `--dangerously-skip-permissions`, which makes this guard the only layer that
+  can still refuse an unrecoverable command.
+
+  Three changes, none of which is `|| true` on the failing line (that would
+  hide the failure rather than fix it):
+
+  - `run-hook-python` now creates `runtime/logs/` and redirects its own stderr
+    there, so a Python hook needs no shell redirect and cannot fail for a
+    logging reason.
+  - The guard is invoked through a new `dotfiles/hooks/guard-destructive.sh`,
+    which **denies** if the guard could not run at all. The guard exits 0 on
+    every path by contract, so a non-zero exit means it never reached a
+    verdict — and a verdict is the only thing that may let a command through.
+    Bash then fails loudly instead of silently going unguarded.
+  - The remaining hook commands that still log via a redirect create the
+    directory first.
+
+  Pinned by `evals/unit/test_guard_hook_wiring.py`.
+
 ### Removed
 
 - **The status line no longer carries a fleet reading.** The segment read a

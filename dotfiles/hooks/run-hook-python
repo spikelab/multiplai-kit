@@ -9,6 +9,21 @@ MULTIPLAI_HOME="${CLAUDE_MULTIPLAI_HOME:-$(dirname "$CONFIG_DIR")}"
 LOGS_DIR="$MULTIPLAI_HOME/runtime/logs"
 VENV_PYTHON="$MULTIPLAI_HOME/.venv/bin/python"
 
+# The wrapper owns its log sink — a hook must never fail for a logging reason.
+#
+# settings.json used to append `2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log`
+# to every hook command. The *shell* opens that redirect before exec'ing
+# anything, so in a checkout where `runtime/logs/` does not exist yet (a fresh
+# clone or worktree, since only setup.sh creates it) the command died at
+# `Directory nonexistent` and the hook never ran at all. For the PreToolUse
+# guard that meant every Bash call in the session ran with the
+# destructive-command guard inert. Creating the directory here — and taking the
+# redirect on ourselves — removes the ordering dependency entirely.
+mkdir -p "$LOGS_DIR" 2>/dev/null || true
+if [ -w "$LOGS_DIR" ]; then
+  exec 2>>"$LOGS_DIR/hook-errors.log"
+fi
+
 # Load config (debug flag, model, effort, etc.) and export for Python hooks
 MULTIPLAI_DEBUG=false
 MULTIPLAI_MODEL="claude-sonnet-4-6"

@@ -47,6 +47,13 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Removed
 
+- **The kit no longer ships an output style.** `dotfiles/output-styles/assistant.md`
+  (an "Assistant" mode that turned off the coding defaults) is gone, and with it
+  the directory. Nothing in the kit consumed it — `setup.sh` never referenced it
+  and `settings.json` never selected it; it was only an entry in Claude Code's
+  `/output-style` picker. If you had it selected, pick another style; the
+  statusline still reports whatever style is active, from any source.
+
 - **The status line no longer carries a fleet reading.** The segment read a
   one-line `$WORKSPACE/.multiplai/data/fleet.txt` precomputed by the
   `multiplai-context` plugin; as of plugin `0.18.0` that file is retired (and

@@ -243,7 +243,6 @@ multiplai-kit/                          # = the "runtime" / kit repo
 │   ├── skills/            # Your own local skills (the skill library ships as marketplace plugins)
 │   ├── reference/dev/     # 20+ best-practice docs, incl. the README index
 │   ├── scripts/           # statusline.sh, file-suggestion.sh
-│   ├── output-styles/     # Output formatting
 │   ├── templates/         # Project templates
 │   ├── plugins/           # Claude Code plugin state (marketplaces, cache) — incl. the loaded plugin
 │   └── logs/              # Hook logs (validate-syntax, errors)

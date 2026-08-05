@@ -29,6 +29,27 @@ public repo has shipped without in-tree memory hooks from day one (see the
   the container repo's `docs/multiplai-docker.md`. No `authorized_keys` change is
   needed.
 
+- **The statusline now shows plan usage limits and reasoning effort.** Two new
+  segments — `5h 72% ⟳1h30m` (the session window, as time remaining) and
+  `7d 52% ⟳Mon 06:00` (the weekly all-models window, as a weekday) — plus an
+  abbreviated effort level (`lo`/`med`/`hi`/`xhi`/`max`). Both usage windows use
+  the same green/yellow/red thresholds as the context percentage, so a limit
+  about to bite looks like one. This is the same information `/usage` shows,
+  without leaving the prompt.
+
+  The data comes from `rate_limits` in the statusline payload (Claude Code
+  2.1.80+), which carries **only** the combined five-hour and seven-day windows —
+  there is no per-model split, so the Opus/Fable breakdown `/usage` renders
+  cannot be reproduced here without a second, authenticated data source. The
+  field is absent for non-subscribers and until the session's first API
+  response, and `effort` is absent on models without the parameter; each segment
+  simply doesn't render in those cases.
+
+  Reset clock-times need a timezone, since containers run UTC: set
+  `STATUSLINE_TZ`, or write a zone name to `$CLAUDE_CONFIG_DIR/.timezone`.
+  Without either, the weekly reset reads in UTC. Pinned by
+  `evals/unit/test_statusline.py`.
+
 - **tmux tabs are now named after the session's container.** Launching from
   inside tmux renames the window to the container name — `claude-personal-05212125`,
   the *same* string the `multiplai-context` fleet view prints — so a tab and an
@@ -68,6 +89,13 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The statusline dropped the session cost and shortened the model name and
+  path** (`Opus 5 (1M context)` → `Opus 5 1M`, workspace root → `~`). Width is
+  the binding constraint: everything past the terminal's last column is silently
+  truncated, and the new usage segments are at the far right, so the line was
+  landing at ~115 columns and losing exactly the part that was just added. It
+  now fits in 80.
+
 - **`reference/dev/` docs now document how they are actually loaded.** The old
   claim — "Claude Code agents automatically load relevant docs based on task
   triggers defined in the global CLAUDE.md" — was not true of anything
@@ -90,6 +118,13 @@ public repo has shipped without in-tree memory hooks from day one (see the
   until 2026-08-05.
 
 ### Fixed
+
+- **The statusline's `~` abbreviation never applied.** `${cwd/#$HOME/~}`
+  tilde-expands its *replacement*, so the collapsed path expanded straight back
+  to `$HOME` — invisible, because the result was the string it started with. The
+  replacement is now quoted. The workspace root is collapsed too (from
+  `$WORKSPACE`, falling back to `$CLAUDE_CONFIG_DIR/.workspace`): in a container
+  `$HOME` is `/home/agent` and never matches the host paths the payload reports.
 
 - **Bare launches now make the same GitHub-auth decision as containerised
   ones.** The mode-selection block sat *after* every bare-mode `exec`, and

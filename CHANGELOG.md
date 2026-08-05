@@ -17,6 +17,26 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **tmux tabs are now named after the session's container.** Launching from
+  inside tmux renames the window to the container name — `claude-personal-05212125`,
+  the *same* string the `multiplai-context` fleet view prints — so a tab and an
+  `AGENTS.md` row match by eye instead of by lookup. The original name is
+  restored when the session exits; a window tmux was auto-naming is handed back
+  to `automatic-rename` rather than pinned to whatever it was called at launch.
+
+  It is deliberately **not** the Claude session id: `/clear` mints a fresh
+  session (one container in a real registry carried nine session UUIDs), so a
+  session-named tab would rename itself mid-work and would need a host-side
+  watcher polling the session registry for the whole run. The container is what
+  the tab actually is — one tab, one `docker run`, one name, stable across every
+  `/clear` inside it.
+
+  Container mode only, and best-effort: `--local`, in-container bare sessions
+  and `driver` all `exec` away (no EXIT trap could fire, so the tab would keep a
+  dead session's name), and no tmux, no `$TMUX`, no `$TMUX_PANE` or a tmux that
+  errors are silent no-ops. A tab name can never change a session's exit status.
+  Pinned by `evals/unit/test_claude_sh_tmux.py`.
+
 - **The launcher now records which containers are actually running**, so the
   fleet view can stop guessing. `claude.sh` writes `docker ps` names to
   `$WORKSPACE/.multiplai/data/live_containers.json` twice per launch — once

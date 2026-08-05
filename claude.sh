@@ -396,55 +396,14 @@ exec_bare() {
         "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
 }
 
-# --- Explicit local mode ---
-if [[ "$MODE" == "local" ]]; then
-    exec_bare
-fi
-
-# --- Already inside a container? Run bare with full permissions ---
-if [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
-    exec_bare skip-permissions
-fi
-
-# --- Docker not available? Warn and fall back to bare mode ---
-if ! command -v docker &>/dev/null; then
-    echo "WARNING: Docker not found — running without container sandbox."
-    echo "  Host filesystem is NOT isolated. Permission prompts are active."
-    echo "  Install Docker and re-run ./setup.sh to build the sandbox image."
-    echo ""
-    exec_bare
-fi
-
-# --- Container mode (default) ---
-
-CONTAINER_ARGS=("claude" "--dangerously-skip-permissions" "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}")
-if [[ "$MODE" == "shell" ]]; then
-    # bash doesn't understand --plugin-dir / --add-dir — drop CLAUDE_ONLY_ARGS.
-    CONTAINER_ARGS=("bash")
-fi
-
-IMAGE_NAME="${IMAGE_NAME:-claude-multiplai:local}"
-
-# Per-runtime venv volume. Derived from this kit checkout's path so parallel
-# runtimes (e.g. ~/.multiplai-runtimes/{default,test-x}) never share one —
-# a shared volume is broken by construction: the venv bakes in absolute
-# paths, and the volume mounts at a different $SCRIPT_DIR per runtime.
-# basename for readability + path checksum for uniqueness; override with
-# KIT_VENV_VOLUME in .env. NOTE for pre-existing installs: the name changes
-# from the old literal 'kit-venv', so the first launch re-syncs the venv
-# into a fresh volume (a few minutes, self-healing); set
-# KIT_VENV_VOLUME=kit-venv to keep the old volume instead.
-_VOL_SUFFIX=$(basename "$SCRIPT_DIR" | tr -c 'a-zA-Z0-9_.-' '-' | sed 's/-*$//')
-_VOL_HASH=$(printf '%s' "$SCRIPT_DIR" | cksum | cut -d' ' -f1)
-KIT_VENV_VOLUME="${KIT_VENV_VOLUME:-kit-venv-${_VOL_SUFFIX}-${_VOL_HASH}}"
-
-# Verify image exists
-if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-    echo "Error: Docker image '$IMAGE_NAME' not found."
-    echo "  Build it first: cd container && ./build.sh"
-    exit 1
-fi
-
+# The GH auth decision runs BEFORE any bare-mode exec below, not after it.
+# `exec` replaces this process, so a block placed after the `exec_bare` call
+# sites simply never runs on `--local`, inside-a-container, or the Docker-missing
+# fallback — three launch paths that then got no precedence resolution, no
+# preflight checks, and no Keychain lookup. A `.env` declaring both GH_TOKEN and
+# GH_TOKEN_APP would hand the session both, and gh silently prefers the
+# environment PAT over the App credential the hooks store: the session works, as
+# the wrong identity, with nothing said. (kit #23.)
 # --- GitHub auth: pick a MODE, never mint -------------------------------------
 #
 # Two modes, both supported, never both at once:
@@ -541,11 +500,13 @@ if [ -n "${GH_TOKEN_APP:-}" ]; then
 fi
 
 if [ "$GH_AUTH_MODE" = app ]; then
-    # App mode is macOS-only: minting goes over the Mac host bridge. Launching a
-    # session that cannot possibly authenticate is worse than refusing here.
+    # App mode is macOS-only: the App's private key lives in the Mac Keychain,
+    # and minting reaches it either over the host bridge (container mode) or
+    # directly (bare). Either way this must be a Mac. Launching a session that
+    # cannot possibly authenticate is worse than refusing here.
     if [ "$(uname)" != "Darwin" ]; then
-        echo "Error: GH_TOKEN_APP='$GH_TOKEN_APP' needs the macOS host bridge, and this host is not macOS." >&2
-        echo "       Use a PAT (GH_TOKEN) here, or unset GH_TOKEN_APP." >&2
+        echo "Error: GH_TOKEN_APP='$GH_TOKEN_APP' needs macOS — the App's private key lives in the Mac Keychain." >&2
+        echo "       This host is $(uname). Use a PAT (GH_TOKEN) here, or unset GH_TOKEN_APP." >&2
         exit 1
     fi
     if [ ! -x "$HOME/.local/bin/multiplai-gh-token" ]; then
@@ -567,7 +528,11 @@ else
         # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
         # docker resolves from this process's ENVIRONMENT, so a plain shell variable
         # would arrive as nothing at all.
-        GH_TOKEN=$(security find-generic-password -a "$USER" -s "$GH_TOKEN_KEY" -w 2>/dev/null || true)
+        # `${USER:-…}`, not `$USER`: this runs under `set -u`, and USER is not
+        # guaranteed — a launch from cron, an SSH forced command, or any other
+        # non-login context has an empty environment. Dying with "USER: unbound
+        # variable" on the way to an optional Keychain lookup is a bad trade.
+        GH_TOKEN=$(security find-generic-password -a "${USER:-$(id -un)}" -s "$GH_TOKEN_KEY" -w 2>/dev/null || true)
         export GH_TOKEN
     fi
     if [ -z "${GH_TOKEN:-}" ]; then
@@ -578,6 +543,56 @@ else
             echo "Warning: \$GH_TOKEN not set. GitHub CLI will not be authenticated (set GH_TOKEN in .env or your profile)."
         fi
     fi
+fi
+
+
+# --- Explicit local mode ---
+if [[ "$MODE" == "local" ]]; then
+    exec_bare
+fi
+
+# --- Already inside a container? Run bare with full permissions ---
+if [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
+    exec_bare skip-permissions
+fi
+
+# --- Docker not available? Warn and fall back to bare mode ---
+if ! command -v docker &>/dev/null; then
+    echo "WARNING: Docker not found — running without container sandbox."
+    echo "  Host filesystem is NOT isolated. Permission prompts are active."
+    echo "  Install Docker and re-run ./setup.sh to build the sandbox image."
+    echo ""
+    exec_bare
+fi
+
+# --- Container mode (default) ---
+
+CONTAINER_ARGS=("claude" "--dangerously-skip-permissions" "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}")
+if [[ "$MODE" == "shell" ]]; then
+    # bash doesn't understand --plugin-dir / --add-dir — drop CLAUDE_ONLY_ARGS.
+    CONTAINER_ARGS=("bash")
+fi
+
+IMAGE_NAME="${IMAGE_NAME:-claude-multiplai:local}"
+
+# Per-runtime venv volume. Derived from this kit checkout's path so parallel
+# runtimes (e.g. ~/.multiplai-runtimes/{default,test-x}) never share one —
+# a shared volume is broken by construction: the venv bakes in absolute
+# paths, and the volume mounts at a different $SCRIPT_DIR per runtime.
+# basename for readability + path checksum for uniqueness; override with
+# KIT_VENV_VOLUME in .env. NOTE for pre-existing installs: the name changes
+# from the old literal 'kit-venv', so the first launch re-syncs the venv
+# into a fresh volume (a few minutes, self-healing); set
+# KIT_VENV_VOLUME=kit-venv to keep the old volume instead.
+_VOL_SUFFIX=$(basename "$SCRIPT_DIR" | tr -c 'a-zA-Z0-9_.-' '-' | sed 's/-*$//')
+_VOL_HASH=$(printf '%s' "$SCRIPT_DIR" | cksum | cut -d' ' -f1)
+KIT_VENV_VOLUME="${KIT_VENV_VOLUME:-kit-venv-${_VOL_SUFFIX}-${_VOL_HASH}}"
+
+# Verify image exists
+if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    echo "Error: Docker image '$IMAGE_NAME' not found."
+    echo "  Build it first: cd container && ./build.sh"
+    exit 1
 fi
 
 # --- Network egress profile ---

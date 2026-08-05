@@ -405,11 +405,11 @@ if $HAS_DOCKER; then
   # from an unverified or unbuilt checkout could leave the host gateway
   # version-skewed vs the image the bridge serves.
   #
-  # `multiplai-gh-token` rides the same path for the same reason: the host script
-  # and the gateway branch that allowlists it are two halves of one contract, and
-  # shipping them from different generations is exactly the version skew these
-  # gates exist to prevent. One loop, so a third host file can never be added on
-  # weaker terms by copy-paste.
+  # `multiplai-gh-token` and `multiplai-docker.py` ride the same path for the same
+  # reason: each host script and the gateway branch that allowlists it are two
+  # halves of one contract, and shipping them from different generations is
+  # exactly the version skew these gates exist to prevent. One loop, so a further
+  # host file can never be added on weaker terms by copy-paste.
   install_host_tool() {  # $1 = filename under container/
     local src="$SCRIPT_DIR/container/$1"
     local dst="$HOME/.local/bin/$1"
@@ -431,6 +431,7 @@ if $HAS_DOCKER; then
   if [ "$(uname -s)" = "Darwin" ]; then
     install_host_tool container-build-gateway.sh
     install_host_tool multiplai-gh-token
+    install_host_tool multiplai-docker.py
   fi
 fi
 

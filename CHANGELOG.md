@@ -17,6 +17,24 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Fixed
 
+- **Bare launches now make the same GitHub-auth decision as containerised
+  ones.** The mode-selection block sat *after* every bare-mode `exec`, and
+  `exec` replaces the process — so `--local`, launching from inside a
+  container, and the Docker-missing fallback all skipped it entirely. Three
+  consequences, all silent: a `.env` declaring both `GH_TOKEN` and
+  `GH_TOKEN_APP` handed the session both, and `gh` prefers an environment PAT
+  over the App credential the hooks store, so the session ran as the wrong
+  GitHub identity with nothing said; the App-mode preflight checks never ran,
+  so a misconfigured launch degraded at hook time instead of failing at launch
+  with a usable message; and the `GH_TOKEN_KEYCHAIN` lookup never happened, so
+  a profile relying on it launched unauthenticated. The decision now runs
+  before any launch path forks.
+- **A Keychain lookup no longer aborts the launcher when `USER` is unset.**
+  The lookup passes `-a "$USER"` under `set -u`, which is fine from a login
+  shell and fatal from cron or an SSH forced command. It falls back to
+  `id -un`. Previously unreachable on the bare paths; reachable now that they
+  run the same block.
+
 - **The destructive-command guard no longer switches itself off in a fresh
   clone or worktree.** Every hook command in `dotfiles/settings.json` ended
   with `2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log`, and the shell

@@ -54,6 +54,14 @@ esac
 exit 0
 """
 
+# Bare mode `exec`s `claude` directly, so the stub that stands in for it is how
+# a bare launch becomes observable at all.
+CLAUDE_STUB = """\
+#!/bin/bash
+env > "$CLAUDE_ENV_OUT"
+exit 0
+"""
+
 BASE_ENV_FILE = """\
 WORKSPACE="{ws}"
 GIT_AUTHOR_NAME="Env File Name"
@@ -69,11 +77,14 @@ SMOKE_TEST_VAR="hello"
 class Launch:
     """The observable result of one `claude.sh` invocation."""
 
-    def __init__(self, argv, docker_env, status, output):
+    def __init__(self, argv, docker_env, status, output, bare_env=None):
         self.argv = argv
         self.docker_env = docker_env
         self.status = status
         self.output = output
+        # What a bare (`--local`) launch handed the real `claude`. Empty dict
+        # when no bare launch happened.
+        self.bare_env = bare_env or {}
 
     def forwarded_bare(self, name):
         """True if `-e NAME` was emitted with no `=value` (so it stays out of `ps`)."""
@@ -106,6 +117,7 @@ class Kit:
         self.stub_dir = stub_dir
         self.argv_out = root / "argv.txt"
         self.env_out = root / "denv.txt"
+        self.bare_env_out = root / "benv.txt"
 
     def write_env(self, text):
         (self.root / ".env").write_text(text)
@@ -131,11 +143,13 @@ class Kit:
             "TERM": "xterm",
             "DOCKER_ARGV_OUT": str(self.argv_out),
             "DOCKER_ENV_OUT": str(self.env_out),
+            "CLAUDE_ENV_OUT": str(self.bare_env_out),
         }
         env.update({k: v for k, v in extra_env.items() if v is not None})
 
         self.argv_out.write_text("")
         self.env_out.write_text("")
+        self.bare_env_out.write_text("")
         proc = subprocess.run(
             [str(self.root / "claude.sh"), *args],
             env=env,
@@ -144,12 +158,17 @@ class Kit:
         )
 
         argv = [ln for ln in self.argv_out.read_text().splitlines()]
-        docker_env = {}
-        for line in self.env_out.read_text().splitlines():
-            if "=" in line:
-                key, _, value = line.partition("=")
-                docker_env[key] = value
-        return Launch(argv, docker_env, proc.returncode, proc.stdout + proc.stderr)
+
+        def _as_env(path):
+            out = {}
+            for line in path.read_text().splitlines():
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    out[key] = value
+            return out
+
+        return Launch(argv, _as_env(self.env_out), proc.returncode,
+                      proc.stdout + proc.stderr, _as_env(self.bare_env_out))
 
 
 def _patched_launcher():
@@ -168,6 +187,8 @@ def kit(tmp_path):
     stub_dir.mkdir()
     (stub_dir / "docker").write_text(DOCKER_STUB)
     (stub_dir / "docker").chmod(0o755)
+    (stub_dir / "claude").write_text(CLAUDE_STUB)
+    (stub_dir / "claude").chmod(0o755)
 
     home = tmp_path / "home"
     home.mkdir()
@@ -590,3 +611,91 @@ def test_launcher_parses():
     """Cheap backstop so a syntax error reports here, not as 30 opaque failures."""
     proc = subprocess.run(["bash", "-n", str(LAUNCHER)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+# --- The same decision on every launch path (#23) -----------------------------
+#
+# `exec` replaces the process, so a check placed after the bare-mode `exec_bare`
+# call sites never runs on `--local`, inside a container, or when Docker is
+# missing. The GH auth block used to sit there, which meant three launch paths
+# got no precedence resolution, no preflight, and no Keychain lookup — and a
+# `.env` declaring both identities handed the session both, with `gh` silently
+# preferring the environment PAT over the App credential the hooks store.
+#
+# These pin the block's effects on the bare path specifically. The container
+# path is already covered above; what must not regress is that the two agree.
+
+def test_local_mode_still_forwards_the_pat(kit):
+    """The baseline: a bare launch is authenticated at all."""
+    result = kit.launch("--local")
+    assert result.status == 0, result.output
+    assert result.bare_env.get("GH_TOKEN") == "token-from-env-file"
+    assert result.argv == [], "bare mode must not reach docker"
+
+
+def test_local_mode_refuses_two_declared_identities(kit):
+    """Previously this launched happily with both in the environment, and gh
+    picked the PAT over the App credential with nothing said."""
+    _pretend_macos(kit)
+    _install_host_minter(kit)
+    kit.append_env('GH_TOKEN_APP="acme"\n')
+
+    result = kit.launch("--local")
+    assert result.status != 0, result.output
+    assert "GH_TOKEN_APP" in result.output and "GH_TOKEN" in result.output
+    assert result.bare_env == {}, "claude was launched despite the conflict"
+
+
+def test_local_mode_app_mode_drops_the_pat(kit):
+    """App mode forwards the profile name and no token — on the bare path too.
+    A GH_TOKEN in the environment beats gh's credential store, so leaving one
+    set would run the session as the PAT's identity, not the App's."""
+    _pretend_macos(kit)
+    _install_host_minter(kit)
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
+
+    result = kit.launch("--local")
+    assert result.status == 0, result.output
+    assert result.bare_env.get("GH_TOKEN_APP") == "acme"
+    assert "GH_TOKEN" not in result.bare_env
+
+
+def test_local_mode_preflights_the_missing_minter(kit):
+    """Without the host minter every gh call in the session fails. Failing at
+    launch with the reason beats failing at hook time with a backoff."""
+    _pretend_macos(kit)
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
+
+    result = kit.launch("--local")
+    assert result.status != 0
+    assert "multiplai-gh-token" in result.output
+    assert result.bare_env == {}
+
+
+def test_local_mode_mints_from_the_keychain(kit):
+    """The `GH_TOKEN_KEYCHAIN` path never ran bare, so a profile relying on it
+    launched unauthenticated."""
+    _pretend_macos(kit)
+    security = kit.stub_dir / "security"
+    security.write_text("#!/bin/sh\nprintf 'token-from-keychain\\n'\n")
+    security.chmod(0o755)
+    kit.write_env(
+        APP_ENV_FILE.format(ws=kit.workspace).replace(
+            'GH_TOKEN_APP="acme"', 'GH_TOKEN_KEYCHAIN="gh-acme"'))
+
+    result = kit.launch("--local")
+    assert result.status == 0, result.output
+    assert result.bare_env.get("GH_TOKEN") == "token-from-keychain"
+
+
+def test_app_mode_on_a_non_mac_names_the_platform(kit):
+    """The App's private key is in the Mac Keychain; nothing on Linux can mint.
+    Bare or containerised, refusing at launch beats a session that cannot
+    authenticate."""
+    _install_host_minter(kit)
+    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
+
+    result = kit.launch("--local")
+    assert result.status != 0
+    assert "macOS" in result.output
+    assert result.bare_env == {}

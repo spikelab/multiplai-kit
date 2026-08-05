@@ -45,6 +45,22 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
   Pinned by `evals/unit/test_guard_hook_wiring.py`.
 
+- **The post-exit drain container actually drains now.** Closing the last tab
+  of the day was supposed to produce that day's diary entry and learnings via a
+  disposable drain container; instead the container started, failed on
+  `import multiplai_core`, and exited — every time, since 2026-08-04. The
+  command ran `uv run --no-project`, which disables resolution of the plugin's
+  `scripts/pyproject.toml`, the very file that provides that package. Nothing
+  surfaced it: the container's output is discarded and its exit status
+  deliberately ignored so a drain can never change what the launcher reports.
+  It now runs `uv run --project <install_path>/scripts`, the member-directory
+  form that resolves both in-repo and on an installed plugin.
+
+  This is the launcher half of the same defect in the plugin's own in-code
+  spawn sites (`multiplai-cc-mktplace#135`); both halves are needed for
+  deferred extraction to run at all. Pending markers were not lost — they queue
+  up and drain once both are in place.
+
 ### Removed
 
 - **The kit no longer ships an output style.** `dotfiles/output-styles/assistant.md`

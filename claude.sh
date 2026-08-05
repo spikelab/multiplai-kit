@@ -977,6 +977,14 @@ filter_resume_args() {
 # extraction children and exits, but this container is `--rm` — PID 1 exiting
 # would tear it down, children and all. --wait keeps the drain in the
 # foreground until every child has finished.
+#
+# --project is load-bearing too, and points at the plugin's scripts/ directory,
+# never a level above it. That directory's pyproject.toml is what provides
+# multiplai_core; an installed plugin is a copy of the plugin subtree with no
+# workspace root above it, so the member dir is the only form that resolves in
+# both layouts. This ran with project resolution disabled until 2026-08-05,
+# which meant drain_extractions.py died on `import multiplai_core` every time —
+# invisibly, since the container's output is discarded and its status ignored.
 DRAIN_CONTAINER_CMD=$(cat <<'DRAIN_EOF'
 command -v jq >/dev/null 2>&1 || exit 0
 command -v uv >/dev/null 2>&1 || exit 0
@@ -991,7 +999,8 @@ install_path=$(jq -r '
 [ -n "$install_path" ] || exit 0
 script="$install_path/scripts/drain_extractions.py"
 [ -f "$script" ] || exit 0
-exec uv run --no-project "$script" --wait --data-dir "$WORKSPACE/.multiplai/data"
+exec uv run --project "$install_path/scripts" "$script" \
+    --wait --data-dir "$WORKSPACE/.multiplai/data"
 DRAIN_EOF
 )
 

@@ -21,12 +21,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_CONFIG_DIR/hooks/gh-app-auth.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true",
+            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; bash $CLAUDE_CONFIG_DIR/hooks/gh-app-auth.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "gh auth setup-git 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
+            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; gh auth setup-git 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
           }
         ]
       }
@@ -37,11 +37,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_CONFIG_DIR/hooks/run-hook-python $CLAUDE_CONFIG_DIR/hooks/guard_destructive.py 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log"
+            "command": "bash $CLAUDE_CONFIG_DIR/hooks/guard-destructive.sh"
           },
           {
             "type": "command",
-            "command": "bash $CLAUDE_CONFIG_DIR/hooks/gh-app-refresh.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true",
+            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; bash $CLAUDE_CONFIG_DIR/hooks/gh-app-refresh.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true",
             "timeout": 30
           }
         ]
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_CONFIG_DIR/hooks/validate-syntax.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log"
+            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; bash $CLAUDE_CONFIG_DIR/hooks/validate-syntax.sh 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log"
           }
         ]
       }

@@ -12,6 +12,7 @@ Unit tests for the kit's **own live code**. Free, fast, no API key.
 | `unit/test_config_loading.py` | `multiplai.conf` parsing (model/effort ceilings) |
 | `unit/test_claude_sh_env.py` | `claude.sh` container env forwarding + GitHub auth-mode selection (stub `docker`) |
 | `unit/test_guard_destructive.py` | PreToolUse destructive-command guard, calibrated in both directions |
+| `unit/test_guard_hook_wiring.py` | Whether the guard is *reached* — no shell redirect on its hook command, `run-hook-python` makes its own log dir, wrapper denies when the guard can't run |
 | `unit/test_log_retention.py` | Log rotation/retention helper |
 | `unit/test_gh_app_hooks.py` | The GitHub App SessionStart/PreToolUse hooks (stub `gh-tok` + stub `gh`) |
 

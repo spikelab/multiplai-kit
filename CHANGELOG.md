@@ -141,9 +141,15 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 - **A fleet board you can keep on screen.** `dotfiles/scripts/fleet-watch
   [interval]` draws the agents that have a claim on you, in a plain terminal,
-  redrawn on a timer. Any key quits; redirected or piped it draws once and
-  exits, so `fleet-watch > board.txt` is a snapshot. Nothing to wire up — it
-  finds your workspace the way the marker script does.
+  redrawn on a timer. Any key quits — a single keystroke, not a line. Redirected
+  or piped it draws once and exits, so `fleet-watch > board.txt` is a snapshot.
+  Nothing to wire up — it finds your workspace the way the marker script does.
+
+  An interval of `0` is treated as junk and falls back to 5: `read -t 0` does
+  not wait, so it would spin rather than redraw. A renderer that fails ends the
+  run with its diagnostic on screen, instead of painting the error into a frame
+  that the next redraw wipes. The cursor is restored on any exit, including the
+  window simply being closed.
 
   ```
   FLEET 6 fronts · 2 need you · ⚠1 collision · upd 12s

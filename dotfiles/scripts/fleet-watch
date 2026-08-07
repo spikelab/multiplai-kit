@@ -4,8 +4,10 @@
 #   dotfiles/scripts/fleet-watch        # redraw every 5s
 #   dotfiles/scripts/fleet-watch 2      # every 2s
 #
-# Any key quits. Redirected or piped, it prints the board once and exits, so
-# `fleet-watch > board.txt` is a snapshot rather than a hung process.
+# Any key quits — a single keystroke, not a line, which is why the wait is
+# `read -n 1` and not a bare `read`. Redirected or piped, it prints the board
+# once and exits, so `fleet-watch > board.txt` is a snapshot rather than a hung
+# process.
 #
 # It renders through `fleet-render.py`, which still carries the fixed column
 # budget it was born with: checkpoint text clipped at 44 characters, no
@@ -19,8 +21,14 @@
 # Unlike `fleet-viewed.sh`, which is a tmux hook and silent by contract, this
 # one *prints* its failures — a person ran it and is looking at the output.
 
+# `0` is rejected along with the junk, and is the only interesting one: it
+# survives a digits-only test but `read -t 0` does not wait. Bash returns
+# immediately, non-zero unless a keystroke is already buffered — so the loop
+# never breaks and never pauses, and the board becomes a full-speed redraw
+# forking `tput` twice and `python3` once per iteration. Measured at 478
+# redraws per second against a do-nothing renderer.
 interval="${1:-5}"
-case "$interval" in ''|*[!0-9]*) interval=5 ;; esac
+case "$interval" in ''|0|*[!0-9]*) interval=5 ;; esac
 
 scripts="$(dirname "$0")"
 renderer="$scripts/fleet-render.py"
@@ -46,13 +54,18 @@ command -v python3 >/dev/null 2>&1 || {
     exit 1
 }
 
+# Stderr is deliberately *not* folded into stdout: whatever the renderer says
+# there is a failure, and a failure painted into the frame would be cleared by
+# the next redraw a few seconds later. It goes to the terminal, and the caller
+# below decides whether to stop.
 draw() {
+    local rows cols
     rows=$(tput lines 2>/dev/null); cols=$(tput cols 2>/dev/null)
     case "$rows" in ''|*[!0-9]*) rows=24 ;; esac
     case "$cols" in ''|*[!0-9]*) cols=120 ;; esac
 
     python3 "$renderer" --data-dir "$ws/.multiplai/data" \
-        --lines "$((rows - 1))" --width "$cols" 2>&1
+        --lines "$((rows - 1))" --width "$cols"
 }
 
 # Not a terminal — a pipe, a redirect, a test harness. Print the board once and
@@ -61,16 +74,27 @@ draw() {
 # redrawing forever rather than a board.
 if [ ! -t 1 ] || [ ! -r /dev/tty ]; then
     draw
-    exit 0
+    exit $?
 fi
 
-trap 'printf "\033[?25h\n"; exit 0' INT TERM
+# One restore point for the cursor, on `EXIT`, so it covers every way out —
+# the loop breaking, a renderer failure, and `SIGHUP` when the window is just
+# closed. A trap on `INT`/`TERM` alone leaves the cursor hidden in the user's
+# shell after a closed terminal, with nothing on screen to explain it.
+trap 'exit 130' INT TERM
+trap 'printf "\033[?25h\n"' EXIT
 printf '\033[?25l'   # hide the cursor; the trap puts it back
 
 while :; do
-    board=$(draw)
+    # Draw before clearing, so a renderer that dies leaves its diagnostic on
+    # screen instead of being wiped by the frame that was meant to replace it.
+    if ! board=$(draw); then
+        echo "fleet-watch: the renderer failed (see above)" >&2
+        exit 1
+    fi
     printf '\033[H\033[2J%s' "$board"   # home, clear, draw
-    read -r -t "$interval" _ </dev/tty && break
+    # `-n 1` because the documented behaviour is *any key*: a bare `read` waits
+    # for a newline, so the board would sit there until you pressed Enter.
+    # `-s` keeps that keystroke from echoing into the frame just painted.
+    read -rsn1 -t "$interval" _ </dev/tty && break
 done
-
-printf '\033[?25h\n'

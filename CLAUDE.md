@@ -119,7 +119,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 | `evals/unit/test_claude_sh_panes.py` | The tmux pane map `claude.sh` writes for the fleet board (stub `tmux` + stub `docker`) |
 | `evals/unit/test_fleet_viewed.py` | `dotfiles/scripts/fleet-viewed.sh` — the per-pane "viewed" marker, its silence on every failure path, and its 7-day prune (stub `tmux`) |
 | `evals/unit/test_fleet_render.py` | `dotfiles/scripts/fleet-render.py` — line/width budget, ordering, overflow, staleness, not-collected-vs-none, sanitization, and the stdlib-only host boundary |
-| `evals/unit/test_fleet_watch.py` | `dotfiles/scripts/fleet-watch` — the board in a terminal: workspace resolution, loud failure (the one fleet script a person reads), full-window sizing, draw-once off a tty (stub renderer) |
+| `evals/unit/test_fleet_watch.py` | `dotfiles/scripts/fleet-watch` — the board in a terminal: workspace resolution, loud failure (the one fleet script a person reads), full-window sizing, draw-once off a tty, and the redraw loop itself on a real pty via `pty.fork` — keystroke-quits, no spin at `interval 0`, cursor restored on `SIGHUP` (stub renderer) |
 
 **The memory / routing / learnings evals are gone** — they tested the retired in-tree hooks and were removed with them. Those mechanisms now live in the `multiplai-context` plugin, which has its own `tests/` (run from the plugin dir). Threshold for the kit tests: 100% (any failure is a bug).
 

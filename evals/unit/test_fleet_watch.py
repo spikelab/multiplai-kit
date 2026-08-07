@@ -6,9 +6,9 @@ failure path, because tmux puts a hook's stderr in your terminal; here the
 output goes to someone who is looking at it, so an unresolvable workspace has to
 say so rather than draw an empty board forever.
 
-The loop itself is not tested — a redraw timer around `read -t` has nothing in
-it to break, and driving it would mean owning a pty. What is pinned is
-everything that happens before the first redraw:
+Most of this file runs the script off a tty, where it draws once and exits —
+which is both a real path (`fleet-watch > board.txt`) and what makes the
+before-the-first-redraw assertions cheap:
 
 * it resolves the workspace from the environment first, then the marker;
 * it fails **loudly** and non-zero when it cannot;
@@ -17,13 +17,26 @@ everything that happens before the first redraw:
 
 That last one is not hypothetical: waiting on a keypress needs a tty, and
 without one the wait returns instantly — a busy loop redrawing forever at full
-speed instead of a board. Every test here runs down that branch, so it is also
-what makes the rest of the file possible.
+speed instead of a board.
+
+**The loop is tested too, on a real pty** (`TestOnARealTerminal`). An earlier
+version of this file argued it did not need to be — "a redraw timer around
+`read -t` has nothing in it to break" — and review then found two things broken
+in exactly those four lines: `read` without `-n 1` waited for a newline, so the
+documented *any key quits* took Enter; and `fleet-watch 0` passed the
+digits-only guard into a `read -t 0` that does not wait, redrawing at full speed
+forever. Neither is observable off a tty, because both live in the branch the
+other tests skip. Owning a pty is the price of covering them, and `pty.fork`
+makes it about fifteen lines.
 """
 
 import os
+import pty
+import select
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -72,6 +85,12 @@ class Watch:
         environ["RENDER_LOG"] = str(self.log)
         environ["COLUMNS"] = str(cols)
         environ["LINES"] = str(lines)
+        # `tput` reads `LINES`/`COLUMNS` before asking the terminal, which is
+        # what makes the size assertions possible off a tty — but only with a
+        # `TERM` it can look up. Pinned rather than inherited so the size tests
+        # mean the same thing on a machine (or a CI runner) with no `TERM`,
+        # where `tput` fails and the script's own fallback answers instead.
+        environ["TERM"] = "xterm"
         environ.update(env or {})
         # Captured stdout is a pipe, not a terminal, so the script takes its
         # one-shot path: draw once, exit. That is the same branch a test needs
@@ -81,6 +100,40 @@ class Watch:
             capture_output=True, text=True, env=environ, stdin=subprocess.DEVNULL,
             timeout=20,
         )
+
+    def _environ(self, env=None, cols=200, lines=50):
+        environ = dict(os.environ)
+        environ.pop("WORKSPACE", None)
+        environ["RENDER_LOG"] = str(self.log)
+        environ["COLUMNS"] = str(cols)
+        environ["LINES"] = str(lines)
+        environ["TERM"] = "xterm"
+        environ.update(env or {})
+        return environ
+
+    def spawn_on_a_tty(self, *args, env=None):
+        """The script with a real controlling terminal, so it takes the loop.
+
+        `pty.fork` rather than a pipe because the script asks two separate
+        questions — `[ -t 1 ]` and whether `/dev/tty` is readable — and only a
+        *controlling* terminal answers the second. A plain `openpty` handed to
+        `subprocess` gives the child a tty on fd 1 but no `/dev/tty`, so it
+        would take the one-shot branch and pin nothing.
+
+        Returns `(pid, master_fd)`. The caller owns both; `_drain` and
+        `_reap` below are the two things it ever needs to do with them.
+        """
+        environ = self._environ(env=env)
+        pid, fd = pty.fork()
+        if pid == 0:                                    # pragma: no cover
+            try:
+                os.execve("/bin/bash",
+                          ["bash", str(self.scripts / "fleet-watch"), *args],
+                          environ)
+            except BaseException:
+                pass
+            os._exit(127)
+        return pid, fd
 
     def renders(self):
         return [ln.split() for ln in self.log.read_text().splitlines()]
@@ -145,13 +198,29 @@ def test_a_missing_renderer_is_an_error(watch):
 
 
 def test_the_renderer_gets_the_whole_window(watch, tmp_path):
-    """The whole window. One row is reserved so the draw cannot scroll."""
+    """The whole window. One row is reserved so the draw cannot scroll.
+
+    Asserted as the exact numbers, not as `> 3` and `> 80`: the script falls
+    back to a hardcoded 24×120 when it cannot measure, and both of those
+    satisfy a loose bound — so the loose version of this test passed whether
+    the window was measured or not, which is the one thing it exists to tell
+    us. See the test below for the fallback itself.
+    """
     result = watch.run(env={"WORKSPACE": str(tmp_path / "ws")}, cols=200, lines=50)
 
     assert result.returncode == 0, result.stderr
-    data_dir, rows, cols = watch.renders()[0]
-    assert int(rows) > 3
-    assert int(cols) > 80
+    _data_dir, rows, cols = watch.renders()[0]
+    assert (int(rows), int(cols)) == (49, 200)
+
+
+def test_an_unmeasurable_window_falls_back_rather_than_failing(watch, tmp_path):
+    """`tput` needs a `TERM` it can look up, and a bare `cron`/`systemd`
+    environment has none. The board is still worth drawing at a guess."""
+    result = watch.run(env={"WORKSPACE": str(tmp_path / "ws"), "TERM": ""})
+
+    assert result.returncode == 0, result.stderr
+    _data_dir, rows, cols = watch.renders()[0]
+    assert (int(rows), int(cols)) == (23, 120)
 
 
 def test_off_a_terminal_it_draws_once_and_leaves(watch, tmp_path):
@@ -164,13 +233,148 @@ def test_off_a_terminal_it_draws_once_and_leaves(watch, tmp_path):
     assert "\033[2J" not in result.stdout   # no screen-clear into a pipe
 
 
-@pytest.mark.parametrize("given", ["", "abc", "-1", "5s"])
+@pytest.mark.parametrize("given", ["", "abc", "-1", "5s", "0"])
 def test_a_junk_interval_falls_back_rather_than_failing(watch, tmp_path, given):
-    """`read -t abc` is a bash error every tick — cheaper to reject the input."""
+    """`read -t abc` is a bash error every tick — cheaper to reject the input.
+
+    `"0"` is the one that is not obviously junk: it passes a digits-only test,
+    and `read -t 0` is legal bash. It just does not *wait* — it returns at once,
+    non-zero unless a keystroke is already buffered — so the loop would neither
+    break nor pause, redrawing at full speed and forking `python3` every
+    iteration. Measured before the guard: ~3000 iterations in under a second.
+    """
     result = watch.run(given, env={"WORKSPACE": str(tmp_path / "ws")})
 
     assert result.returncode == 0, result.stderr
     assert len(watch.renders()) == 1
+
+
+def test_a_failing_renderer_stops_rather_than_painting_the_error(watch, tmp_path):
+    """The board must not become its own error message.
+
+    Folding stderr into the frame would put a traceback on screen and then
+    clear it a few seconds later, forever — the reader sees a flicker and no
+    diagnostic. A renderer that exits non-zero ends the run instead, with its
+    own output left on the terminal.
+
+    Exercised down the one-shot branch, which is the only one reachable without
+    a pty; both branches call the same `draw`, so what is actually pinned here
+    is that it does not merge the two streams and does not swallow the status.
+    """
+    (watch.scripts / "fleet-render.py").write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys; print('boom', file=sys.stderr); sys.exit(3)\n"
+    )
+
+    result = watch.run(env={"WORKSPACE": str(tmp_path / "ws")})
+
+    assert result.returncode != 0
+    assert "boom" in result.stderr
+    assert "boom" not in result.stdout
+
+
+def _drain(fd, seconds, until=None):
+    """Read the pty for *seconds*, returning what came out.
+
+    Draining is not optional: a pty buffer that fills blocks the writer, so a
+    test that ignored the output would hang the very loop it is timing. Stops
+    early once *until* appears, which is how a test waits for the first frame
+    without also deciding how fast a frame must arrive.
+    """
+    out = b""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if until is not None and until in out:
+            break
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:                 # the child exited; the pty is gone
+            break
+        if not chunk:
+            break
+        out += chunk
+    return out
+
+
+def _reap(pid, fd, seconds=5):
+    """Wait for the child, killing it if it will not go. Returns its status."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        done, status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            os.close(fd)
+            return status
+        select.select([fd], [], [], 0.05)
+        try:
+            os.read(fd, 65536)
+        except OSError:
+            pass
+    os.kill(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)
+    os.close(fd)
+    return None
+
+
+class TestOnARealTerminal:
+    """The redraw loop, driven through a controlling tty.
+
+    Two bugs lived here behind the claim that the loop had nothing in it to
+    break, and neither is reachable from the one-shot branch every other test
+    in this file uses.
+    """
+
+    def test_a_single_keystroke_quits(self, watch, tmp_path):
+        """The documented contract is *any key*, and a bare `read` does not
+        honour it — it waits for a newline, so the board would sit there until
+        you pressed Enter. `-n 1` is what makes the sentence true.
+
+        Written as "one byte, no newline" on purpose: that is precisely the
+        input a bare `read` ignores, so this fails against it by timing out.
+        """
+        pid, fd = watch.spawn_on_a_tty("30", env={"WORKSPACE": str(tmp_path / "ws")})
+
+        _drain(fd, seconds=5, until=b"FLEET")
+        os.write(fd, b"q")
+        status = _reap(pid, fd, seconds=5)
+
+        assert status is not None, "a keystroke did not quit — it waited for Enter"
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+
+    def test_a_zero_interval_does_not_spin(self, watch, tmp_path):
+        """`0` survives a digits-only guard, and `read -t 0` does not wait: it
+        returns at once, non-zero unless a keystroke is already buffered. So
+        the loop neither breaks nor pauses, and the board becomes a full-speed
+        redraw forking `python3` every iteration.
+
+        One second is a wide margin either way — the guard makes this one
+        render, and without it the same second produced 478.
+        """
+        pid, fd = watch.spawn_on_a_tty("0", env={"WORKSPACE": str(tmp_path / "ws")})
+
+        _drain(fd, seconds=1.0)
+        _reap(pid, fd, seconds=2)
+
+        assert len(watch.renders()) <= 2, (
+            f"{len(watch.renders())} redraws in a second — `read -t 0` did not wait"
+        )
+
+    def test_the_cursor_is_restored_when_the_terminal_goes_away(self, watch, tmp_path):
+        """`SIGHUP` is the closed window, and it is the case a trap on
+        `INT`/`TERM` alone misses — the cursor stays hidden in whatever shell
+        the user lands back in, with nothing on screen to explain it. The trap
+        is on `EXIT` so every way out goes through one restore.
+        """
+        pid, fd = watch.spawn_on_a_tty("30", env={"WORKSPACE": str(tmp_path / "ws")})
+
+        _drain(fd, seconds=5, until=b"FLEET")
+        os.kill(pid, signal.SIGHUP)
+        tail = _drain(fd, seconds=2)
+        _reap(pid, fd, seconds=2)
+
+        assert b"\033[?25h" in tail, "the cursor was left hidden"
 
 
 def test_it_never_resolves_plugin_code(watch):

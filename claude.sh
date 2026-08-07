@@ -1132,10 +1132,23 @@ tmux_available() {
 # Captured once, before the first rename. `automatic-rename` is what tmux was
 # doing on its own; `rename-window` silently turns it off, so restoring the
 # name alone would leave the window frozen on the last thing it was called.
+#
+# **`-gv`, not `-v`.** `show-window-options -v` reads the *window-local* value
+# and prints **nothing** when the option was only ever set globally — which is
+# how anyone who puts `set -g automatic-rename off` in `~/.tmux.conf` has it.
+# Verified on tmux 3.4: with a global `off`, `-v` returns empty and `-gv`
+# returns `off`. `-gv` falls back to the global value and still reports a
+# window-local override, so it answers the question both callers actually ask.
+#
+# An empty answer is not a harmless one — it is read in *both* directions:
+# `write_pane_map` records the tab's name only when this is `off` (so it never
+# did), and the rename guard fires when it is *not* `off` (so it always did,
+# renaming tabs their owner had deliberately named). One misread option, two
+# opposite wrong answers.
 tmux_capture_window() {
     tmux_available || return 0
     TMUX_ORIG_NAME=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null) || TMUX_ORIG_NAME=""
-    TMUX_ORIG_AUTO=$(tmux show-window-options -v -t "$TMUX_PANE" automatic-rename 2>/dev/null) || TMUX_ORIG_AUTO=""
+    TMUX_ORIG_AUTO=$(tmux show-window-options -gv -t "$TMUX_PANE" automatic-rename 2>/dev/null) || TMUX_ORIG_AUTO=""
     return 0
 }
 

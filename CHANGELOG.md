@@ -337,6 +337,32 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Fixed
 
+- **The launcher misread `automatic-rename`, and got two opposite things wrong
+  with it.** `tmux_capture_window` read the option with
+  `show-window-options -v`, which returns the **window-local** value and prints
+  nothing when it was only ever set globally — which is how anyone with
+  `set -g automatic-rename off` in `~/.tmux.conf` has it. It now reads `-gv`,
+  which falls back to the global value and still reports a local override.
+  (Verified on tmux 3.4: with a global `off`, `-v` returns empty, `-gv` returns
+  `off`.)
+
+  The empty answer was read in both directions, so one misread option produced
+  two opposite wrong answers:
+
+  - **Your tab names were taken.** The rename guard fires when the option is
+    *not* `off`, so it always fired: every tab you had deliberately named was
+    renamed to the container name for the length of the session (restored on
+    exit). The one state that means "a human typed this string" was invisible.
+  - **…and never recorded.** `write_pane_map` records the window name only
+    when the option *is* `off`, so it never did. Every entry in `panes.json`
+    carried `"window": ""`, and the fleet board fell back to
+    `claude-personal-07213856` for every agent instead of the tab name.
+
+  The stub `tmux` in `evals/unit/test_claude_sh_tmux.py` and
+  `test_claude_sh_panes.py` answered `-v` and `-gv` identically, which is why
+  the tests passed throughout. It now models the scope, and three cases pin the
+  fix — one per direction, one on the mechanism.
+
 - **The statusline's `~` abbreviation never applied.** `${cwd/#$HOME/~}`
   tilde-expands its *replacement*, so the collapsed path expanded straight back
   to `$HOME` — invisible, because the result was the string it started with. The

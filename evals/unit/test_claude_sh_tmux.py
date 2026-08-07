@@ -47,7 +47,19 @@ printf '%s\\n' "$*" >> "$TMUX_LOG"
 [ -n "${TMUX_FAIL_STUB:-}" ] && exit 1
 case "$1" in
     display-message)      printf '%s\\n' "${TMUX_NAME_STUB-bash}" ;;
-    show-window-options)  printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
+    show-window-options)
+        # tmux scope, which is the whole point: `-v` reads the WINDOW-local
+        # value and prints nothing when the option was only ever set globally;
+        # `-gv` falls back to the global one. A stub that answered both the
+        # same way could not tell the two apart, which is how the launcher
+        # shipped reading `-v` against a global `set -g automatic-rename off`
+        # and getting "" forever.
+        case "$*" in
+            *-gv*) printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
+            *) [ "${TMUX_AUTO_SCOPE-window}" = "window" ] \\
+                   && printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
+        esac
+        ;;
 esac
 exit 0
 """
@@ -176,6 +188,34 @@ def test_a_pinned_name_is_not_handed_back_to_automatic_rename_either(tmuxkit):
     _launch(tmuxkit, TMUX_AUTO_STUB="off", TMUX_NAME_STUB="notes")
 
     assert _calls(tmuxkit, "set-window-option") == []
+
+
+def test_a_globally_pinned_name_is_left_alone_too(tmuxkit):
+    """The regression. `set -g automatic-rename off` in `~/.tmux.conf` is the
+    ordinary way to claim your tab names, and it claims *every* tab — but the
+    launcher read the option with `show-window-options -v`, which returns the
+    window-local value and prints **nothing** when only the global was ever
+    set. So the guard compared "" against "off", concluded nobody had claimed
+    anything, and renamed every tab it was launched from.
+
+    Reproduced on tmux 3.4: with a global `off`, `-v` returns empty and `-gv`
+    returns `off`.
+    """
+    _launch(tmuxkit, TMUX_AUTO_STUB="off", TMUX_AUTO_SCOPE="global",
+            TMUX_NAME_STUB="notes")
+
+    assert _calls(tmuxkit, "rename-window") == []
+    assert _calls(tmuxkit, "set-window-option") == []
+
+
+def test_the_option_is_read_with_global_fallback(tmuxkit):
+    """Stated as the mechanism, not the symptom, so a revert to `-v` fails here
+    with a readable reason rather than only through its two consequences."""
+    _launch(tmuxkit)
+
+    reads = _calls(tmuxkit, "show-window-options")
+    assert reads, "the option was never read"
+    assert all(" -gv " in f" {c} " for c in reads), reads
 
 
 def test_the_original_is_read_before_the_first_rename(tmuxkit):

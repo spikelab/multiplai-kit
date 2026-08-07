@@ -59,7 +59,19 @@ case "$1" in
             *session_name*) printf '%s\\n' "${TMUX_SESSION_STUB-work}" ;;
         esac
         ;;
-    show-window-options)  printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
+    show-window-options)
+        # tmux scope, which is the whole point: `-v` reads the WINDOW-local
+        # value and prints nothing when the option was only ever set globally;
+        # `-gv` falls back to the global one. A stub that answered both the
+        # same way could not tell the two apart, which is how the launcher
+        # shipped reading `-v` against a global `set -g automatic-rename off`
+        # and getting "" forever.
+        case "$*" in
+            *-gv*) printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
+            *) [ "${TMUX_AUTO_SCOPE-window}" = "window" ] \\
+                   && printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
+        esac
+        ;;
 esac
 exit 0
 """
@@ -205,6 +217,25 @@ def test_a_window_the_user_pinned_is_recorded(panekit):
     """`automatic-rename off` is the one state that means a human typed this
     string, which is the only case the label is worth anything."""
     _launch(panekit, "", "", TMUX_NAME_STUB="kit-review", TMUX_AUTO_STUB="off")
+
+    assert _at_run(panekit)["panes"][_launched_name(panekit)]["window"] == "kit-review"
+
+
+def test_a_globally_pinned_window_is_recorded_too(panekit):
+    """The other half of the same regression, in the opposite direction.
+
+    `set -g automatic-rename off` claims every tab, but the launcher read the
+    option with `show-window-options -v`, which returns the *window-local*
+    value and prints nothing when only the global was set. The record guard
+    tests `= "off"`, so it never fired and every entry carried `"window": ""`
+    — which is why the board showed `claude-personal…` for every agent instead
+    of the tab names their owner had chosen.
+
+    Reproduced on tmux 3.4: with a global `off`, `-v` returns empty and `-gv`
+    returns `off`.
+    """
+    _launch(panekit, "", "", TMUX_NAME_STUB="kit-review", TMUX_AUTO_STUB="off",
+            TMUX_AUTO_SCOPE="global")
 
     assert _at_run(panekit)["panes"][_launched_name(panekit)]["window"] == "kit-review"
 

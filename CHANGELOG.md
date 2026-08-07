@@ -200,9 +200,19 @@ public repo has shipped without in-tree memory hooks from day one (see the
   whole only to work on it whole; `Read` before you `Edit` or `Write` (a shell
   read does not satisfy the harness guard, which bounced 206 edits and 55
   writes); never re-read a path already read this session (30.5% of reads were
-  repeats, 41 MB of duplicate context); prefer `ast-grep` over `grep` for
-  anything structural; and put independent tool calls in one message (only
-  16.5% of tool-using turns did).
+  repeats, 41 MB of duplicate context); navigate code through the cheapest of
+  three tiers rather than by reading whole files; and put independent tool
+  calls in one message (only 16.5% of tool-using turns did).
+
+  The navigation tiers are named with the numbers that justify them, measured
+  on one 53.8 KB Python file: the harness's **`LSP` tool** (a deferred tool —
+  `ToolSearch("select:LSP")`) answers "what is in this file" in ~350 B and has
+  worked all along against the `pyright` and `typescript-language-server` the
+  container image already ships; **`ast-grep`** returns a definition node in
+  2.6 KB and covers the languages those two servers do not; and **`grep`**
+  remains the cheapest answer to "where is this mentioned" at 264 B. The point
+  is not that grep is bad — it is that reading a 53.8 KB file to find a
+  function was never any of these.
 
   Also new, each from a measured failure: skills must be invoked by
   fully-qualified `plugin:skill` name (the sole cause of a 23% `Skill` failure

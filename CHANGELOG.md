@@ -187,6 +187,42 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The global tool-usage rules are now written from measurement, and the
+  "never use Bash for file operations" rule is gone.** An audit of 111,780 real
+  tool calls across 5,809 sessions found that rule was ignored in 99% of
+  sessions — and was mostly wrong to ignore it *correctly*: 97% of shell greps
+  are composite pipelines the `Grep` tool cannot express, and a bounded shell
+  probe returns ~640 B where `Read` returns ~5.6 KB. `Read` alone accounts for
+  72% of every byte of tool output that has ever entered a context window.
+
+  `dotfiles/CLAUDE.md` now says what the old rule was reaching for — **bound
+  your output** — plus five things the data actually supports: read a file
+  whole only to work on it whole; `Read` before you `Edit` or `Write` (a shell
+  read does not satisfy the harness guard, which bounced 206 edits and 55
+  writes); never re-read a path already read this session (30.5% of reads were
+  repeats, 41 MB of duplicate context); navigate code through the cheapest of
+  three tiers rather than by reading whole files; and put independent tool
+  calls in one message (only 16.5% of tool-using turns did).
+
+  The navigation tiers are named with the numbers that justify them, measured
+  on one 53.8 KB Python file: the harness's **`LSP` tool** (a deferred tool —
+  `ToolSearch("select:LSP")`) answers "what is in this file" in ~350 B and has
+  worked all along against the `pyright` and `typescript-language-server` the
+  container image already ships; **`ast-grep`** returns a definition node in
+  2.6 KB and covers the languages those two servers do not; and **`grep`**
+  remains the cheapest answer to "where is this mentioned" at 264 B. The point
+  is not that grep is bad — it is that reading a 53.8 KB file to find a
+  function was never any of these.
+
+  Also new, each from a measured failure: skills must be invoked by
+  fully-qualified `plugin:skill` name (the sole cause of a 23% `Skill` failure
+  rate), a `WebFetch` 403 is a signal to switch to `host-browser` rather than
+  retry (483 measured 403s), and absolute paths beat `cd` (26% of Bash calls
+  opened with one).
+
+  The audit, its baselines, and the re-runnable extract/analyse scripts live in
+  the user's workspace at `RESOURCES/claude-perf-analysis/`.
+
 - **A tmux window you named yourself is no longer renamed.** The launcher used
   to take every tab, call it `claude-personal-06175625` for the session, and put
   the old name back on exit — including tabs you had deliberately named

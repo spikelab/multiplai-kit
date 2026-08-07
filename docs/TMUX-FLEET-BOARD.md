@@ -147,6 +147,30 @@ and it says `+3 more` rather than pretending otherwise.
 Fewer lines works: `status 2` gives the board one row, which renders as the
 header alone. More than 5 is not available at any price.
 
+### Or: the same board in a spare terminal
+
+If those rows are worth more to you than the board, keep `status` where it is
+and run the board somewhere else:
+
+```bash
+~/path/to/multiplai-kit/dotfiles/scripts/fleet-watch      # redraw every 5s
+~/path/to/multiplai-kit/dotfiles/scripts/fleet-watch 2    # every 2s
+```
+
+Nothing to wire up — it resolves the workspace the same way `fleet-bar` does,
+and any key quits. Run it in a second terminal pinned under the tmux one.
+
+It is the same renderer, so it inherits the same limits: checkpoint text still
+clipped at 44 characters, still no scrolling — it fills the window and says
+`+N more`. What it buys is height, and every window back. What it costs is
+ambience: a status bar is in every window whether you asked for it or not,
+whereas this you have to keep on screen yourself.
+
+One deliberate difference: `fleet-watch` **prints its failures**, where
+`fleet-bar` and `fleet-viewed.sh` are silent by contract. A person ran this one
+and is looking at the output — "cannot resolve the workspace" is the answer
+they came for, not noise in a status line.
+
 ### What it does and does not do
 
 - **It never recommends.** Readings only. "2 need you" is a fact; "merge the

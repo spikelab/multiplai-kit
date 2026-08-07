@@ -180,6 +180,20 @@ public repo has shipped without in-tree memory hooks from day one (see the
   container-writable. Pinned by `evals/unit/test_fleet_bar.py` and
   `evals/unit/test_fleet_bar_sh.py`.
 
+- **…and the same board in a spare terminal, if you would rather keep your
+  status bar.** `dotfiles/scripts/fleet-watch [interval]` redraws the fleet
+  board in a plain terminal — same renderer, sized to the whole window instead
+  of three status lines, any key to quit. Nothing to wire up: run it in a second
+  terminal beside the tmux one.
+
+  The trade it makes against the status bar is height for ambience — a bar is
+  in every window whether you asked for it or not; this you have to keep on
+  screen yourself. It reuses `fleet-bar-render.py` unchanged, so checkpoint text
+  is still clipped at 44 characters and there is no scrolling: it fills the
+  window and says `+N more`. Unlike the other two host-side scripts it is
+  interactive, so it **does** print its failures — a person ran it and is
+  looking at the output.
+
 - **`multiplai-docker.py` is installed as a host tool on macOS.** The container
   release ships a host-side runner for pre-frozen Docker Compose stacks, letting
   a session start, inspect and tear down parallel named instances of allowlisted

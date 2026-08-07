@@ -187,6 +187,32 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The global tool-usage rules are now written from measurement, and the
+  "never use Bash for file operations" rule is gone.** An audit of 111,780 real
+  tool calls across 5,809 sessions found that rule was ignored in 99% of
+  sessions — and was mostly wrong to ignore it *correctly*: 97% of shell greps
+  are composite pipelines the `Grep` tool cannot express, and a bounded shell
+  probe returns ~640 B where `Read` returns ~5.6 KB. `Read` alone accounts for
+  72% of every byte of tool output that has ever entered a context window.
+
+  `dotfiles/CLAUDE.md` now says what the old rule was reaching for — **bound
+  your output** — plus five things the data actually supports: read a file
+  whole only to work on it whole; `Read` before you `Edit` or `Write` (a shell
+  read does not satisfy the harness guard, which bounced 206 edits and 55
+  writes); never re-read a path already read this session (30.5% of reads were
+  repeats, 41 MB of duplicate context); prefer `ast-grep` over `grep` for
+  anything structural; and put independent tool calls in one message (only
+  16.5% of tool-using turns did).
+
+  Also new, each from a measured failure: skills must be invoked by
+  fully-qualified `plugin:skill` name (the sole cause of a 23% `Skill` failure
+  rate), a `WebFetch` 403 is a signal to switch to `host-browser` rather than
+  retry (483 measured 403s), and absolute paths beat `cd` (26% of Bash calls
+  opened with one).
+
+  The audit, its baselines, and the re-runnable extract/analyse scripts live in
+  the user's workspace at `RESOURCES/claude-perf-analysis/`.
+
 - **A tmux window you named yourself is no longer renamed.** The launcher used
   to take every tab, call it `claude-personal-06175625` for the session, and put
   the old name back on exit — including tabs you had deliberately named

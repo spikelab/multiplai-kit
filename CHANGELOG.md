@@ -48,6 +48,30 @@ public repo has shipped without in-tree memory hooks from day one (see the
   a failing tmux or docker are silent no-ops, and none of them can change a
   session's exit status. Pinned by `evals/unit/test_claude_sh_panes.py`.
 
+- **`dotfiles/scripts/fleet-viewed.sh` records when you last looked at a tab.**
+  The other half of the fleet board: with the pane map saying *which* pane holds
+  which container, this says *when* each pane was last on screen. Bound to
+  tmux's `after-select-pane`, `after-select-window`, `client-focus-in` and
+  `after-rename-window`, it writes a three-line marker per pane under
+  `$WORKSPACE/.multiplai/data/tmux/viewed/<n>` — the view timestamp, the
+  window's name at that moment, and the tmux socket that issued the pane id.
+  The fleet renderer joins the two later to answer the only question that
+  matters with six tabs running: which of these has done something since I last
+  looked?
+
+  It fires on **every** pane switch, so it is pure bash — no `python`, no `jq`,
+  one batched `tmux display-message`, one `printf`. It also never prints: tmux
+  puts a hook's stderr in your terminal, so a missing workspace, an unwritable
+  data dir, a pane id that is not a pane id, or no tmux at all are all silent
+  exits. Markers older than **7 days** are pruned on each run — pane ids climb
+  for the life of a tmux server, and a marker's question is about the last few
+  minutes.
+
+  **You have to wire it up yourself.** The kit does not touch `~/.tmux.conf` —
+  it is your file, outside the workspace, and invisible to a container-side
+  session. The four lines to paste (and why `set-hook -g`, not `-ga`) are in
+  `docs/TMUX-FLEET-BOARD.md`. Pinned by `evals/unit/test_fleet_viewed.py`.
+
 - **`multiplai-docker.py` is installed as a host tool on macOS.** The container
   release ships a host-side runner for pre-frozen Docker Compose stacks, letting
   a session start, inspect and tear down parallel named instances of allowlisted

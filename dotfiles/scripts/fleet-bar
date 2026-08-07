@@ -29,9 +29,19 @@ esac
 # environment first, then the marker file the kit writes at setup. tmux runs
 # `#()` through the *server's* environment, which predates any launcher, so the
 # file fallback is the path that fires in practice.
+#
+# That fallback must not go through `$CLAUDE_CONFIG_DIR`. This script runs on
+# the **host**, where nothing exports it — it is set by the launcher, for the
+# container. `setup.sh` writes the marker next to this script's own directory
+# (`dotfiles/.workspace`), so resolving it relative to `$0` is the only form
+# that works with no environment at all. Reading it via `$CLAUDE_CONFIG_DIR`
+# meant the documented tmux wiring produced a permanently empty board.
 ws="${WORKSPACE:-}"
 if [ -z "$ws" ] && [ -r "${CLAUDE_CONFIG_DIR:-}/.workspace" ]; then
     read -r ws < "$CLAUDE_CONFIG_DIR/.workspace"
+fi
+if [ -z "$ws" ] && [ -r "$(dirname "$0")/../.workspace" ]; then
+    read -r ws < "$(dirname "$0")/../.workspace"
 fi
 if [ -z "$ws" ]; then echo ""; exit 0; fi
 

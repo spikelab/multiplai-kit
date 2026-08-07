@@ -42,8 +42,15 @@ set-hook -g client-focus-in     'run-shell -b "#{@fleet-viewed} #{pane_id}"'
 set-hook -g after-rename-window 'run-shell -b "#{@fleet-viewed} #{pane_id}"'
 ```
 
-Replace the path with wherever you cloned the kit. Three details are
-load-bearing:
+Replace the path with wherever you cloned the kit — and **point it at the
+installed `dotfiles/scripts/`, not a copy**. Both host-side scripts find your
+workspace by reading `.workspace`, which `setup.sh` writes one directory above
+them; a script moved somewhere else loses that and goes silent, since neither
+`$WORKSPACE` nor `$CLAUDE_CONFIG_DIR` exists in a tmux server's environment.
+(If you must relocate them, set `WORKSPACE` for the tmux server instead:
+`set-environment -g WORKSPACE /path/to/workspace`.)
+
+Three details are load-bearing:
 
 - **`set-hook -g`, never `-ga`.** `-ga` *appends*, so every config reload stacks
   another copy of the hook and the script runs N times per pane switch. `-g`
@@ -195,3 +202,18 @@ switch. If nothing appears: check the path in `@fleet-viewed` resolves, and run
 the script by hand (`dotfiles/scripts/fleet-viewed.sh %1`) — by contract it
 stays silent when it fails, so a hand-run that writes nothing means the
 workspace did not resolve.
+
+The board itself has the same failure signature, and it is worth knowing that
+**an empty bar and an idle fleet look identical**. Both scripts print nothing
+and exit 0 when they cannot find the workspace, by design — a status bar is the
+wrong place for an error message. So if the bar is blank, confirm resolution
+before concluding there is nothing to show:
+
+```bash
+dotfiles/scripts/fleet-bar 1                       # as tmux runs it
+WORKSPACE=/path/to/workspace dotfiles/scripts/fleet-bar 1   # forced
+```
+
+A header from the second and nothing from the first means the marker is not
+where the script expects it — check that `dotfiles/.workspace` exists and that
+you wired tmux to the installed script rather than a copy.

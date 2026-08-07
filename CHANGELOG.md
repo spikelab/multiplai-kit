@@ -66,6 +66,20 @@ public repo has shipped without in-tree memory hooks from day one (see the
   like a context cap it never was (the real threshold is the minimum of that
   setting and the model's own context window).
 
+### Fixed
+
+- **The tmux fleet board rendered permanently empty for everyone who followed
+  the documented wiring.** `fleet-bar` and `fleet-viewed.sh` resolved the
+  workspace via `$CLAUDE_CONFIG_DIR/.workspace`, but `setup.sh` writes that
+  marker to `dotfiles/.workspace`, and `$CLAUDE_CONFIG_DIR` is exported by the
+  launcher *for the container* — it does not exist in a tmux server's
+  environment on the host. Both scripts now also read `.workspace` relative to
+  their own location, which needs no environment at all. Both exit silently by
+  contract, so the symptom was a blank status bar and a `viewed/` directory
+  that was never created — indistinguishable from an idle fleet.
+  `docs/TMUX-FLEET-BOARD.md` gains a "the bar is blank" diagnostic for the same
+  reason, since the failure cannot announce itself.
+
 ### Added
 
 - **The launcher now records which tmux pane each container is in.** Launching

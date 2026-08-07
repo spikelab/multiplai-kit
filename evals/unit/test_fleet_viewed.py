@@ -188,8 +188,12 @@ def test_a_second_view_overwrites_rather_than_appends(run):
 
 def test_the_workspace_falls_back_to_the_dotfile(run, tmp_path):
     """A tmux hook inherits the *tmux server's* environment, which was started
-    long before any launcher exported `WORKSPACE`. The file fallback — the same
-    one `statusline.sh` uses — is the path that actually fires in practice."""
+    long before any launcher exported `WORKSPACE`.
+
+    This `$CLAUDE_CONFIG_DIR` form is kept for the container, where the
+    launcher does export it. It is **not** the path that fires on the host —
+    see the test below, which is.
+    """
     config = tmp_path / "cfg"
     config.mkdir()
     ws = tmp_path / "ws"
@@ -198,6 +202,44 @@ def test_the_workspace_falls_back_to_the_dotfile(run, tmp_path):
     r = run("%9", ws=None, CLAUDE_CONFIG_DIR=str(config))
     _assert_silent(r)
     assert (r.viewed_dir / "9").exists()
+
+
+def test_the_marker_beside_the_script_resolves_the_workspace(tmp_path):
+    """The host case, and the one that was broken.
+
+    This script runs from a tmux hook on the Mac, where `$WORKSPACE` is unset
+    and `$CLAUDE_CONFIG_DIR` is *never* set — the launcher exports that one
+    into the container. `setup.sh` writes `dotfiles/.workspace` one level above
+    this script, so the `$0`-relative read is the only resolution available
+    with an empty environment. Without it every hook exited silently and no
+    marker was ever written, which reads identically to "you have not looked
+    at anything".
+    """
+    dotfiles = tmp_path / "dotfiles"
+    scripts = dotfiles / "scripts"
+    scripts.mkdir(parents=True)
+    script = scripts / "fleet-viewed.sh"
+    script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+    script.chmod(0o755)
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (dotfiles / ".workspace").write_text(f"{ws}\n", encoding="utf-8")
+
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    (stub_dir / "tmux").write_text(TMUX_STUB)
+    (stub_dir / "tmux").chmod(0o755)
+
+    proc = subprocess.run(
+        [str(script), "%7"],
+        env={"PATH": f"{stub_dir}:/usr/bin:/bin", "HOME": str(tmp_path / "home")},
+        capture_output=True, text=True, timeout=30,
+    )
+
+    assert proc.returncode == 0
+    assert proc.stdout == "" and proc.stderr == ""
+    assert (ws / ".multiplai" / "data" / "tmux" / "viewed" / "7").exists()
 
 
 def test_it_creates_the_marker_directory(run):

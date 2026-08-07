@@ -162,6 +162,37 @@ def test_no_workspace_prints_an_empty_line(barsh):
     assert proc.stdout == "\n"
 
 
+def test_the_marker_beside_the_script_resolves_the_workspace(barsh):
+    """The host has no `$WORKSPACE` and no `$CLAUDE_CONFIG_DIR`.
+
+    tmux runs `#()` through the *server's* environment, which predates any
+    launcher, so neither variable is set — and `$CLAUDE_CONFIG_DIR` is set by
+    the launcher for the *container*, so on the host it never fires at all.
+    `setup.sh` writes `dotfiles/.workspace`, one level up from this script;
+    resolving it relative to `$0` is the only form that works with an empty
+    environment. Without it the documented tmux wiring renders a permanently
+    empty board, which is indistinguishable from "no agents".
+    """
+    (barsh.scripts.parent / ".workspace").write_text(
+        str(barsh.workspace) + "\n", encoding="utf-8")
+    barsh.write_cache("board line one")
+
+    proc = barsh.run("1", ws=False)
+
+    _assert_one_clean_line(proc)
+    assert proc.stdout == "board line one\n"
+
+
+def test_the_environment_still_wins_over_the_marker(barsh):
+    """A launcher-set `$WORKSPACE` must beat the file, or a session pointed at
+    a second workspace would silently read the first one's board."""
+    (barsh.scripts.parent / ".workspace").write_text(
+        str(barsh.tmp_path / "other-ws") + "\n", encoding="utf-8")
+    barsh.write_cache("from the env workspace")
+
+    assert barsh.run("1").stdout == "from the env workspace\n"
+
+
 def test_a_missing_renderer_prints_an_empty_line(barsh):
     (barsh.scripts / "fleet-bar-render.py").unlink()
 

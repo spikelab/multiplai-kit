@@ -8,12 +8,19 @@
   },
   "autoCompactEnabled": false,
   "permissions": {
+    "deny": [
+      "Skill(deep-research)"
+    ],
     "allowedTools": [
       "Read",
       "Bash(git *)",
       "Bash(gh *)",
       "WebSearch"
     ]
+  },
+  "model": "claude-opus-5[1m]",
+  "skillOverrides": {
+    "deep-research": "off"
   },
   "hooks": {
     "SessionStart": [
@@ -67,7 +74,13 @@
   },
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true,
-    "multiplai-context@multiplai": true
+    "multiplai-context@multiplai": true,
+    "multiplai-dev@multiplai": true,
+    "multiplai-media@multiplai": true,
+    "multiplai-messaging@multiplai": true,
+    "multiplai-pm@multiplai": true,
+    "multiplai-research@multiplai": true,
+    "multiplai-writing@multiplai": true
   },
   "spinnerTipsEnabled": false,
   "alwaysThinkingEnabled": true,
@@ -80,8 +93,10 @@
         "skills_dir": "",
         "enable_resources": false,
         "resources_dir": "",
-        "memory_router": "token_overlap",
+        "enable_costs": true,
+        "memory_router": "llm",
         "router_model": "claude-haiku-4-5",
+        "checkpoint_timeout_s": "480",
         "checkpoint_hard_stop_tokens": "250000"
       }
     }
@@ -89,5 +104,7 @@
   "tui": "default",
   "autoMemoryEnabled": false,
   "skipDangerousModePermissionPrompt": true,
-  "theme": "dark"
+  "theme": "dark",
+  "remoteControlAtStartup": false,
+  "agentPushNotifEnabled": true
 }

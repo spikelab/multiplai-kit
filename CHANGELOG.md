@@ -60,7 +60,9 @@ public repo has shipped without in-tree memory hooks from day one (see the
   looked?
 
   It fires on **every** pane switch, so it is pure bash — no `python`, no `jq`,
-  one batched `tmux display-message`, one `printf`. It also never prints: tmux
+  one batched `tmux display-message`, one `printf` — and that `display-message`
+  is targeted at the pane tmux named in the hook, not at the client's current
+  pane, which during a window switch is still the one you left. It also never prints: tmux
   puts a hook's stderr in your terminal, so a missing workspace, an unwritable
   data dir, a pane id that is not a pane id, or no tmux at all are all silent
   exits. Markers older than **7 days** are pruned on each run — pane ids climb

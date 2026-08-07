@@ -42,10 +42,26 @@ SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-viewed.sh"
 # Answers the one query the script makes: window name and socket path, in a
 # single `display-message`. TMUX_FAIL_STUB is "tmux is on PATH but refuses",
 # which is what a hook run against a dead server looks like.
+#
+# It resolves the window name **against `-t`**, the way real tmux does, and
+# falls back to a distinctive `current-pane` when no target was given. A stub
+# that answered the same regardless of target could not tell a targeted read
+# from an untargeted one — which is the whole bug this pins.
 TMUX_STUB = """\
 #!/bin/bash
 [ -n "${TMUX_FAIL_STUB:-}" ] && exit 1
-printf '%s\\n%s\\n' "${TMUX_WINDOW_STUB-pi-eval}" "${TMUX_SERVER_STUB-/tmp/tmux-501/default}"
+target=""
+prev=""
+for a in "$@"; do
+    [ "$prev" = "-t" ] && target="$a"
+    prev="$a"
+done
+if [ -n "$target" ]; then
+    printf '%s\\n' "${TMUX_WINDOW_STUB-pi-eval}${TMUX_NAME_PER_PANE:+-$target}"
+else
+    printf '%s\\n' "current-pane"
+fi
+printf '%s\\n' "${TMUX_SERVER_STUB-/tmp/tmux-501/default}"
 exit 0
 """
 
@@ -146,6 +162,18 @@ def test_the_window_name_is_recorded_fresh_each_time(run):
 
     r = run("%4", TMUX_WINDOW_STUB="after")
     assert r.marker("4")[1] == "after"
+
+
+def test_the_window_name_is_read_from_the_pane_the_hook_names(run):
+    """Not from whatever the client's current pane happens to be. These hooks
+    fire at the moments that is in flux — `after-select-window` hands the new
+    pane in `#{hook_pane}` while the client may still consider the old one
+    current — so an untargeted `display-message` writes the window you just
+    left into the marker for the window you just arrived at. The marker's
+    entire job is to say what is on screen now."""
+    r = run("%7", TMUX_NAME_PER_PANE="1")
+
+    assert r.marker("7")[1] == "pi-eval-%7"
 
 
 def test_a_second_view_overwrites_rather_than_appends(run):

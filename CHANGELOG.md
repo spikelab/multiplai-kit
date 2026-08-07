@@ -77,8 +77,11 @@ public repo has shipped without in-tree memory hooks from day one (see the
   their own location, which needs no environment at all. Both exit silently by
   contract, so the symptom was a blank status bar and a `viewed/` directory
   that was never created — indistinguishable from an idle fleet.
-  `docs/TMUX-FLEET-BOARD.md` gains a "the bar is blank" diagnostic for the same
-  reason, since the failure cannot announce itself.
+  `docs/TMUX-FLEET-BOARD.md` gains a resolution diagnostic for the same reason,
+  since a hook's failure cannot announce itself. (The board's half of that
+  problem is gone rather than documented — see *Removed*: `fleet-watch` prints
+  its failures, so a blank board is no longer indistinguishable from an idle
+  fleet.)
 
 ### Added
 

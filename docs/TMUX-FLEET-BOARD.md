@@ -206,17 +206,22 @@ the script by hand (`dotfiles/scripts/fleet-viewed.sh %1`) — by contract it
 stays silent when it fails, so a hand-run that writes nothing means the
 workspace did not resolve.
 
-The board itself has the same failure signature, and it is worth knowing that
-**an empty bar and an idle fleet look identical**. Both scripts print nothing
-and exit 0 when they cannot find the workspace, by design — a status bar is the
-wrong place for an error message. So if the bar is blank, confirm resolution
-before concluding there is nothing to show:
+**The board no longer has that failure signature**, and that is the point of it
+being a terminal rather than a status bar. When the old `fleet-bar` could not
+resolve the workspace it printed nothing and exited 0 — an empty bar and an idle
+fleet looked identical, which is how the board shipped broken. `fleet-watch` is
+run by a person who is looking at the output, so it says what went wrong and
+exits non-zero:
 
 ```bash
-dotfiles/scripts/fleet-bar 1                       # as tmux runs it
-WORKSPACE=/path/to/workspace dotfiles/scripts/fleet-bar 1   # forced
+dotfiles/scripts/fleet-watch          # names the failure, or draws the board
 ```
 
-A header from the second and nothing from the first means the marker is not
-where the script expects it — check that `dotfiles/.workspace` exists and that
-you wired tmux to the installed script rather than a copy.
+If it reports `cannot resolve the workspace`, check that `dotfiles/.workspace`
+exists (`setup.sh` writes it) and that you are running the installed script
+rather than a copy or a symlink — the fallback reads the marker relative to the
+script's own location, so it only travels with the install.
+
+`fleet-viewed.sh` keeps the silent contract, because tmux puts a hook's stderr
+in your terminal on every pane switch. That inversion is deliberate; it is the
+one script here you have to diagnose by hand-running, as above.

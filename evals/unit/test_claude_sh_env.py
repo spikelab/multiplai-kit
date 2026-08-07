@@ -429,6 +429,68 @@ def test_config_values_are_not_evaluated_as_shell(kit, tmp_path):
     assert not canary.exists()
 
 
+# --- IDE lockfile mount -----------------------------------------------------
+#
+# What makes `/ide` work from a container against an editor on the host. Two
+# halves, and each fails in a way that looks like the other: the mount (the CLI
+# cannot find a lockfile at all) and CLAUDE_CODE_IDE_HOST_OVERRIDE (it finds one
+# and dials container-localhost, where nothing listens).
+
+
+def test_ide_lockfile_dir_is_mounted_readonly_at_the_home_path(kit):
+    """The container path is /home/agent/.claude/ide, NOT "$DOTFILES_DIR/ide".
+
+    The CLI's search path is the resolved config dir *plus* $HOME/.claude/ide
+    whenever CLAUDE_CONFIG_DIR is set — which it always is here. Mounting at the
+    dotfiles path is the plausible-looking mistake, and it fails silently: `/ide`
+    just reports no IDE.
+    """
+    ide_dir = kit.home / ".claude" / "ide"
+    ide_dir.mkdir(parents=True)
+    (ide_dir / "59811.lock").write_text('{"port":59811}')
+
+    result = kit.launch("--shell", "-c", "true")
+    assert f"{ide_dir}:/home/agent/.claude/ide:ro" in result.argv
+
+
+def test_ide_mount_is_skipped_when_the_host_has_no_lockfile_dir(kit):
+    """`docker -v` on a missing source silently creates a root-owned directory
+    on the host. Without the [ -d ] guard that happens on every launch, for
+    every user with no editor extension installed."""
+    result = kit.launch("--shell", "-c", "true")
+    assert not any("/home/agent/.claude/ide" in a for a in result.argv)
+    assert not (kit.home / ".claude" / "ide").exists()
+
+
+def test_ide_lock_dir_override_is_honoured_and_not_forwarded(kit, tmp_path):
+    """It names a *host* path, so it is launcher-only: meaningless in the
+    container, and denied like GEMINI_CONFIG_DIR and GCP_KEY_FILE."""
+    custom = tmp_path / "elsewhere" / "ide"
+    custom.mkdir(parents=True)
+
+    result = kit.launch("--shell", "-c", "true", IDE_LOCK_DIR=str(custom))
+    assert f"{custom}:/home/agent/.claude/ide:ro" in result.argv
+    assert not result.mentions("IDE_LOCK_DIR")
+
+
+def test_tilde_in_ide_lock_dir_is_expanded(kit):
+    ide_dir = kit.home / ".idetest"
+    ide_dir.mkdir()
+    result = kit.launch("--shell", "-c", "true", IDE_LOCK_DIR="~/.idetest")
+    assert f"{ide_dir}:/home/agent/.claude/ide:ro" in result.argv
+
+
+def test_ide_host_override_reaches_the_container(kit):
+    """The other half. Forwarded by the ordinary dynamic rule — it is a
+    container-side variable, so it must NOT be on the denylist."""
+    kit.write_env(BASE_ENV_FILE.format(ws=kit.workspace))
+    kit.append_env('CLAUDE_CODE_IDE_HOST_OVERRIDE="host.docker.internal"\n')
+
+    result = kit.launch("--shell", "-c", "true")
+    assert result.forwarded_bare("CLAUDE_CODE_IDE_HOST_OVERRIDE")
+    assert result.resolved("CLAUDE_CODE_IDE_HOST_OVERRIDE") == "host.docker.internal"
+
+
 # --- profile overlays -------------------------------------------------------
 
 

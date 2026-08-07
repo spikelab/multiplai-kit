@@ -15,9 +15,14 @@ The invariants this file breaks if a future edit does:
   computes a new container name and the tab must follow the container it shows;
 * it targets ``$TMUX_PANE``, never the active window — on a take-back relaunch
   the window the user is looking at is frequently not this one;
-* the original name is **restored on every exit path**, and restoring means
-  re-enabling ``automatic-rename`` when it was on, not re-pinning the captured
-  string (which would freeze the tab on the shell's name at launch time);
+* a tab the **user has named is never touched** — ``rename-window`` is what
+  turns ``automatic-rename`` off, so ``off`` is the signal that a human claimed
+  this window, and the launcher neither renames it nor hands it back to
+  ``automatic-rename`` on the way out;
+* the original name is **restored on every exit path** the launcher did rename,
+  and restoring means re-enabling ``automatic-rename`` (it was on, or the
+  rename would not have happened), not re-pinning the captured string (which
+  would freeze the tab on the shell's name at launch time);
 * it never runs on a path that ``exec``s away (``--local``, in-container bare,
   driver) — the EXIT trap could not fire there and the tab would keep a dead
   session's name forever;
@@ -147,14 +152,30 @@ def test_an_automatic_name_is_handed_back_to_tmux(tmuxkit):
     assert any("automatic-rename on" in c for c in _calls(tmuxkit, "set-window-option"))
 
 
-def test_a_pinned_name_is_restored_verbatim(tmuxkit):
-    """The user had named this window themselves. Handing it to
-    `automatic-rename` would destroy a deliberate choice."""
+def test_a_pinned_name_is_never_taken_in_the_first_place(tmuxkit):
+    """The user had named this window themselves, and `rename-window` is what
+    sets `automatic-rename` to `off` — so `off` *is* the signal that a human
+    claimed this tab.
+
+    The launcher used to rename over it and put the string back on exit, which
+    was correct but pointless churn: the tab read `claude-personal-06175625`
+    for the whole session, which is exactly the name the user had rejected by
+    typing their own. Now it is left alone. The board reads the real name back
+    out of the pane map, so a pinned name is better input than the container
+    name ever was."""
     _launch(tmuxkit, TMUX_AUTO_STUB="off", TMUX_NAME_STUB="notes")
 
-    renames = _calls(tmuxkit, "rename-window")
-    assert renames[-1].endswith(" notes")
-    assert not _calls(tmuxkit, "set-window-option")
+    assert _calls(tmuxkit, "rename-window") == []
+
+
+def test_a_pinned_name_is_not_handed_back_to_automatic_rename_either(tmuxkit):
+    """The other half, and the one a partial fix would miss. `TMUX_RENAMED`
+    stays 0 when the rename is skipped, so the restore path must be inert —
+    setting `automatic-rename on` here would un-pin a name the launcher never
+    touched, and the tab would drift to a shell-derived name after exit."""
+    _launch(tmuxkit, TMUX_AUTO_STUB="off", TMUX_NAME_STUB="notes")
+
+    assert _calls(tmuxkit, "set-window-option") == []
 
 
 def test_the_original_is_read_before_the_first_rename(tmuxkit):

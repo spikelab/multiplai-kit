@@ -115,7 +115,8 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 | `evals/unit/test_log_retention.py` | Log rotation/retention helper |
 | `evals/unit/test_gh_app_hooks.py` | GitHub App SessionStart/PreToolUse hooks (stub `gh-tok` + stub `gh`) |
 | `evals/unit/test_claude_sh_roster.py` | The live-container roster `claude.sh` writes for the fleet view (stub `docker`) |
-| `evals/unit/test_claude_sh_tmux.py` | tmux window naming — the container name, restored on exit (stub `tmux`) |
+| `evals/unit/test_claude_sh_tmux.py` | tmux window naming — the container name, restored on exit, and never taken from a tab the user named (stub `tmux`) |
+| `evals/unit/test_claude_sh_panes.py` | The tmux pane map `claude.sh` writes for the fleet board (stub `tmux` + stub `docker`) |
 
 **The memory / routing / learnings evals are gone** — they tested the retired in-tree hooks and were removed with them. Those mechanisms now live in the `multiplai-context` plugin, which has its own `tests/` (run from the plugin dir). Threshold for the kit tests: 100% (any failure is a bug).
 

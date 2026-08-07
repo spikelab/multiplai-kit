@@ -9,12 +9,14 @@ a tab. tmux runs on the Mac; a session runs inside a container that has no
 `$TMUX_PANE`, no tmux socket, and no way to acquire either. So the host writes
 the fact, and the fleet renderer joins it in later.
 
-Two host-side pieces produce it, and both are in this kit:
+Three host-side pieces are in this kit — two that write the facts, one that
+shows them:
 
 | Piece | Written by | File |
 |---|---|---|
 | Which pane holds which container | `claude.sh` (`write_pane_map`) | `$WORKSPACE/.multiplai/data/tmux/panes.json` |
 | When each pane was last looked at | `dotfiles/scripts/fleet-viewed.sh`, via tmux hooks | `$WORKSPACE/.multiplai/data/tmux/viewed/<n>` |
+| The board itself, in your status bar | `dotfiles/scripts/fleet-bar` + `fleet-bar-render.py` | `$WORKSPACE/.multiplai/data/tmux/bar.txt` |
 
 The join — *is this marker newer than what that agent last did?* — happens at
 render time in the `multiplai-context` plugin. Neither host-side piece knows
@@ -93,6 +95,91 @@ Markers are pruned at 7 days on each run. Pane ids climb for the life of a tmux
 server, so without pruning the directory grows forever — and a marker's whole
 question ("have I looked at this since it last did something?") is about the
 last few minutes, so a week-old file has no reader.
+
+## The board itself
+
+The two files above are the *facts*. The board is what shows them: **the tmux
+status bar, several lines high, in every window.** Not a pane, not a daemon,
+nothing to start or supervise — `status-interval` already fires on a timer
+inside a process that is always running, so tmux is the scheduler.
+
+It looks like this:
+
+```
+FLEET 6 fronts · 2 need you · ⚠1 collision · upd 12s
+✋ pi-eval          DolceEngine   18m  permission — bash
+✋ fleet-readable   mktplace       3m  approve edit to fleet.py
++3 more · 👀2 seen · ⚠fleet.py · PRs 3 14m
+```
+
+Header on the first line, agents in the middle, the tail on the last —
+a fixed layout, so your eye lands in the same place every tick rather than
+re-reading the bar to find out what moved. Ordering is needs-you, then unseen,
+then seen.
+
+### Wiring it up
+
+Same rule as the hooks: this is documentation, and `~/.tmux.conf` is yours to
+edit.
+
+```tmux
+# 5 is tmux's hard maximum (`set -g status 6` → "unknown value").
+# Line 0 stays YOUR status line; lines 1..3 are the fleet.
+set -g status 4
+set -g status-interval 5
+set -g 'status-format[1]' '#(~/path/to/multiplai-kit/dotfiles/scripts/fleet-bar 1)'
+set -g 'status-format[2]' '#(~/path/to/multiplai-kit/dotfiles/scripts/fleet-bar 2)'
+set -g 'status-format[3]' '#(~/path/to/multiplai-kit/dotfiles/scripts/fleet-bar 3)'
+```
+
+**What this costs, plainly: those rows are gone from every window**, and the
+bar shows the top few agents, not the fleet. `AGENTS.md` and
+`/multiplai-context:fleet-status` remain the full list — the bar is a glance,
+and it says `+3 more` rather than pretending otherwise.
+
+Fewer lines works: `status 2` gives the board one row, which renders as the
+header alone. More than 5 is not available at any price.
+
+### What it does and does not do
+
+- **It never recommends.** Readings only. "2 need you" is a fact; "merge the
+  PR" is advice, and a status bar is the wrong surface on which to argue.
+- **It never looks confident about stale data.** Ages are recomputed from the
+  scan's own stamp on every tick, so the clock stays live between scans, and
+  past ten minutes the header says `⚠stale`.
+- **It never hides silently.** Overflow is an explicit `+N more`.
+- **"Not collected" is not "none".** A section nobody has scanned reads
+  `PRs not collected`; a scan that found nothing reads `PRs none`. A section
+  carried from an earlier `/fleet-status` carries its own age (`PRs 3 14m`).
+
+Signal is carried by markers — `✋` needs you, `●` working, `👀` seen, `⚠`
+collision or stale — rather than colour. tmux substitutes `status-format` in a
+single pass, so a `#[fg=red]` inside *content* is printed literally rather than
+interpreted; styling has to live in the format string, where the data cannot
+reach it. That is also why content is sanitized before it reaches the cache:
+checkpoint text is LLM-written from session transcripts, and it is stripped of
+control characters and format-opening sequences on the way in.
+
+### Cost, and the two guards
+
+`fleet-bar` is called once per line per tick per attached client. It reads a
+pre-rendered cache and prints one line; when the cache goes stale (5s), exactly
+one caller regenerates it and the rest print what is already there. The lock is
+an atomic `mkdir`, so the kernel picks the winner — and a lock older than a
+minute is cleared, because a crashed render must not pin the board to whatever
+it last showed.
+
+Like the marker script, **it never emits a diagnostic**: its stdout *is* the
+status bar. No workspace, no cache, no renderer, no python3 — all print one
+empty line and exit 0.
+
+`fleet-bar-render.py` is **stdlib-only and reads data files only**. It does not
+import plugin code, does not shell out to `fleet_status.py`, and is never run
+through `uv`. That is a boundary, not a packaging preference: the plugin's
+manifest and cache are container-writable, so a host process that resolved
+plugin code would execute whatever a container could write — the same reasoning
+that keeps `claude.sh`'s drain path host-side. `evals/unit/test_fleet_bar.py`
+asserts it.
 
 ## Checking it works
 

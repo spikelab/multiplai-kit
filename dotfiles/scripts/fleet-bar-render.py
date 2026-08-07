@@ -31,6 +31,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -72,18 +73,57 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _FORMAT_OPEN = re.compile(r"#(?=[({\[#])")
 
 
+def cols(text):
+    """Terminal columns *text* occupies — not how many characters it has.
+
+    The bar's own markers are the reason this exists: `✋` and `👀` are
+    East_Asian_Wide and take **two** columns each, so a line `len()` called 40
+    was really 41 and tmux cut the rightmost field — the staleness marker,
+    which is the one field whose absence changes what the board means.
+
+    Combining marks add nothing; ambiguous-width characters (`●`, `·`, `…`,
+    all of which this file emits) are counted as one, which is what a terminal
+    in a non-CJK locale does with them.
+    """
+    total = 0
+    for char in text:
+        if unicodedata.combining(char):
+            continue
+        total += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+    return total
+
+
+def _cut(text, width):
+    """The longest prefix of *text* that fits in *width* columns.
+
+    Never splits a wide character across the boundary: a half-printed `👀`
+    is what a terminal renders as a replacement box.
+    """
+    total = 0
+    for i, char in enumerate(text):
+        total += cols(char)
+        if total > width:
+            return text[:i]
+    return text
+
+
+def ljust(text, width):
+    """`str.ljust` in columns, so the bar's fields actually line up."""
+    return text + " " * max(0, width - cols(text))
+
+
 def clean(text, limit):
     """One printable line, capped — safe to hand to a tmux format string."""
     text = _CONTROL.sub(" ", str(text or ""))
     text = _FORMAT_OPEN.sub("", text)
     text = " ".join(text.split())
-    if len(text) <= limit:
+    if cols(text) <= limit:
         return text
-    return text[: max(1, limit - 1)].rstrip() + "…"
+    return _cut(text, max(1, limit - 1)).rstrip() + "…"
 
 
 def fit(line, width):
-    """Hard-truncate to *width*, ending in an ellipsis when something was cut.
+    """Hard-truncate to *width* columns, ending in an ellipsis when cut.
 
     A tmux status line silently cuts at the last column, which is how a board
     loses its rightmost field — the staleness marker — without anyone noticing.
@@ -91,9 +131,9 @@ def fit(line, width):
     """
     if width <= 0:
         return ""
-    if len(line) <= width:
+    if cols(line) <= width:
         return line
-    return line[: max(0, width - 1)] + "…"
+    return _cut(line, max(0, width - 1)) + "…"
 
 
 def _parse_ts(value):
@@ -167,20 +207,38 @@ def _agent_line(agent, now, generated, width):
     else:
         shown = "?"
     what = clean(agent.get("next_action") or agent.get("intent"), MAX_TEXT)
-    bits = [mark, label.ljust(MAX_LABEL), project.ljust(MAX_PROJECT), shown.rjust(4)]
+    bits = [mark, ljust(label, MAX_LABEL), ljust(project, MAX_PROJECT), shown.rjust(4)]
     if what:
         bits.append(f" {what}")
     return fit(" ".join(bits).rstrip(), width)
+
+
+def _count(counts, key):
+    """A count as a number, or ``0``.
+
+    Every other string on the bar goes through `clean()`; these were the one
+    set interpolated raw, on the assumption that a field named `fronts` holds
+    an integer. `fleet.json` is written by the plugin from LLM-authored
+    checkpoints, so that assumption is exactly the kind this file does not get
+    to make — a string there would put unfiltered text, `#(...)` included,
+    into a tmux format string. Coercing is also narrower than cleaning: there
+    is no legitimate non-numeric count, so a bad one is `0`, not truncated
+    prose.
+    """
+    try:
+        return int(counts.get(key, 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _header(doc, now, generated, width):
     counts = doc.get("counts") if isinstance(doc.get("counts"), dict) else {}
     bits = [
         "FLEET",
-        f"{counts.get('fronts', 0)} fronts",
-        f"{counts.get('needs_you', 0)} need you",
+        f"{_count(counts, 'fronts')} fronts",
+        f"{_count(counts, 'needs_you')} need you",
     ]
-    collisions = counts.get("collisions", 0)
+    collisions = _count(counts, "collisions")
     if collisions:
         bits.append(f"{M_WARN}{collisions} collision")
     if generated is None:

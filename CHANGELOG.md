@@ -95,6 +95,11 @@ public repo has shipped without in-tree memory hooks from day one (see the
   `+N more`, and `AGENTS.md` stays the full list. A section nobody scanned
   reads `not collected`, not `none`.
 
+  Widths are measured in **terminal columns**, not characters: `✋` and `👀`
+  are East_Asian_Wide and take two each, so a character-counted line was a
+  column too long and tmux silently cut its rightmost field — the staleness
+  marker, the one whose absence changes what the numbers to its left mean.
+
   **You wire it up yourself**, as with the viewed hooks — three
   `status-format` lines in `~/.tmux.conf`, in `docs/TMUX-FLEET-BOARD.md`.
   State plainly what it costs: **those rows are gone from every window.**

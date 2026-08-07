@@ -30,6 +30,7 @@ plugin's manifest and cache are container-writable. A test reads its imports.
 import importlib.util
 import json
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -92,12 +93,52 @@ def test_it_returns_exactly_the_lines_it_was_given(lines):
     assert len(out) == lines
 
 
+def _cols(text):
+    """Display columns, computed here independently of the renderer.
+
+    Deliberately not `bar.cols` — a width test that measured with the same
+    function the renderer truncates with would pass no matter what either of
+    them believed a column was.
+    """
+    return sum(0 if unicodedata.combining(c)
+               else 2 if unicodedata.east_asian_width(c) in ("W", "F")
+               else 1
+               for c in text)
+
+
 @pytest.mark.parametrize("width", [20, 40, 80, 120])
 def test_no_line_exceeds_the_width(width):
+    """In **columns**, not characters. The bar's own markers are the reason:
+    `✋` and `👀` are East_Asian_Wide, so a line 40 characters long is 41
+    columns wide and tmux cuts the rightmost field — which is where the
+    staleness marker lives, the one field whose loss changes what the numbers
+    to its left mean."""
     out = bar.render(doc([agent(next_action="a very long next action " * 5)] * 4),
                      4, width, NOW)
 
-    assert all(len(line) <= width for line in out), out
+    assert all(_cols(line) <= width for line in out), out
+
+
+@pytest.mark.parametrize("marker,group,seen", [("✋", "Needs you", False),
+                                               ("👀", "Working", True)])
+def test_a_wide_marker_does_not_push_the_line_over(marker, group, seen):
+    """The regression, stated directly: at width 40 these lines measured 41
+    columns and lost their last character to tmux."""
+    out = bar.render(doc([agent(group=group, seen=seen,
+                                next_action="x" * 60)]), 3, 40, NOW)
+
+    assert marker in out[1]
+    assert _cols(out[1]) <= 40
+
+
+def test_the_fields_line_up_across_a_wide_label():
+    """Padding is in columns too. A label holding a wide character padded with
+    `str.ljust` would sit one column right of every other row's project
+    field, which is the kind of drift that makes a board unglanceable."""
+    out = bar.render(doc([agent(tmux_window="ab", session_id="s1"),
+                          agent(tmux_window="七", session_id="s2")]), 4, 120, NOW)
+
+    assert _cols(out[1].split("mktplace")[0]) == _cols(out[2].split("mktplace")[0])
 
 
 def test_zero_lines_is_no_lines_not_a_crash():
@@ -281,6 +322,21 @@ def test_a_checkpoint_cannot_smuggle_a_tmux_format_sequence():
     assert "id)" in line, "sanitizing must not silently swallow the text"
 
 
+def test_a_count_that_is_not_a_number_cannot_reach_the_header():
+    """The header interpolated `counts` raw, on the assumption that a field
+    named `fronts` holds an integer. `fleet.json` is assembled from LLM-written
+    checkpoints, so that is exactly the assumption this file does not get to
+    make — the one path by which unfiltered text, `#(...)` included, reached a
+    tmux format string. There is no legitimate non-numeric count, so it is 0."""
+    out = bar.render(doc([], counts={"fronts": "#(id)", "needs_you": None,
+                                     "collisions": {"x": 1}}), 3, 200, NOW)
+
+    assert "#(" not in out[0]
+    assert "0 fronts" in out[0]
+    assert "0 need you" in out[0]
+    assert "collision" not in out[0]
+
+
 def test_control_characters_never_reach_the_bar():
     """A control character in a status line can reposition the cursor and
     corrupt the whole bar, not just its own field."""
@@ -311,7 +367,7 @@ def test_the_renderer_imports_nothing_outside_the_standard_library():
     container-writable, so a host process that resolved plugin code would
     execute whatever a container could write — the same reasoning that keeps
     `claude.sh`'s drain path host-side."""
-    stdlib = {"argparse", "json", "re", "sys", "datetime", "pathlib"}
+    stdlib = {"argparse", "json", "re", "sys", "unicodedata", "datetime", "pathlib"}
     imported = set(re.findall(r"^(?:import|from)\s+([a-zA-Z_][\w.]*)",
                               RENDERER.read_text(encoding="utf-8"), re.MULTILINE))
 

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Render the tmux fleet bar — a few fixed-width lines, from data files only.
+"""Render the fleet board — a few fixed-width lines, from data files only.
 
-The board is the tmux status bar itself, several lines high, in every window.
-No pane, no daemon, no launchd job: `status-interval` already fires on a timer
-inside a process that is always running, so the scheduler is free.
+Called by `fleet-watch`, which redraws it in a terminal on a timer. It was
+written for the tmux status bar, and the shape still shows: fixed column
+budgets, a hard line count, `+N more` instead of scrolling. The bar is gone
+(deleted with the script that fed it), so those budgets are now a limitation
+rather than a constraint — lifting them is the fleet console's job, not a patch
+to this file.
 
 **This file is host-side kit code and must stay stdlib-only.** It reads
 `fleet.json` and nothing else — it does not import from the
@@ -16,11 +19,11 @@ write. The same reasoning already keeps `claude.sh`'s drain path host-side.
 Three rules the rendering obeys:
 
 **It never recommends.** Readings only. "2 need you" is a fact; "merge the PR"
-is advice, and a status bar is the wrong surface to argue with.
+is advice, and a board you glance at is the wrong surface to argue with.
 
 **It never looks confident about stale data.** Every line's ages are recomputed
 from `generated_at` on each render, so the clock stays live between scans, and
-past ten minutes the bar says so.
+past ten minutes the header says so.
 
 **It never hides silently.** Whatever does not fit becomes an explicit `+N
 more`. A board that dropped the last two agents without saying so is worse than
@@ -37,22 +40,21 @@ from pathlib import Path
 
 FLEET_JSON = "fleet.json"
 
-# Past this, the bar stops presenting its numbers as current. Ten minutes is
+# Past this, the board stops presenting its numbers as current. Ten minutes is
 # chosen against what writes the file: every SessionStart re-renders it, and
 # with tabs open that is minutes apart — so ten means "nothing has started or
 # stopped in a while", not "the renderer is broken".
 STALE_AFTER = timedelta(minutes=10)
 
-# Per-field caps, applied before anything reaches a tmux format string. A tab
-# name is a handle, not a sentence.
+# Per-field caps. A tab name is a handle, not a sentence — but 44 columns of
+# checkpoint text is a status bar's budget, and this now draws in a terminal
+# that has three times that. The console is where it gets spent.
 MAX_LABEL = 16
 MAX_PROJECT = 12
 MAX_TEXT = 44
 
-# Markers carry the signal instead of colour. tmux substitutes `status-format`
-# in a single pass, so a `#[fg=red]` living inside *data* is printed literally
-# rather than interpreted — styling has to be in the format string, which the
-# data cannot reach. Unicode needs no styling at all.
+# Markers carry the signal instead of colour — they survive a pipe, a `less`,
+# and a terminal with no colour, and they cost nothing to emit.
 M_NEEDS = "✋"       # ✋ stopped to ask you something
 M_LIVE = "●"        # ● working
 M_SEEN = "\U0001f440"    # 👀 you have looked at it since it last acted
@@ -60,26 +62,25 @@ M_WARN = "⚠"        # ⚠ collision, or stale data
 
 # Everything that is not printable text. A checkpoint is LLM-written from a
 # session transcript, so its contents are untrusted (see the marketplace's
-# `docs/untrusted-content.md`) and a control character in a status line can
-# reposition the cursor or corrupt the whole bar.
+# `docs/untrusted-content.md`) and one escape sequence in a board that repaints
+# every few seconds can reposition the cursor or corrupt the whole screen.
+#
+# The companion strip — a `#` opening a tmux format sequence (`#(shell)`,
+# `#{var}`, `#[style]`) — went with the status bar in the same commit. Nothing
+# reads this output as a tmux format any more, and it was already defence in
+# depth: tmux 3.4 substitutes `status-format` in a single pass, so a `#(...)`
+# arriving through *data* was printed, never executed. Bring it back with the
+# consumer that needs it, not before.
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-
-# A `#` that opens a tmux format sequence: `#(shell)`, `#{var}`, `#[style]`,
-# or `##`. Verified on tmux 3.4 with a real attached client that a `#(...)`
-# reaching `status-format` through *data* is not executed — substitution is
-# single-pass — so this is defence in depth rather than a live injection fix.
-# It stays because the failure would be silent and severe, and because the
-# next tmux is not bound by what this one does.
-_FORMAT_OPEN = re.compile(r"#(?=[({\[#])")
 
 
 def cols(text):
     """Terminal columns *text* occupies — not how many characters it has.
 
-    The bar's own markers are the reason this exists: `✋` and `👀` are
+    The board's own markers are the reason this exists: `✋` and `👀` are
     East_Asian_Wide and take **two** columns each, so a line `len()` called 40
-    was really 41 and tmux cut the rightmost field — the staleness marker,
-    which is the one field whose absence changes what the board means.
+    was really 41, and the field that fell off the right edge was the staleness
+    marker — the one whose absence changes what the numbers beside it mean.
 
     Combining marks add nothing; ambiguous-width characters (`●`, `·`, `…`,
     all of which this file emits) are counted as one, which is what a terminal
@@ -108,14 +109,13 @@ def _cut(text, width):
 
 
 def ljust(text, width):
-    """`str.ljust` in columns, so the bar's fields actually line up."""
+    """`str.ljust` in columns, so the board's fields actually line up."""
     return text + " " * max(0, width - cols(text))
 
 
 def clean(text, limit):
-    """One printable line, capped — safe to hand to a tmux format string."""
+    """One printable line, capped — safe to paint into a live terminal."""
     text = _CONTROL.sub(" ", str(text or ""))
-    text = _FORMAT_OPEN.sub("", text)
     text = " ".join(text.split())
     if cols(text) <= limit:
         return text
@@ -125,7 +125,7 @@ def clean(text, limit):
 def fit(line, width):
     """Hard-truncate to *width* columns, ending in an ellipsis when cut.
 
-    A tmux status line silently cuts at the last column, which is how a board
+    A terminal cuts at the last column and says nothing, which is how a board
     loses its rightmost field — the staleness marker — without anyone noticing.
     Truncating here makes the loss visible.
     """
@@ -159,10 +159,11 @@ def age(delta):
 def load(data_dir):
     """The fleet document, or ``None`` if there isn't a usable one.
 
-    Missing and malformed are the same answer on purpose. This runs from a tmux
-    hook several times a second; there is no surface on which to report a
-    problem, and a bar that printed a traceback into the status line would be
-    the worst outcome available.
+    Missing and malformed are the same answer on purpose. This is called once
+    per redraw, on a timer, for as long as the terminal is open — a traceback
+    would arrive a few times a second, and "no fleet data" is the honest
+    reading either way. `fleet-watch` reports the failures a person can act on
+    (no workspace, no renderer); this one is not among them.
     """
     try:
         raw = json.loads((Path(data_dir) / FLEET_JSON).read_text(encoding="utf-8"))
@@ -179,8 +180,8 @@ def _rank(agent):
     for. Seen last, because you have already dealt with it.
 
     Within a tier the order is whatever `fleet.json` already had, which is the
-    fleet's own recency ordering. Re-deriving it here is how a bar and a digest
-    start disagreeing about the same fleet.
+    fleet's own recency ordering. Re-deriving it here is how a board and a
+    digest start disagreeing about the same fleet.
     """
     if agent.get("group") == "Needs you":
         return 0
@@ -216,14 +217,14 @@ def _agent_line(agent, now, generated, width):
 def _count(counts, key):
     """A count as a number, or ``0``.
 
-    Every other string on the bar goes through `clean()`; these were the one
+    Every other string on the board goes through `clean()`; these were the one
     set interpolated raw, on the assumption that a field named `fronts` holds
     an integer. `fleet.json` is written by the plugin from LLM-authored
     checkpoints, so that assumption is exactly the kind this file does not get
-    to make — a string there would put unfiltered text, `#(...)` included,
-    into a tmux format string. Coercing is also narrower than cleaning: there
-    is no legitimate non-numeric count, so a bad one is `0`, not truncated
-    prose.
+    to make — a string there would put unfiltered text, escape sequences
+    included, straight into the header. Coercing is also narrower than
+    cleaning: there is no legitimate non-numeric count, so a bad one is `0`,
+    not truncated prose.
     """
     try:
         return int(counts.get(key, 0))
@@ -296,14 +297,14 @@ def render(doc, lines, width, now=None):
 
     Layout is fixed so a reader's eye can land in the same place every tick:
     the header on the first line, the tail on the last, agents in between.
-    Fixed beats adaptive here — a bar whose rows move around is one you have to
-    read rather than glance at.
+    Fixed beats adaptive here — a board whose rows move around is one you have
+    to read rather than glance at.
     """
     now = now or datetime.now(timezone.utc)
     if lines <= 0:
         return []
     if not isinstance(doc, dict):
-        # A blank bar, not an error and not a stale bar. The rows are already
+        # A blank board, not an error and not a stale one. The rows are already
         # spent; leaving them empty says "nothing to show" without claiming
         # anything about the fleet.
         return [""] * lines

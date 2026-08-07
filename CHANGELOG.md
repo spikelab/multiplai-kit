@@ -77,8 +77,11 @@ public repo has shipped without in-tree memory hooks from day one (see the
   their own location, which needs no environment at all. Both exit silently by
   contract, so the symptom was a blank status bar and a `viewed/` directory
   that was never created — indistinguishable from an idle fleet.
-  `docs/TMUX-FLEET-BOARD.md` gains a "the bar is blank" diagnostic for the same
-  reason, since the failure cannot announce itself.
+  `docs/TMUX-FLEET-BOARD.md` gains a resolution diagnostic for the same reason,
+  since a hook's failure cannot announce itself. (The board's half of that
+  problem is gone rather than documented — see *Removed*: `fleet-watch` prints
+  its failures, so a blank board is no longer indistinguishable from an idle
+  fleet.)
 
 ### Added
 
@@ -139,9 +142,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
   session. The four lines to paste (and why `set-hook -g`, not `-ga`) are in
   `docs/TMUX-FLEET-BOARD.md`. Pinned by `evals/unit/test_fleet_viewed.py`.
 
-- **The fleet board is now the tmux status bar itself.** `dotfiles/scripts/fleet-bar`
-  fills two to four extra status lines, in every window, with the agents that
-  have a claim on you:
+- **A fleet board you can keep on screen.** `dotfiles/scripts/fleet-watch
+  [interval]` draws the agents that have a claim on you, in a plain terminal,
+  redrawn on a timer. Any key quits — a single keystroke, not a line. Redirected
+  or piped it draws once and exits, so `fleet-watch > board.txt` is a snapshot.
+  Nothing to wire up — it finds your workspace the way the marker script does.
+
+  An interval of `0` is treated as junk and falls back to 5: `read -t 0` does
+  not wait, so it would spin rather than redraw. A renderer that fails ends the
+  run with its diagnostic on screen, instead of painting the error into a frame
+  that the next redraw wipes. The cursor is restored on any exit, including the
+  window simply being closed.
 
   ```
   FLEET 6 fronts · 2 need you · ⚠1 collision · upd 12s
@@ -150,8 +161,6 @@ public repo has shipped without in-tree memory hooks from day one (see the
   +3 more · 👀2 seen · ⚠fleet.py · PRs 3 14m
   ```
 
-  Nothing is started, supervised or cleaned up: `status-interval` already fires
-  on a timer inside a process that is always running, so tmux is the scheduler.
   Needs-you first, then unseen, then seen. Ages are recomputed every tick from
   the scan's own stamp, so the clock stays live between scans and the header
   says `⚠stale` once the data passes ten minutes.
@@ -161,24 +170,22 @@ public repo has shipped without in-tree memory hooks from day one (see the
   reads `not collected`, not `none`.
 
   Widths are measured in **terminal columns**, not characters: `✋` and `👀`
-  are East_Asian_Wide and take two each, so a character-counted line was a
-  column too long and tmux silently cut its rightmost field — the staleness
+  are East_Asian_Wide and take two each, so a character-counted line ran a
+  column long and lost its rightmost field off the right edge — the staleness
   marker, the one whose absence changes what the numbers to its left mean.
 
-  **You wire it up yourself**, as with the viewed hooks — three
-  `status-format` lines in `~/.tmux.conf`, in `docs/TMUX-FLEET-BOARD.md`.
-  State plainly what it costs: **those rows are gone from every window.**
+  **This shipped first as the tmux status bar itself** (`fleet-bar`, three
+  `status-format` lines), and that version is gone — see *Removed*. The
+  renderer, now `dotfiles/scripts/fleet-render.py`, keeps its budget: no
+  scrolling, no wrapping, checkpoint text clipped at 44 columns. It is
+  **stdlib-only and reads data files only** — no plugin imports, no `uv`, no
+  shelling out to `fleet_status.py`, because the plugin's manifest and cache
+  are container-writable. Pinned by `evals/unit/test_fleet_render.py` and
+  `evals/unit/test_fleet_watch.py`.
 
-  `fleet-bar` reads a pre-rendered cache and prints one line; when it goes
-  stale exactly one caller regenerates (atomic `mkdir` lock, with a one-minute
-  stale-lock release) and the rest print what is there. Its stdout *is* the
-  status bar, so like the marker script it never emits a diagnostic — no
-  workspace, no cache, no renderer all print an empty line and exit 0. The
-  renderer, `dotfiles/scripts/fleet-bar-render.py`, is **stdlib-only and reads
-  data files only**: no plugin imports, no `uv`, no shelling out to
-  `fleet_status.py`, because the plugin's manifest and cache are
-  container-writable. Pinned by `evals/unit/test_fleet_bar.py` and
-  `evals/unit/test_fleet_bar_sh.py`.
+  Unlike `fleet-viewed.sh`, which is a tmux hook and silent on every failure
+  path, `fleet-watch` **prints** its failures: a person ran it and is looking
+  at the output, and a silent one is indistinguishable from an idle fleet.
 
 - **`multiplai-docker.py` is installed as a host tool on macOS.** The container
   release ships a host-side runner for pre-frozen Docker Compose stacks, letting
@@ -400,6 +407,26 @@ public repo has shipped without in-tree memory hooks from day one (see the
   up and drain once both are in place.
 
 ### Removed
+
+- **The fleet board is no longer the tmux status bar.** `dotfiles/scripts/fleet-bar`
+  and its test are gone; `fleet-bar-render.py` is renamed
+  `dotfiles/scripts/fleet-render.py` and now has one caller, `fleet-watch`.
+  If you wired the board into `~/.tmux.conf`, remove the `status-format` lines
+  and put `status` back where you had it — and note that **sourcing the file
+  again does not retract them**: a running tmux server needs
+  `tmux set -g status on` and `tmux set -gu 'status-format[N]'` for each line.
+
+  The bar was the better placement on paper — ambient, in every window, with
+  `status-interval` as a free scheduler and nothing to start or supervise. It
+  did not survive contact: three rows of every window, permanently, to show
+  two agents; a hard cap of five status lines; and a `#()` job that can neither
+  wrap nor scroll, so half a wide terminal sat empty while the checkpoint text
+  was cut at 44 characters. The board wants height, and a status bar is the one
+  place that cannot give it any.
+
+  Going with it: the pre-rendered `bar.txt` cache and its `mkdir` lock, which
+  existed because tmux called the script once per line per tick per attached
+  client. One process redrawing on its own timer needs neither.
 
 - **The kit no longer ships an output style.** `dotfiles/output-styles/assistant.md`
   (an "Assistant" mode that turned off the coding defaults) is gone, and with it

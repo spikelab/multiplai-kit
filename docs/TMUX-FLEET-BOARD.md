@@ -16,7 +16,7 @@ shows them:
 |---|---|---|
 | Which pane holds which container | `claude.sh` (`write_pane_map`) | `$WORKSPACE/.multiplai/data/tmux/panes.json` |
 | When each pane was last looked at | `dotfiles/scripts/fleet-viewed.sh`, via tmux hooks | `$WORKSPACE/.multiplai/data/tmux/viewed/<n>` |
-| The board itself, in your status bar | `dotfiles/scripts/fleet-bar` + `fleet-bar-render.py` | `$WORKSPACE/.multiplai/data/tmux/bar.txt` |
+| The board itself, in a terminal | `dotfiles/scripts/fleet-watch` + `fleet-render.py` | — (drawn, not stored) |
 
 The join — *is this marker newer than what that agent last did?* — happens at
 render time in the `multiplai-context` plugin. Neither host-side piece knows
@@ -105,10 +105,18 @@ last few minutes, so a week-old file has no reader.
 
 ## The board itself
 
-The two files above are the *facts*. The board is what shows them: **the tmux
-status bar, several lines high, in every window.** Not a pane, not a daemon,
-nothing to start or supervise — `status-interval` already fires on a timer
-inside a process that is always running, so tmux is the scheduler.
+The two files above are the *facts*. The board is what shows them: **a terminal
+you keep on screen**, beside or below the one running tmux.
+
+```bash
+~/path/to/multiplai-kit/dotfiles/scripts/fleet-watch      # redraw every 5s
+~/path/to/multiplai-kit/dotfiles/scripts/fleet-watch 2    # every 2s
+```
+
+Nothing to wire up and nothing to configure — it finds your workspace the same
+way the marker script does, and any key quits. Redirected or piped it draws
+once and exits, so `fleet-watch > board.txt` is a snapshot rather than a hung
+process.
 
 It looks like this:
 
@@ -121,36 +129,30 @@ FLEET 6 fronts · 2 need you · ⚠1 collision · upd 12s
 
 Header on the first line, agents in the middle, the tail on the last —
 a fixed layout, so your eye lands in the same place every tick rather than
-re-reading the bar to find out what moved. Ordering is needs-you, then unseen,
-then seen.
+re-reading the board to find out what moved. Ordering is needs-you, then
+unseen, then seen. `AGENTS.md` and `/multiplai-context:fleet-status` remain the
+full list; this is a glance, and it says `+3 more` rather than pretending
+otherwise.
 
-### Wiring it up
+### It used to be the status bar
 
-Same rule as the hooks: this is documentation, and `~/.tmux.conf` is yours to
-edit.
+Until 2026-08-07 the board was `status-format` lines in tmux itself, drawn by a
+`fleet-bar` script this kit no longer ships. On paper that was the better
+placement — ambient, in every window, nothing to start or supervise, with
+`status-interval` as a free scheduler. In practice it cost three rows of every
+window permanently to show two agents, tmux caps `status` at five lines, and a
+`#()` job can neither wrap nor scroll, so half a wide terminal sat empty while
+the checkpoint text was cut at 44 characters.
 
-```tmux
-# 5 is tmux's hard maximum (`set -g status 6` → "unknown value").
-# Line 0 stays YOUR status line; lines 1..3 are the fleet.
-set -g status 4
-set -g status-interval 5
-set -g 'status-format[1]' '#(~/path/to/multiplai-kit/dotfiles/scripts/fleet-bar 1)'
-set -g 'status-format[2]' '#(~/path/to/multiplai-kit/dotfiles/scripts/fleet-bar 2)'
-set -g 'status-format[3]' '#(~/path/to/multiplai-kit/dotfiles/scripts/fleet-bar 3)'
-```
-
-**What this costs, plainly: those rows are gone from every window**, and the
-bar shows the top few agents, not the fleet. `AGENTS.md` and
-`/multiplai-context:fleet-status` remain the full list — the bar is a glance,
-and it says `+3 more` rather than pretending otherwise.
-
-Fewer lines works: `status 2` gives the board one row, which renders as the
-header alone. More than 5 is not available at any price.
+The renderer still carries that budget — the fixed columns and the `+N more`
+are a status bar's constraints outliving the status bar. Lifting them is the
+fleet console's job, not a patch to `fleet-render.py`.
 
 ### What it does and does not do
 
 - **It never recommends.** Readings only. "2 need you" is a fact; "merge the
-  PR" is advice, and a status bar is the wrong surface on which to argue.
+  PR" is advice, and a board you glance at is the wrong surface on which to
+  argue.
 - **It never looks confident about stale data.** Ages are recomputed from the
   scan's own stamp on every tick, so the clock stays live between scans, and
   past ten minutes the header says `⚠stale`.
@@ -160,33 +162,34 @@ header alone. More than 5 is not available at any price.
   carried from an earlier `/fleet-status` carries its own age (`PRs 3 14m`).
 
 Signal is carried by markers — `✋` needs you, `●` working, `👀` seen, `⚠`
-collision or stale — rather than colour. tmux substitutes `status-format` in a
-single pass, so a `#[fg=red]` inside *content* is printed literally rather than
-interpreted; styling has to live in the format string, where the data cannot
-reach it. That is also why content is sanitized before it reaches the cache:
-checkpoint text is LLM-written from session transcripts, and it is stripped of
-control characters and format-opening sequences on the way in.
+collision or stale — rather than colour. They survive a pipe, a `less`, and a
+terminal with no colour, and they cost nothing to emit.
 
-### Cost, and the two guards
+Content is still sanitized on the way in: checkpoint text is LLM-written from
+session transcripts, and this repaints every few seconds, so one escape
+sequence arriving through data would corrupt every frame after it. Control
+characters are stripped. The companion strip — a `#` opening a tmux format
+sequence — went with the status bar, since nothing reads this output as a tmux
+format any more.
 
-`fleet-bar` is called once per line per tick per attached client. It reads a
-pre-rendered cache and prints one line; when the cache goes stale (5s), exactly
-one caller regenerates it and the rest print what is already there. The lock is
-an atomic `mkdir`, so the kernel picks the winner — and a lock older than a
-minute is cleared, because a crashed render must not pin the board to whatever
-it last showed.
+### The one guard that matters
 
-Like the marker script, **it never emits a diagnostic**: its stdout *is* the
-status bar. No workspace, no cache, no renderer, no python3 — all print one
-empty line and exit 0.
-
-`fleet-bar-render.py` is **stdlib-only and reads data files only**. It does not
+`fleet-render.py` is **stdlib-only and reads data files only**. It does not
 import plugin code, does not shell out to `fleet_status.py`, and is never run
 through `uv`. That is a boundary, not a packaging preference: the plugin's
 manifest and cache are container-writable, so a host process that resolved
 plugin code would execute whatever a container could write — the same reasoning
-that keeps `claude.sh`'s drain path host-side. `evals/unit/test_fleet_bar.py`
-asserts it.
+that keeps `claude.sh`'s drain path host-side.
+`evals/unit/test_fleet_render.py` asserts it, and
+`evals/unit/test_fleet_watch.py` asserts the same of the script that calls it.
+
+One rule is inverted between the two host-side scripts, on purpose.
+`fleet-viewed.sh` is a tmux hook and **never** prints: tmux puts a hook's
+stderr in your terminal, and every one of its failure paths is ordinary.
+`fleet-watch` **does** print — a person ran it and is looking at the output, so
+"cannot resolve the workspace" is the answer they came for. The silent version
+of that failure is exactly what made a blank status bar indistinguishable from
+an idle fleet.
 
 ## Checking it works
 
@@ -203,17 +206,22 @@ the script by hand (`dotfiles/scripts/fleet-viewed.sh %1`) — by contract it
 stays silent when it fails, so a hand-run that writes nothing means the
 workspace did not resolve.
 
-The board itself has the same failure signature, and it is worth knowing that
-**an empty bar and an idle fleet look identical**. Both scripts print nothing
-and exit 0 when they cannot find the workspace, by design — a status bar is the
-wrong place for an error message. So if the bar is blank, confirm resolution
-before concluding there is nothing to show:
+**The board no longer has that failure signature**, and that is the point of it
+being a terminal rather than a status bar. When the old `fleet-bar` could not
+resolve the workspace it printed nothing and exited 0 — an empty bar and an idle
+fleet looked identical, which is how the board shipped broken. `fleet-watch` is
+run by a person who is looking at the output, so it says what went wrong and
+exits non-zero:
 
 ```bash
-dotfiles/scripts/fleet-bar 1                       # as tmux runs it
-WORKSPACE=/path/to/workspace dotfiles/scripts/fleet-bar 1   # forced
+dotfiles/scripts/fleet-watch          # names the failure, or draws the board
 ```
 
-A header from the second and nothing from the first means the marker is not
-where the script expects it — check that `dotfiles/.workspace` exists and that
-you wired tmux to the installed script rather than a copy.
+If it reports `cannot resolve the workspace`, check that `dotfiles/.workspace`
+exists (`setup.sh` writes it) and that you are running the installed script
+rather than a copy or a symlink — the fallback reads the marker relative to the
+script's own location, so it only travels with the install.
+
+`fleet-viewed.sh` keeps the silent contract, because tmux puts a hook's stderr
+in your terminal on every pane switch. That inversion is deliberate; it is the
+one script here you have to diagnose by hand-running, as above.

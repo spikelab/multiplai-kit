@@ -26,9 +26,17 @@
 # marker file the kit writes at setup. A tmux hook inherits the environment of
 # the tmux *server*, which was started long before any of this, so the file
 # fallback is the path that actually fires in practice.
+#
+# The `$CLAUDE_CONFIG_DIR` form cannot fire here: this runs on the **host**,
+# from a tmux hook, and that variable is set by the launcher for the container.
+# `setup.sh` writes the marker beside this script (`dotfiles/.workspace`), so
+# the `$0`-relative read is the one that works with an empty environment.
 ws="${WORKSPACE:-}"
 if [ -z "$ws" ] && [ -r "${CLAUDE_CONFIG_DIR:-}/.workspace" ]; then
     read -r ws < "$CLAUDE_CONFIG_DIR/.workspace"
+fi
+if [ -z "$ws" ] && [ -r "$(dirname "$0")/../.workspace" ]; then
+    read -r ws < "$(dirname "$0")/../.workspace"
 fi
 [ -n "$ws" ] || exit 0
 

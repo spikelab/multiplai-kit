@@ -15,6 +15,40 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Changed
+
+- **The kit now hands off instead of compacting.** Native auto-compaction is
+  disabled in the shipped `dotfiles/settings.json` (`DISABLE_AUTO_COMPACT=1`
+  and `autoCompactEnabled: false`), reversing the previous default of steering
+  it to fire early. Compaction replaces your conversation with a lossy summary,
+  costs a visible pause and a full summarization call each time, and degrades
+  over successive cycles — while the `multiplai-context` checkpoint system is
+  already keeping a structured record of the session's working state. The new
+  loop: checkpoint in the background → handoff advice at 200K → prompts refused
+  at 250K → you `/clear` → the fresh window is seeded from the checkpoint.
+
+  **You will notice this**: long sessions now stop and ask for a `/clear`
+  instead of silently compacting. Slash commands are never blocked, and
+  `!keepgoing` in a prompt overrides the stop for one refresh band. Manual
+  `/compact` is unaffected.
+
+  To restore the old behaviour, remove the two disable settings and put
+  `CLAUDE_CODE_AUTO_COMPACT_WINDOW` / `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` back in
+  the `env` block; the plugin detects which mode is active. To keep compaction
+  off but make the handoff advisory rather than enforced, set
+  `checkpoint_hard_stop_tokens` to `0`. Both documented in README →
+  "Context: the kit hands off, it does not compact".
+
+- **Shipped plugin option `checkpoint_hard_stop_tokens: "250000"`.** Requires
+  `multiplai-context` 0.32.0+; on older plugin versions the option is ignored
+  and sessions stay advisory-only.
+
+- Removed `CLAUDE_CODE_AUTO_COMPACT_WINDOW` and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`
+  from the shipped env block. They only ever fed the auto-compaction trigger,
+  so with it disabled they are inert — and the window value in particular reads
+  like a context cap it never was (the real threshold is the minimum of that
+  setting and the model's own context window).
+
 ### Added
 
 - **The launcher now records which tmux pane each container is in.** Launching

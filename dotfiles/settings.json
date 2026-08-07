@@ -4,9 +4,9 @@
     "BASH_DEFAULT_TIMEOUT_MS": "30000",
     "BASH_MAX_OUTPUT_LENGTH": "150000",
     "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "100000",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+    "DISABLE_AUTO_COMPACT": "1"
   },
+  "autoCompactEnabled": false,
   "permissions": {
     "allowedTools": [
       "Read",
@@ -81,7 +81,8 @@
         "enable_resources": false,
         "resources_dir": "",
         "memory_router": "token_overlap",
-        "router_model": "claude-haiku-4-5"
+        "router_model": "claude-haiku-4-5",
+        "checkpoint_hard_stop_tokens": "250000"
       }
     }
   },

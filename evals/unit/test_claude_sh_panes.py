@@ -59,17 +59,21 @@ case "$1" in
             *session_name*) printf '%s\\n' "${TMUX_SESSION_STUB-work}" ;;
         esac
         ;;
-    show-window-options)
-        # tmux scope, which is the whole point: `-v` reads the WINDOW-local
-        # value and prints nothing when the option was only ever set globally;
-        # `-gv` falls back to the global one. A stub that answered both the
-        # same way could not tell the two apart, which is how the launcher
-        # shipped reading `-v` against a global `set -g automatic-rename off`
-        # and getting "" forever.
+    show-options|show-window-options)
+        # tmux option scope — see the twin of this stub in
+        # `test_claude_sh_tmux.py` for the full reasoning. In short: `-v` is
+        # window-local (empty when only the global was set), `-gv` is the
+        # global set (blind to a local override), and `-Av` is the resolved
+        # value the launcher actually wants. Verified against tmux 3.4.
+        _global=on
+        _local=
+        [ "${TMUX_AUTO_SCOPE-window}" = "global" ] && _global="${TMUX_AUTO_STUB-on}"
+        [ "${TMUX_AUTO_SCOPE-window}" = "window" ] && _local="${TMUX_AUTO_STUB-on}"
+        [ -n "${TMUX_AUTO_LOCAL-}" ] && _local="$TMUX_AUTO_LOCAL"
         case "$*" in
-            *-gv*) printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
-            *) [ "${TMUX_AUTO_SCOPE-window}" = "window" ] \\
-                   && printf '%s\\n' "${TMUX_AUTO_STUB-on}" ;;
+            *-Av*) printf '%s\\n' "${_local:-$_global}" ;;
+            *-gv*) printf '%s\\n' "$_global" ;;
+            *)     [ -n "$_local" ] && printf '%s\\n' "$_local" ;;
         esac
         ;;
 esac
@@ -231,13 +235,28 @@ def test_a_globally_pinned_window_is_recorded_too(panekit):
     — which is why the board showed `claude-personal…` for every agent instead
     of the tab names their owner had chosen.
 
-    Reproduced on tmux 3.4: with a global `off`, `-v` returns empty and `-gv`
-    returns `off`.
+    Reproduced on tmux 3.4: with a global `off`, `-v` returns empty while both
+    `-gv` and `-Av` return `off`.
     """
     _launch(panekit, "", "", TMUX_NAME_STUB="kit-review", TMUX_AUTO_STUB="off",
             TMUX_AUTO_SCOPE="global")
 
     assert _at_run(panekit)["panes"][_launched_name(panekit)]["window"] == "kit-review"
+
+
+def test_a_window_that_opts_back_in_is_not_recorded(panekit):
+    """The record direction of the `-gv` vs `-Av` difference.
+
+    A window set back to `automatic-rename on` under a global `off` is naming
+    itself, so whatever it is called right now is tmux's derived name and not a
+    handle anyone chose — recording it would put `zsh` on the board with the
+    same confidence as a real label. `-gv` cannot see the override and would
+    record it; `-Av` resolves to the window's own `on` and correctly declines.
+    """
+    _launch(panekit, "", "", TMUX_NAME_STUB="zsh", TMUX_AUTO_STUB="off",
+            TMUX_AUTO_SCOPE="global", TMUX_AUTO_LOCAL="on")
+
+    assert _at_run(panekit)["panes"][_launched_name(panekit)]["window"] == ""
 
 
 def test_the_reading_says_what_it_is_and_which_server_issued_it(panekit):

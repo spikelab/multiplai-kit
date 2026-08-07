@@ -74,6 +74,42 @@ public repo has shipped without in-tree memory hooks from day one (see the
   session. The four lines to paste (and why `set-hook -g`, not `-ga`) are in
   `docs/TMUX-FLEET-BOARD.md`. Pinned by `evals/unit/test_fleet_viewed.py`.
 
+- **The fleet board is now the tmux status bar itself.** `dotfiles/scripts/fleet-bar`
+  fills two to four extra status lines, in every window, with the agents that
+  have a claim on you:
+
+  ```
+  FLEET 6 fronts · 2 need you · ⚠1 collision · upd 12s
+  ✋ pi-eval          DolceEngine   18m  permission — bash
+  ✋ fleet-readable   mktplace       3m  approve edit to fleet.py
+  +3 more · 👀2 seen · ⚠fleet.py · PRs 3 14m
+  ```
+
+  Nothing is started, supervised or cleaned up: `status-interval` already fires
+  on a timer inside a process that is always running, so tmux is the scheduler.
+  Needs-you first, then unseen, then seen. Ages are recomputed every tick from
+  the scan's own stamp, so the clock stays live between scans and the header
+  says `⚠stale` once the data passes ten minutes.
+
+  It never recommends, and it never hides silently — overflow is an explicit
+  `+N more`, and `AGENTS.md` stays the full list. A section nobody scanned
+  reads `not collected`, not `none`.
+
+  **You wire it up yourself**, as with the viewed hooks — three
+  `status-format` lines in `~/.tmux.conf`, in `docs/TMUX-FLEET-BOARD.md`.
+  State plainly what it costs: **those rows are gone from every window.**
+
+  `fleet-bar` reads a pre-rendered cache and prints one line; when it goes
+  stale exactly one caller regenerates (atomic `mkdir` lock, with a one-minute
+  stale-lock release) and the rest print what is there. Its stdout *is* the
+  status bar, so like the marker script it never emits a diagnostic — no
+  workspace, no cache, no renderer all print an empty line and exit 0. The
+  renderer, `dotfiles/scripts/fleet-bar-render.py`, is **stdlib-only and reads
+  data files only**: no plugin imports, no `uv`, no shelling out to
+  `fleet_status.py`, because the plugin's manifest and cache are
+  container-writable. Pinned by `evals/unit/test_fleet_bar.py` and
+  `evals/unit/test_fleet_bar_sh.py`.
+
 - **`multiplai-docker.py` is installed as a host tool on macOS.** The container
   release ships a host-side runner for pre-frozen Docker Compose stacks, letting
   a session start, inspect and tear down parallel named instances of allowlisted

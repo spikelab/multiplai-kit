@@ -17,6 +17,28 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **The launcher now records which tmux pane each container is in.** Launching
+  from inside tmux writes `$WORKSPACE/.multiplai/data/tmux/panes.json` — one
+  entry per running container, carrying its pane id, the window's name, the
+  tmux session, and the tmux socket that issued the pane id. This is the
+  enabling half of an always-visible fleet board: nothing inside a container
+  can see tmux (`$TMUX_PANE` is a fact about your Mac, and the plugin's hooks
+  run in the container), so a session can only ever be labelled with the tab
+  name you gave it if the launcher writes that down host-side.
+
+  It **merges** — your other nine tabs stay in the file when one of them
+  launches — and an entry lives only as long as `docker ps` still lists its
+  container, which is what retires a tab you closed. Written at the same two
+  moments as `live_containers.json`: once before the session container starts,
+  once after it exits.
+
+  The socket path is not decoration. tmux recycles pane ids per server, so
+  `%12` means nothing on its own; a reader joining anything to a pane id must
+  check the server first, and degrade to "unknown" rather than to the wrong
+  session. Best-effort throughout — no tmux, no `$TMUX_PANE`, no workspace, or
+  a failing tmux or docker are silent no-ops, and none of them can change a
+  session's exit status. Pinned by `evals/unit/test_claude_sh_panes.py`.
+
 - **`multiplai-docker.py` is installed as a host tool on macOS.** The container
   release ships a host-side runner for pre-frozen Docker Compose stacks, letting
   a session start, inspect and tear down parallel named instances of allowlisted
@@ -88,6 +110,18 @@ public repo has shipped without in-tree memory hooks from day one (see the
   so covered nothing.
 
 ### Changed
+
+- **A tmux window you named yourself is no longer renamed.** The launcher used
+  to take every tab, call it `claude-personal-06175625` for the session, and put
+  the old name back on exit — including tabs you had deliberately named
+  `pi-eval` or `notes`, which meant the whole session showed the one name you
+  had already rejected. Now it only claims a window tmux is still auto-naming.
+  `rename-window` is what turns `automatic-rename` off, so `off` is exactly the
+  signal that a human claimed this tab; the launcher leaves it, and leaves the
+  restore path inert too, so nothing is un-pinned on the way out. No config
+  knob: the pane map above reads your real tab name back out of tmux, so a name
+  you chose is better input to the fleet view than the container name ever was.
+  A tab tmux is auto-naming behaves exactly as before.
 
 - **The statusline dropped the session cost and shortened the model name and
   path** (`Opus 5 (1M context)` → `Opus 5 1M`, workspace root → `~`). Width is

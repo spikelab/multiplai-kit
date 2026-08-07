@@ -462,13 +462,29 @@ def test_ide_mount_is_skipped_when_the_host_has_no_lockfile_dir(kit):
     assert not (kit.home / ".claude" / "ide").exists()
 
 
-def test_ide_lock_dir_override_is_honoured_and_not_forwarded(kit, tmp_path):
-    """It names a *host* path, so it is launcher-only: meaningless in the
-    container, and denied like GEMINI_CONFIG_DIR and GCP_KEY_FILE."""
+def test_ide_lock_dir_override_is_honoured(kit, tmp_path):
     custom = tmp_path / "elsewhere" / "ide"
     custom.mkdir(parents=True)
 
     result = kit.launch("--shell", "-c", "true", IDE_LOCK_DIR=str(custom))
+    assert f"{custom}:/home/agent/.claude/ide:ro" in result.argv
+
+
+def test_ide_lock_dir_from_the_env_file_is_not_forwarded(kit, tmp_path):
+    """It names a *host* path — launcher-only, meaningless in the container, and
+    denied like GEMINI_CONFIG_DIR and GCP_KEY_FILE.
+
+    It must be assigned in the env FILE to test anything: the forwarding loop
+    walks the file's own names plus the keep-list, so a shell-only variable
+    never forwards whether or not the denylist mentions it, and asserting on
+    that path passes even with the denylist entry deleted.
+    """
+    custom = tmp_path / "fromenv" / "ide"
+    custom.mkdir(parents=True)
+    kit.write_env(BASE_ENV_FILE.format(ws=kit.workspace))
+    kit.append_env(f'IDE_LOCK_DIR="{custom}"\n')
+
+    result = kit.launch("--shell", "-c", "true")
     assert f"{custom}:/home/agent/.claude/ide:ro" in result.argv
     assert not result.mentions("IDE_LOCK_DIR")
 

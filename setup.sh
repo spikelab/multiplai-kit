@@ -280,8 +280,8 @@ fi
 # the `env` block from settings.local.json — only settings.json's env lands
 # (verified empirically on CLI 2.1.207, 2026-07-14; settings.local.json is a
 # project-level overlay for env). Anything that must reach the process
-# environment (e.g. CLAUDE_CODE_AUTO_COMPACT_WINDOW steering) belongs in the
-# tracked settings.json. Only pluginConfigs paths go here.
+# environment (e.g. DISABLE_AUTO_COMPACT) belongs in the tracked
+# settings.json. Only pluginConfigs paths go here.
 STEP=$((STEP + 1))
 echo "[$STEP/$TOTAL_STEPS] Configuring plugin options for this workspace..."
 LOCAL_SETTINGS="$DOTFILES_DIR/settings.local.json"

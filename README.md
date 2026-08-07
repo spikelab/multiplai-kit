@@ -301,9 +301,63 @@ All of the following is the **`multiplai-context` plugin** — summarized here; 
 |-------|---------------|------|
 | `SessionStart` | `session_start.py` | Init session state; drain deferred extractions; emit dream-due nudge |
 | `UserPromptSubmit` | `context_manager.py` | Route the prompt and inject relevant memory |
-| `Stop` | `session_stop.py` | Lightweight checkpoint |
+| `Stop` | `session_stop.py` | Lightweight checkpoint; handoff advice at the threshold |
+| `UserPromptSubmit` | `checkpoint_nudge.py` | Handoff notice to Claude; enforces `checkpoint_hard_stop_tokens` |
 | `SessionEnd` | `session_end.py` | Write a deferred-extraction marker for a drain to pick up |
 | `PreCompact` | `pre_compact.py` | Enqueue a deferred-extraction marker; clear the cooldown map |
+
+### Context: the kit hands off, it does not compact
+
+**Shipped default:** native auto-compaction is **off** (`DISABLE_AUTO_COMPACT=1`
+plus `autoCompactEnabled: false` in `dotfiles/settings.json`). This is a
+deliberate reversal of the kit's earlier default, which steered compaction to
+fire early via `CLAUDE_CODE_AUTO_COMPACT_WINDOW` / `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`.
+
+Compaction replaces your conversation with a summary of it. That is strictly
+lossy, it costs a long visible pause and a full summarization call every time,
+and quality degrades further with each cycle — the plugin's checkpoint system
+already keeps a structured record of the session's real working state, so the
+summary is buying redundancy at a price. The kit's answer is to **hand off**
+instead: keep the checkpoint fresh, then start a clean window that gets seeded
+from it.
+
+The loop you'll actually see:
+
+1. The plugin checkpoints in the background as the session grows (100K, 200K,
+   then every 25K).
+2. At 200K it tells you a handoff is due.
+3. At 250K (`checkpoint_hard_stop_tokens`, shipped default) it stops accepting
+   new prompts until you act. Slash commands still work — that's the door.
+4. You run `/clear`. The next `SessionStart` consumes the pending marker and
+   injects the checkpoint, so the fresh window opens knowing the task tree,
+   next action, involved files, and decisions.
+
+Manual `/compact` is untouched and still works if you'd rather stay in one
+session — the checkpoint is re-injected afterwards either way.
+
+**To go back to steered compaction** (fully unattended, no keystroke at the
+threshold, at the cost of summarized context), drop the two disable settings
+and restore the steering pair:
+
+```json
+{ "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+} }
+```
+
+The plugin detects which mode you're in and adjusts: under steering it stays
+quiet and lets `SessionStart(source="compact")` do the rebuild; with compaction
+disabled it resumes the handoff advice. Set `checkpoint_hard_stop_tokens` to
+`0` if you want the handoff advisory rather than enforced. Requires
+`multiplai-context` 0.32.0+.
+
+⚠️ **`CLAUDE_CODE_AUTO_COMPACT_WINDOW` is not a context limit.** It only feeds
+the compaction trigger — per the CLI's own help text, the real threshold is the
+minimum of that setting and the model's context window. With auto-compaction
+disabled it does nothing at all, which is why it is not in the shipped defaults
+any more: a session runs to the model's actual ceiling regardless of what that
+number says.
 
 Heavy LLM extraction never runs inside a kill-within-seconds hook — it's deferred via a marker queue (`data/pending_extractions/`) and run by `extract_learnings.py` as a detached subprocess.
 
@@ -375,6 +429,7 @@ Set via `settings.json → pluginConfigs["multiplai-context@multiplai"].options`
 | `catalog_model` | `claude-sonnet-4-6` | Model for LLM catalog generation |
 | `enable_skills` / `skills_dir` | `false` / `~/.claude/skills` | Optionally catalog skills for routing (the kit points `skills_dir` at `dotfiles/skills`) |
 | `enable_resources` / `resources_dir` | `false` / `""` | Optionally catalog a research/reference corpus |
+| `checkpoint_hard_stop_tokens` | `250000` (kit default; `0` upstream) | Stop accepting new prompts above this many context tokens until you hand off. `0` makes the handoff advisory. See [Context: the kit hands off](#context-the-kit-hands-off-it-does-not-compact) |
 | `anthropic_api_key` | _(sensitive)_ | API-key fallback when the Agent SDK is unavailable |
 
 ### Kit Configuration (`multiplai.conf`)

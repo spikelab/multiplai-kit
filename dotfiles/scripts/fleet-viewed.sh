@@ -39,8 +39,8 @@ viewed_dir="$ws/.multiplai/data/tmux/viewed"
 # is not `%` followed by digits is not a pane id tmux issued, so there is
 # nothing to record and nothing to complain about — this is the guard that
 # stops a hook misconfiguration from writing arbitrary filenames.
-pane="${1:-}"
-pane="${pane#%}"
+target="${1:-}"
+pane="${target#%}"
 case "$pane" in
     ''|*[!0-9]*) exit 0 ;;
 esac
@@ -65,7 +65,15 @@ find "$viewed_dir" -type f -mtime +7 -delete 2>/dev/null
 # that issued the pane id it is joining to. Degrading to "not seen" is safe;
 # attributing one pane's attention to another session is the one failure this
 # feature must not have.
-info=$(tmux display-message -p '#{window_name}'$'\n''#{socket_path}' 2>/dev/null) || exit 0
+#
+# `-t "$target"` is not optional. Without a target, `display-message` resolves
+# `#{window_name}` against the *current* pane of the current client — and these
+# hooks fire precisely at the moments that is in flux. On `after-select-window`
+# and `client-session-changed` tmux hands the pane in `#{hook_pane}` while the
+# client's own current pane may still be the one being switched away from, so
+# an untargeted read writes the old window's name into the new pane's marker.
+# The marker's whole job is to say what you are looking at.
+info=$(tmux display-message -p -t "$target" '#{window_name}'$'\n''#{socket_path}' 2>/dev/null) || exit 0
 window="${info%%$'\n'*}"
 server="${info#*$'\n'}"
 [ "$server" = "$info" ] && server=""

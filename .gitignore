@@ -18,7 +18,9 @@ dotfiles/.claude.json
 dotfiles/.claude.json.backup
 dotfiles/mcp-needs-auth-cache.json
 dotfiles/memory
-dotfiles/projects/
+# no trailing slash: on some machines these are symlinks into cc-state, and
+# `dir/` patterns do not match symlinks
+dotfiles/projects
 dotfiles/sessions/
 dotfiles/backups/
 dotfiles/statsig/
@@ -31,7 +33,8 @@ dotfiles/debug/
 dotfiles/plugins/
 dotfiles/shell-snapshots/
 dotfiles/telemetry/
-dotfiles/todos/
+dotfiles/todos
+dotfiles/.timezone
 dotfiles/history.jsonl
 dotfiles/memory-error.log
 dotfiles/file-history/

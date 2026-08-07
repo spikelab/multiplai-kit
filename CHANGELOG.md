@@ -17,6 +17,23 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The shipped `dotfiles/settings.json` now matches how the kit is actually
+  run**, folding in what had accumulated as local drift on the reference
+  runtime: all six multiplai skill packs enabled alongside `multiplai-context`,
+  `model: "claude-opus-5[1m]"`, deep-research disabled at both layers
+  (`skillOverrides` + `permissions.deny` — the SDK pipeline is invoked
+  explicitly, not as a skill), and multiplai-context options `enable_costs`,
+  `memory_router: "llm"`, `checkpoint_timeout_s: 480`. Also
+  `remoteControlAtStartup: false`, `agentPushNotifEnabled: true`, and
+  `policy-limits.json` gains `"monitoring_notice": null`. Less noise in
+  `git status` on a live runtime; override any of these locally as before.
+
+- **Runtime state files no longer show as untracked churn.**
+  `dotfiles/projects` and `dotfiles/todos` are symlinks into cc-state on live
+  machines, and the old `dir/`-style ignore patterns do not match symlinks;
+  both lost the trailing slash, and `dotfiles/.timezone` (statusline timezone
+  marker) is now ignored too.
+
 - **The kit now hands off instead of compacting.** Native auto-compaction is
   disabled in the shipped `dotfiles/settings.json` (`DISABLE_AUTO_COMPACT=1`
   and `autoCompactEnabled: false`), reversing the previous default of steering

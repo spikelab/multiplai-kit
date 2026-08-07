@@ -15,6 +15,30 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **`/ide` now works from inside the container.** The launcher mounts the host's
+  `~/.claude/ide/` read-only at `/home/agent/.claude/ide` whenever it exists, so
+  the containerised CLI can find the lockfiles your editor extension writes —
+  which is what lets diffs open in VS Code / Cursor instead of scrolling past in
+  the chat log. No setting to enable, and nothing happens if you have no
+  extension installed. `IDE_LOCK_DIR` overrides the host directory.
+
+  The container path is `/home/agent/.claude/ide`, **not** `$DOTFILES_DIR/ide`:
+  the CLI searches the resolved config dir plus `$HOME/.claude/ide` whenever
+  `CLAUDE_CONFIG_DIR` is set, which the kit always sets.
+
+  The mount is only half of it — also set
+  `CLAUDE_CODE_IDE_HOST_OVERRIDE="host.docker.internal"` in `.env` (an ordinary
+  forwarded variable). Without it the CLI dials `127.0.0.1`, which inside a
+  container is the container, and `/ide` fails in a way that looks identical to
+  a missing lockfile.
+
+  **Requires OrbStack.** The editor extension binds the host's `127.0.0.1`, and
+  OrbStack routes `host.docker.internal` to host-loopback services. Rootless
+  Docker and Docker Desktop sandboxes block precisely this, so there the
+  override resolves but nothing answers.
+
 ### Changed
 
 - **The shipped `dotfiles/settings.json` now matches how the kit is actually

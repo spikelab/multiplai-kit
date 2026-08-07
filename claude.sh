@@ -700,6 +700,55 @@ if [ "${MULTIPLAI_MOUNT_GEMINI:-0}" = "1" ]; then
     MOUNTS+=(-v "$GEMINI_DIR:/home/agent/.gemini")
 fi
 
+# Claude Code IDE lockfiles (read-only) — what makes `/ide` work from inside the
+# container against VS Code running on the Mac.
+#
+# The extension writes one lockfile per window to the host's ~/.claude/ide/,
+# carrying the port and auth token of its WebSocket server. The CLI's search
+# path is built by an internal `gco()`: the resolved config dir, plus
+# `$HOME/.claude/ide` whenever CLAUDE_CONFIG_DIR is set — which it always is
+# here. So the container path is /home/agent/.claude/ide and NOT
+# "$DOTFILES_DIR/ide"; mounting at the latter is the plausible-looking mistake.
+#
+# READ-ONLY IS REQUIRED. Not tidiness, and not because the CLI never writes here
+# — it does. Its lockfile-cleanup pass deletes entries it judges stale, and the
+# judgement is `process.kill(lockfile.pid, 0)` evaluated *locally*:
+#
+#     if (r.pid) { if (!alive(r.pid)) {
+#         if (platform() !== "wsl") o = true;            // stale — no further check
+#         else if (!await probePort(host, r.port)) o = true;
+#     } }
+#     if (o) try { await unlink(t) } catch (…) { log("Failed to remove stale …") }
+#
+# In a container the platform is Linux, so the WSL branch never runs, and the pid
+# is the *Mac's* VS Code pid, which this namespace cannot see. Every host
+# lockfile therefore looks stale — and read-write, the first session in would
+# delete the live one, breaking /ide for the host CLI and every other container
+# until the editor rewrote it. Note WSL gets a port probe before being declared
+# stale precisely because its pid belongs to another OS; Docker has no such
+# branch.
+#
+# Read-only turns that unlink into a caught, logged error (both unlink sites and
+# the enclosing function are wrapped), so it is what keeps the feature working
+# rather than merely making the mount safe. Do not "fix" this to :rw.
+#
+# The [ -d ] guard is load-bearing. Without it, `docker -v` on a missing source
+# silently creates a root-owned empty directory on the host — on every launch,
+# for users who have no VS Code extension at all.
+#
+# Reaching the port needs no tunnel or relay: OrbStack routes
+# host.docker.internal to services bound to the Mac's 127.0.0.1 (verified
+# 2026-08-07 — the extension answers "400 WebSockets request was expected").
+# The CLI still defaults to container-localhost, so a launch also needs
+# CLAUDE_CODE_IDE_HOST_OVERRIDE=host.docker.internal, which is an ordinary .env
+# variable and needs no launcher change. NOTE this loopback bridging is
+# OrbStack-specific: rootless Docker and Docker Desktop sandboxes block it.
+IDE_LOCK_DIR="${IDE_LOCK_DIR:-$HOME/.claude/ide}"
+IDE_LOCK_DIR="${IDE_LOCK_DIR/#\~/$HOME}"
+if [ -d "$IDE_LOCK_DIR" ]; then
+    MOUNTS+=(-v "$IDE_LOCK_DIR:/home/agent/.claude/ide:ro")
+fi
+
 # GCP service account key (read-only) — activated by GCP_KEY_FILE alone, from
 # whichever source set it: .env, env.<profile>, or an export in the launching
 # shell. There is no separate selector flag or overlay file; with dynamic
@@ -778,7 +827,7 @@ _ENV_KEEP="TERM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTE
 # SSH_MOUNT block above already forwards it, remapped to the socket's in-container
 # path; the host path would win on argv order and silently kill agent forwarding.
 _ENV_DENY="WORKSPACE SSH_BUILD_KEY GCP_KEY_FILE CLAUDE_CREDENTIALS_FILE
-GEMINI_CONFIG_DIR IMAGE_NAME CONTAINER_REPO CONTAINER_REF KIT_VENV_VOLUME
+GEMINI_CONFIG_DIR IDE_LOCK_DIR IMAGE_NAME CONTAINER_REPO CONTAINER_REF KIT_VENV_VOLUME
 MULTIPLAI_NET GH_TOKEN_KEYCHAIN MULTIPLAI_MOUNT_GEMINI MULTIPLAI_HUB_URL
 MULTIPLAI_HUB_TOKEN MULTIPLAI_DRIVER_TOKEN HOST_HOME CLAUDE_CONFIG_DIR
 CLAUDE_MULTIPLAI_HOME DISABLE_AUTOUPDATER GOOGLE_APPLICATION_CREDENTIALS

@@ -1,7 +1,5 @@
 #!/bin/bash
-# fleet-watch — the fleet board in a spare terminal, for people who would rather
-# keep their status bar. Same board as `fleet-bar`, redrawn on a timer, sized to
-# the whole window instead of three status lines.
+# fleet-watch — the fleet board, in a terminal you keep on screen.
 #
 #   dotfiles/scripts/fleet-watch        # redraw every 5s
 #   dotfiles/scripts/fleet-watch 2      # every 2s
@@ -9,31 +7,31 @@
 # Any key quits. Redirected or piped, it prints the board once and exits, so
 # `fleet-watch > board.txt` is a snapshot rather than a hung process.
 #
-# It reuses `fleet-bar-render.py` unchanged, so it inherits that renderer's
-# fixed column budget — checkpoint text is still clipped at 44 characters, and
-# there is no scrolling: it fills the window and says `+N more` for the rest.
-# What it buys over the status bar is height, and every window back.
+# It renders through `fleet-render.py`, which still carries the fixed column
+# budget it was born with: checkpoint text clipped at 44 characters, no
+# scrolling, `+N more` for the overflow. Those are limits of the renderer, not
+# of a terminal, and the fleet console lifts them.
 #
-# Host-safe by construction, for the same reason `fleet-bar` is: the renderer is
-# stdlib-only and reads data files. Nothing here resolves or executes plugin
-# code. See docs/TMUX-FLEET-BOARD.md.
+# Host-safe by construction: the renderer is stdlib-only and reads data files.
+# Nothing here resolves or executes plugin code — the plugin's manifest and
+# cache are container-writable. See docs/TMUX-FLEET-BOARD.md.
 #
-# Unlike the other two host-side scripts this one is interactive, so it *does*
-# print its failures — a person ran it and is looking at the output.
+# Unlike `fleet-viewed.sh`, which is a tmux hook and silent by contract, this
+# one *prints* its failures — a person ran it and is looking at the output.
 
 interval="${1:-5}"
 case "$interval" in ''|*[!0-9]*) interval=5 ;; esac
 
 scripts="$(dirname "$0")"
-renderer="$scripts/fleet-bar-render.py"
+renderer="$scripts/fleet-render.py"
 
 if [ ! -r "$renderer" ]; then
-    echo "fleet-watch: no fleet-bar-render.py beside $scripts" >&2
+    echo "fleet-watch: no fleet-render.py beside $scripts" >&2
     exit 1
 fi
 
-# Same resolution order as fleet-bar: the environment, then the marker setup.sh
-# writes one directory above the scripts.
+# The environment first, then the marker `setup.sh` writes one directory above
+# the scripts — a terminal has neither `$WORKSPACE` nor `$CLAUDE_CONFIG_DIR`.
 ws="${WORKSPACE:-}"
 if [ -z "$ws" ] && [ -r "$scripts/../.workspace" ]; then
     read -r ws < "$scripts/../.workspace"

@@ -1,8 +1,8 @@
 """Pins `dotfiles/scripts/fleet-watch` — the fleet board in a spare terminal.
 
 This is the one host-side fleet script a *person* runs, and that inverts the
-rule the other two follow. `fleet-bar` and `fleet-viewed.sh` are silent on every
-failure path because their output goes into a status bar or a hook; here the
+rule `fleet-viewed.sh` follows. That one is a tmux hook and silent on every
+failure path, because tmux puts a hook's stderr in your terminal; here the
 output goes to someone who is looking at it, so an unresolvable workspace has to
 say so rather than draw an empty board forever.
 
@@ -10,9 +10,9 @@ The loop itself is not tested — a redraw timer around `read -t` has nothing in
 it to break, and driving it would mean owning a pty. What is pinned is
 everything that happens before the first redraw:
 
-* it resolves the workspace the same way `fleet-bar` does, environment first;
+* it resolves the workspace from the environment first, then the marker;
 * it fails **loudly** and non-zero when it cannot;
-* it hands the renderer the window's own size, not a status bar's three lines;
+* it hands the renderer the window's own size, not a fixed line count;
 * off a terminal it draws once and leaves, rather than spinning.
 
 That last one is not hypothetical: waiting on a keypress needs a tty, and
@@ -58,7 +58,7 @@ class Watch:
         shutil.copy(SCRIPT, self.scripts / "fleet-watch")
         os.chmod(self.scripts / "fleet-watch", 0o755)
 
-        render = self.scripts / "fleet-bar-render.py"
+        render = self.scripts / "fleet-render.py"
         render.write_text(RENDER_STUB)
         os.chmod(render, 0o755)
 
@@ -126,7 +126,7 @@ def test_an_unresolvable_workspace_is_an_error_not_a_blank_board(watch):
     """The inversion: this one is read by a person, so it must complain.
 
     Silence here would look exactly like an idle fleet — the failure that cost
-    an afternoon when the status bar did it.
+    an afternoon when the status bar did exactly this.
     """
     result = watch.run()
 
@@ -136,16 +136,16 @@ def test_an_unresolvable_workspace_is_an_error_not_a_blank_board(watch):
 
 
 def test_a_missing_renderer_is_an_error(watch):
-    (watch.scripts / "fleet-bar-render.py").unlink()
+    (watch.scripts / "fleet-render.py").unlink()
 
     result = watch.run(env={"WORKSPACE": "/nowhere"})
 
     assert result.returncode != 0
-    assert "fleet-bar-render.py" in result.stderr
+    assert "fleet-render.py" in result.stderr
 
 
 def test_the_renderer_gets_the_whole_window(watch, tmp_path):
-    """Not three status lines. One row is reserved so the draw cannot scroll."""
+    """The whole window. One row is reserved so the draw cannot scroll."""
     result = watch.run(env={"WORKSPACE": str(tmp_path / "ws")}, cols=200, lines=50)
 
     assert result.returncode == 0, result.stderr
@@ -174,7 +174,7 @@ def test_a_junk_interval_falls_back_rather_than_failing(watch, tmp_path, given):
 
 
 def test_it_never_resolves_plugin_code(watch):
-    """The host boundary `test_fleet_bar.py` asserts for the renderer.
+    """The host boundary `test_fleet_render.py` asserts for the renderer.
 
     The plugin's manifest and cache are container-writable, so a host process
     that resolved plugin code would run whatever a container could write. This

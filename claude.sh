@@ -710,8 +710,27 @@ fi
 # here. So the container path is /home/agent/.claude/ide and NOT
 # "$DOTFILES_DIR/ide"; mounting at the latter is the plausible-looking mistake.
 #
-# Read-only is correct and not merely cautious: the extension is the only writer,
-# the CLI only ever reads.
+# READ-ONLY IS REQUIRED. Not tidiness, and not because the CLI never writes here
+# — it does. Its lockfile-cleanup pass deletes entries it judges stale, and the
+# judgement is `process.kill(lockfile.pid, 0)` evaluated *locally*:
+#
+#     if (r.pid) { if (!alive(r.pid)) {
+#         if (platform() !== "wsl") o = true;            // stale — no further check
+#         else if (!await probePort(host, r.port)) o = true;
+#     } }
+#     if (o) try { await unlink(t) } catch (…) { log("Failed to remove stale …") }
+#
+# In a container the platform is Linux, so the WSL branch never runs, and the pid
+# is the *Mac's* VS Code pid, which this namespace cannot see. Every host
+# lockfile therefore looks stale — and read-write, the first session in would
+# delete the live one, breaking /ide for the host CLI and every other container
+# until the editor rewrote it. Note WSL gets a port probe before being declared
+# stale precisely because its pid belongs to another OS; Docker has no such
+# branch.
+#
+# Read-only turns that unlink into a caught, logged error (both unlink sites and
+# the enclosing function are wrapped), so it is what keeps the feature working
+# rather than merely making the mount safe. Do not "fix" this to :rw.
 #
 # The [ -d ] guard is load-bearing. Without it, `docker -v` on a missing source
 # silently creates a root-owned empty directory on the host — on every launch,

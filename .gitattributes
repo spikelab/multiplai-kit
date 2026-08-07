@@ -1,0 +1,14 @@
+# The kit is executed, not just read, and half of what it ships is
+# extensionless (`gh-tok`, `run-hook-python`, `claude-wrapped`, the fleet-bar
+# scripts). A checkout with `core.autocrlf=true` — the Git for Windows default,
+# which a WSL user inherits whenever the repo lives on the Windows side —
+# rewrites those to CRLF, and a `#!/usr/bin/env bash` script with a trailing \r
+# fails at the shebang with a bare "no such file or directory" naming an
+# interpreter that plainly exists.
+#
+# `text=auto` still runs git's binary detection, so this normalises source
+# without touching anything that isn't; `eol=lf` pins the working-tree ending
+# regardless of the platform default. Repo-wide rather than per-glob because
+# the failure mode is one missed extensionless file, and there is nothing here
+# that wants CRLF.
+* text=auto eol=lf

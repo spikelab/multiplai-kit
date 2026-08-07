@@ -154,7 +154,7 @@ def _launched_name(kit):  # noqa: F811
     return next(k for k in _at_run(kit)["panes"] if k.startswith("claude-"))
 
 
-def _seed(kit, *entries):  # noqa: F811
+def _seed(kit, *entries, server="/private/tmp/tmux-501/default"):  # noqa: F811
     """Pre-existing entries for other tabs, in the shape the launcher writes.
 
     One line per entry is not cosmetic: the merge re-reads this file with
@@ -163,7 +163,8 @@ def _seed(kit, *entries):  # noqa: F811
     """
     kit.panes.parent.mkdir(parents=True, exist_ok=True)
     lines = ",\n".join(
-        f'    "{name}": {{"pane": "{pane}", "window": "{window}", '
+        f'    "{name}": {{"pane": "{pane}", "server": "{server}", '
+        f'"window": "{window}", '
         f'"session": "work", "at": "2026-08-06T21:00:00Z"}}'
         for name, pane, window in entries
     )
@@ -185,9 +186,27 @@ def test_a_launch_records_its_own_pane(panekit):
     entry = _at_run(panekit)["panes"][_launched_name(panekit)]
 
     assert entry["pane"] == "%12"
-    assert entry["window"] == "pi-eval"
     assert entry["session"] == "work"
     assert entry["at"].endswith("Z")
+
+
+def test_an_auto_named_window_is_not_recorded_as_a_label(panekit):
+    """With `automatic-rename` on — tmux's default, and what the launcher's own
+    rename guard tests for — `#{window_name}` is whatever tmux derived from the
+    running process: `bash` in a fresh window, `claude.sh` mid-launch. Recording
+    it would put `project@bash` on the board. Empty is the honest answer, and it
+    lets the reader fall back to the worktree/branch label it already builds."""
+    _launch(panekit, "", "", TMUX_NAME_STUB="bash", TMUX_AUTO_STUB="on")
+
+    assert _at_run(panekit)["panes"][_launched_name(panekit)]["window"] == ""
+
+
+def test_a_window_the_user_pinned_is_recorded(panekit):
+    """`automatic-rename off` is the one state that means a human typed this
+    string, which is the only case the label is worth anything."""
+    _launch(panekit, "", "", TMUX_NAME_STUB="kit-review", TMUX_AUTO_STUB="off")
+
+    assert _at_run(panekit)["panes"][_launched_name(panekit)]["window"] == "kit-review"
 
 
 def test_the_reading_says_what_it_is_and_which_server_issued_it(panekit):
@@ -207,11 +226,23 @@ def test_the_reading_says_what_it_is_and_which_server_issued_it(panekit):
     assert m["observed_at"].endswith("Z") and len(m["observed_at"]) == 20
 
 
+def test_each_entry_carries_the_server_that_issued_its_pane_id(panekit):
+    """Per entry, not just at the top level. The file merges across tabs, and
+    two tabs can be on two tmux servers — a single top-level socket path would
+    relabel every carried-forward entry as this launch's, which is precisely
+    the mis-attribution the field exists to prevent."""
+    _launch(panekit, "", "")
+
+    entry = _at_run(panekit)["panes"][_launched_name(panekit)]
+
+    assert entry["server"] == "/private/tmp/tmux-501/default"
+
+
 def test_a_window_name_that_could_break_the_json_is_stripped(panekit):
     """Unlike a container name, a window name is arbitrary user text. A lossy
     label beats an unparseable file, which would silently disable the map for
     every reader rather than for one tab."""
-    _launch(panekit, "", "", TMUX_NAME_STUB='ev"il\\one')
+    _launch(panekit, "", "", TMUX_NAME_STUB='ev"il\\one', TMUX_AUTO_STUB="off")
 
     assert _at_run(panekit)["panes"][_launched_name(panekit)]["window"] == "evilone"
 
@@ -234,6 +265,23 @@ def test_another_tab_survives_this_tab_launching(panekit):
     assert len(at_run) == 2
     # And it is still there after this tab's own entry has been retired.
     assert list(_map(panekit)["panes"]) == ["claude-other-01"]
+
+
+def test_a_carried_entry_keeps_the_server_it_was_written_with(panekit):
+    """The reason `server` is per entry. This tab is on the default socket; the
+    other one is on a second tmux server where `%3` means something else
+    entirely. Carrying the entry forward under *this* launch's socket path
+    would make a stale pane id look current, and a `viewed` marker for our `%3`
+    would be applied to their session."""
+    other = "/private/tmp/tmux-501/second"
+    _seed(panekit, ("claude-other-01", "%3", "kit"), server=other)
+
+    _launch(panekit, "claude-other-01", "claude-other-01")
+
+    at_run = _at_run(panekit)["panes"]
+
+    assert at_run["claude-other-01"]["server"] == other
+    assert at_run[_launched_name(panekit)]["server"] == "/private/tmp/tmux-501/default"
 
 
 def test_a_tab_whose_container_is_gone_is_dropped(panekit):

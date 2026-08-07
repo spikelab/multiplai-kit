@@ -1214,8 +1214,19 @@ write_pane_map() {
     local server pane window session
     server=$(tmux display-message -p '#{socket_path}' 2>/dev/null) || server=""
     pane=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_id}' 2>/dev/null) || pane=""
-    window=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null) || window=""
     session=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null) || session=""
+
+    # Only a *pinned* name is a label. With `automatic-rename` on (tmux's
+    # default), `#{window_name}` is whatever tmux last derived from the running
+    # process — `bash` in a fresh window, `claude.sh` mid-launch — and a board
+    # that renders `mktplace@bash` is worse than one that falls through to the
+    # worktree/branch label it already knows how to build. `off` is the one
+    # state that means a human typed this string, and it is the same test the
+    # rename guard below uses, so the two can never disagree.
+    window=""
+    if [ "$TMUX_ORIG_AUTO" = "off" ]; then
+        window=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null) || window=""
+    fi
 
     # Window and session names are arbitrary user text, unlike a container
     # name, so they are the one thing here that could corrupt the JSON. Strip
@@ -1241,7 +1252,12 @@ write_pane_map() {
     [ -n "$pane" ] || self=""
     case "$self" in *[\"\\]*) self="" ;; esac
     if [ -n "$self" ]; then
-        entries="    \"$self\": {\"pane\": \"$pane\", \"window\": \"$window\", \"session\": \"$session\", \"at\": \"$now\"}"
+        # `server` is repeated per entry, not just at the top level, because the
+        # merge below carries forward lines written by *other* tabs — which may
+        # be on a different tmux server than this launch. A single top-level
+        # socket path would silently relabel every one of them as ours, and a
+        # pane id is only meaningful paired with the server that issued it.
+        entries="    \"$self\": {\"pane\": \"$pane\", \"server\": \"$server\", \"window\": \"$window\", \"session\": \"$session\", \"at\": \"$now\"}"
     fi
 
     # Carry forward every other tab whose container is still running. A name

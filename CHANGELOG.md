@@ -19,8 +19,9 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 - **The launcher now records which tmux pane each container is in.** Launching
   from inside tmux writes `$WORKSPACE/.multiplai/data/tmux/panes.json` — one
-  entry per running container, carrying its pane id, the window's name, the
-  tmux session, and the tmux socket that issued the pane id. This is the
+  entry per running container, carrying its pane id, the tmux socket that
+  issued that pane id, the tmux session, and — only if you pinned it — the
+  window's name. This is the
   enabling half of an always-visible fleet board: nothing inside a container
   can see tmux (`$TMUX_PANE` is a fact about your Mac, and the plugin's hooks
   run in the container), so a session can only ever be labelled with the tab
@@ -32,10 +33,18 @@ public repo has shipped without in-tree memory hooks from day one (see the
   moments as `live_containers.json`: once before the session container starts,
   once after it exits.
 
-  The socket path is not decoration. tmux recycles pane ids per server, so
-  `%12` means nothing on its own; a reader joining anything to a pane id must
-  check the server first, and degrade to "unknown" rather than to the wrong
-  session. Best-effort throughout — no tmux, no `$TMUX_PANE`, no workspace, or
+  The window name is recorded **only when `automatic-rename` is off** — i.e.
+  when you typed that name yourself. Left on (tmux's default), `#{window_name}`
+  is whatever tmux derived from the running process, so recording it would
+  label the board `project@bash`; leaving it empty lets the reader fall back to
+  the worktree/branch label it already builds.
+
+  The socket path is not decoration, and it is stored **per entry**. tmux
+  recycles pane ids per server, so `%12` means nothing on its own; a reader
+  joining anything to a pane id must check the server first, and degrade to
+  "unknown" rather than to the wrong session. Per-entry because the file merges
+  across tabs, which may be on different servers — one top-level socket path
+  would mislabel every carried-forward entry as this launch's. Best-effort throughout — no tmux, no `$TMUX_PANE`, no workspace, or
   a failing tmux or docker are silent no-ops, and none of them can change a
   session's exit status. Pinned by `evals/unit/test_claude_sh_panes.py`.
 

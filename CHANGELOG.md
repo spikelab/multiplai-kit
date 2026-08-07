@@ -337,6 +337,44 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Fixed
 
+- **The launcher misread `automatic-rename`, and got two opposite things wrong
+  with it.** `tmux_capture_window` read the option with
+  `show-window-options -v`, which returns the **window-local** value and prints
+  nothing when it was only ever set globally — which is how anyone with
+  `set -g automatic-rename off` in `~/.tmux.conf` has it. It now reads
+  `show-options -w -Av`, the *resolved* value: the window-local setting if there
+  is one, else the global, else tmux's own default.
+
+  Three flags claim to answer this and only one does. Verified on tmux 3.4 with
+  a global `off` and a window-local `on`: `show-window-options -v` → `on`
+  (window-local only — and **empty** when only the global was ever set),
+  `show-window-options -gv` → `off` (the global set only — blind to the local
+  override), `show-options -w -Av` → `on`. Note `-A` is rejected by the
+  `show-window-options` alias on 3.4 (`unknown flag -A`), so the resolved read
+  has to be spelled `show-options -w`.
+
+  The empty answer was read in both directions, so one misread option produced
+  two opposite wrong answers:
+
+  - **Your tab names were taken.** The rename guard fires when the option is
+    *not* `off`, so it always fired: every tab you had deliberately named was
+    renamed to the container name for the length of the session (restored on
+    exit). The one state that means "a human typed this string" was invisible.
+  - **…and never recorded.** `write_pane_map` records the window name only
+    when the option *is* `off`, so it never did. Every entry in `panes.json`
+    carried `"window": ""`, and the fleet board fell back to
+    `claude-personal-07213856` for every agent instead of the tab name.
+
+  A window set back to `automatic-rename on` under a global `off` is now
+  handled correctly too: it is naming itself, so the launcher renames it and
+  does **not** record its derived name as though a human chose it.
+
+  The stub `tmux` in `evals/unit/test_claude_sh_tmux.py` and
+  `test_claude_sh_panes.py` answered every scope identically, which is why the
+  tests passed throughout. It now models the global set, the window-local
+  override and the resolved read separately, and five cases pin the fix — two
+  per direction, one on the mechanism.
+
 - **The statusline's `~` abbreviation never applied.** `${cwd/#$HOME/~}`
   tilde-expands its *replacement*, so the collapsed path expanded straight back
   to `$HOME` — invisible, because the result was the string it started with. The

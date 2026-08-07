@@ -1132,10 +1132,35 @@ tmux_available() {
 # Captured once, before the first rename. `automatic-rename` is what tmux was
 # doing on its own; `rename-window` silently turns it off, so restoring the
 # name alone would leave the window frozen on the last thing it was called.
+#
+# **`show-options -w -Av`, not `show-window-options -v`.** The question both
+# callers ask is "what is `automatic-rename` *for this window*, however it came
+# to be that" — the resolved value. Three flags claim to answer it and only one
+# does. Verified on tmux 3.4, global `off` with a window-local `on`:
+#
+#   show-window-options -v   → on      # window-local only; EMPTY if never set
+#                                      # locally, which is how a plain
+#                                      # `set -g automatic-rename off` has it
+#   show-window-options -gv  → off     # the global set only; a local override
+#                                      # is invisible to it
+#   show-options -w -Av      → on      # resolved: local if set, else global,
+#                                      # else tmux's own default
+#
+# `-A` ("include inherited") is the flag that merges, and it is rejected by the
+# `show-window-options` alias (`unknown flag -A` on 3.4) — it has to be reached
+# as `show-options -w`. `-t` accepts a pane id and resolves to its window.
+#
+# The original bug was `-v`, and an empty answer is not a harmless one: it is
+# read in *both* directions. `write_pane_map` records the tab's name only when
+# this is `off` (so it never did), and the rename guard fires when it is *not*
+# `off` (so it always did, renaming tabs their owner had deliberately named).
+# One misread option, two opposite wrong answers. `-gv` fixes both of those but
+# trades one wrong answer for a narrower one — a window explicitly set back to
+# `on` under a global `off` would still read as pinned.
 tmux_capture_window() {
     tmux_available || return 0
     TMUX_ORIG_NAME=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null) || TMUX_ORIG_NAME=""
-    TMUX_ORIG_AUTO=$(tmux show-window-options -v -t "$TMUX_PANE" automatic-rename 2>/dev/null) || TMUX_ORIG_AUTO=""
+    TMUX_ORIG_AUTO=$(tmux show-options -w -Av -t "$TMUX_PANE" automatic-rename 2>/dev/null) || TMUX_ORIG_AUTO=""
     return 0
 }
 

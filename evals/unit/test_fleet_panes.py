@@ -43,10 +43,13 @@ The invariants a future edit breaks at its peril:
   the map for every reader;
 * **it never prints.** It runs on the launch path and inside a redraw loop.
 
-`TestOnARealTmuxServer` is the half a stub cannot pin: that `set-option -p`
+`TestOnARealTmuxServer` is the half a stub cannot pin, because a stub answers
+`list-panes` with whatever the test staged and so exercises the parsing while
+never touching the format string that produced it: that `set-option -p`
 round-trips through `#{@cc}` at all, that the stamp survives `rename-window`,
-and that `#{automatic-rename}` renders as `0`/`1` in a format rather than
-`off`/`on`. Verified against tmux 3.4.
+that a `|` in a stamp cannot shift the fields after it, and that
+`#{automatic-rename}` renders as `0`/`1` in a format rather than `off`/`on`.
+Verified against tmux 3.4.
 """
 
 import json
@@ -596,6 +599,34 @@ class TestOnARealTmuxServer:
         assert entry["window"] == "inbox-cleanup", \
             "the tab was renamed and the board did not follow"
         assert entry["server"] == sock
+
+    def test_a_separator_in_the_stamp_cannot_shift_the_other_fields(
+            self, panes, tmp_path):
+        """`|` is the record separator, and `@cc` is arbitrary text.
+
+        Only a real tmux can pin this: the stub answers `list-panes` with
+        whatever the test staged, so it exercises the parsing and never the
+        format string that produced it — which is where the defect was. With
+        `#{@cc}` unstripped, a stamp of `cc-p-01|0|pwned` renders as
+        `%0|cc-p-01|0|pwned|0|win|d` and parses as cc=`cc-p-01`, auto=`0`,
+        window=`pwned`: a label smuggled past *both* the `automatic-rename`
+        gate and the strip that the window name itself goes through. Verified
+        against tmux 3.4 before the strip was added.
+
+        The field is stripped rather than dropped for the same reason the
+        window name is — this is a join key, and mangling it into something
+        `docker ps` will not list is already the safe direction.
+        """
+        _sock, tm = self._server(tmp_path)
+        pane = tm("list-panes", "-a", "-F", "#{pane_id}").stdout.strip()
+        tm("set-option", "-p", "-t", pane, "@cc", "cc-p-01|0|pwned")
+
+        self._run_inside(panes, tm, self._docker_only(tmp_path, "cc-p-01"))
+        tm("kill-server")
+
+        assert "cc-p-01" not in panes.entries(), \
+            "a `|` in the stamp shifted the fields and forged an entry"
+        assert not any(e["window"] == "pwned" for e in panes.entries().values())
 
     def test_a_plain_shell_pane_reports_an_empty_stamp(self, panes, tmp_path):
         """The other half: `#{@cc}` on an unstamped pane is empty rather than

@@ -81,9 +81,9 @@ public repo has shipped without in-tree memory hooks from day one (see the
 - **The fleet board spends the whole window.** The checkpoint summary was
   capped at 44 characters — a tmux status bar's column budget, kept after the
   status bar was deleted — and now takes whatever the fixed fields leave, so a
-  wider terminal buys more of the sentence instead of more blank space. The tab
-  label was widened to fit a container name (see the naming entry above, which
-  then made it narrow again). And the board is
+  wider terminal buys more of the sentence instead of more blank space. (The tab
+  label's own width moved with the container name — see the naming entry above.)
+  And the board is
   now a block at the top of the window rather than a fixed number of rows: the
   tail line (`+N more`, `👀N seen`, PRs) follows the last agent instead of being
   pinned to the bottom with blank rows between. `--lines` is a budget, not a

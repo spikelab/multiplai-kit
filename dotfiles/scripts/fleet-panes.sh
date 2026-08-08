@@ -97,12 +97,18 @@ server=$(tmux display-message -p '#{socket_path}' 2>/dev/null) || exit 0
 #
 #   pane id | @cc | automatic-rename | window name | session name
 #
-# `|` is the separator and the last two fields are arbitrary user text, so tmux
-# strips the separator out of them on the way (`#{s/[|]//:…}`) — the record has
-# to parse before anything downstream can sanitise it. The rest come from
-# closed alphabets tmux controls.
+# `|` is the separator, and **three** of these fields are arbitrary text rather
+# than two: a window name and a session name are whatever a person typed, and
+# `@cc` is a tmux user option anyone can set to anything (which is the same
+# reason it is guarded against `"` and `\` below). So tmux strips the separator
+# out of all three on the way (`#{s/[|]//:…}`) — the record has to parse before
+# anything downstream can sanitise it, and a `|` inside a field does not merely
+# corrupt that field, it shifts every field after it: a `@cc` of
+# `cc-p-01|0|pwned` parses as cc=`cc-p-01`, auto=`0`, window=`pwned`, which
+# smuggles a label past both the `automatic-rename` gate and the strip. Only the
+# pane id and `automatic-rename` come from alphabets tmux controls.
 panes=$(tmux list-panes -a -F \
-    '#{pane_id}|#{@cc}|#{automatic-rename}|#{s/[|]//:window_name}|#{s/[|]//:session_name}' \
+    '#{pane_id}|#{s/[|]//:@cc}|#{automatic-rename}|#{s/[|]//:window_name}|#{s/[|]//:session_name}' \
     2>/dev/null) || exit 0
 
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)

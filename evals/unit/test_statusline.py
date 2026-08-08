@@ -28,6 +28,13 @@ ANSI = re.compile(r"\033\[[0-9;]*m")
 def payload(**overrides):
     """A realistic statusline payload; keys set to None are removed."""
     now = int(time.time())
+    # The five-hour reset is deliberately **off** the minute boundary. The
+    # statusline floors the countdown against its own `date +%s`, so a payload
+    # built at exactly `now + 5400` renders `1h30m` only while the two clocks
+    # agree to the second — one tick of drift between building this dict and
+    # the script reading the time floors it to `1h29m`. That is a test racing
+    # a wall clock, not a bug in the countdown, and it failed CI on 2026-08-08.
+    # The extra 30s buys half a minute of slack in both directions.
     base = {
         "model": {"id": "claude-opus-5[1m]", "display_name": "Opus 5 (1M context)"},
         "workspace": {"current_dir": "/host/home/someone/workspace"},
@@ -35,7 +42,7 @@ def payload(**overrides):
         "context_window": {"used_percentage": 8},
         "effort": {"level": "medium"},
         "rate_limits": {
-            "five_hour": {"used_percentage": 72, "resets_at": now + 5400},
+            "five_hour": {"used_percentage": 72, "resets_at": now + 5400 + 30},
             "seven_day": {"used_percentage": 52, "resets_at": now + 180000},
         },
     }

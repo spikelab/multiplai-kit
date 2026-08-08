@@ -13,7 +13,17 @@ before-the-first-redraw assertions cheap:
 * it resolves the workspace from the environment first, then the marker;
 * it fails **loudly** and non-zero when it cannot;
 * it hands the renderer the window's own size, not a fixed line count;
-* off a terminal it draws once and leaves, rather than spinning.
+* off a terminal it draws once and leaves, rather than spinning;
+* it refreshes the tmux pane map before each draw, through the same
+  `fleet-panes.sh` the launcher calls — and **silently**, which is the one
+  deliberate exception to the rule above.
+
+That last one is what makes tab labels track reality at the board's resolution
+rather than at launch resolution: rename a tab and the next frame follows, and a
+container that was already running when the board started acquires a label
+instead of being stuck with its container name for the life of the session. The
+renderer is not involved and must not be — it is pinned stdlib-only *and*
+subprocess-free by `test_fleet_render.py`, so the tmux call cannot live there.
 
 That last one is not hypothetical: waiting on a keypress needs a tty, and
 without one the wait returns instantly — a busy loop redrawing forever at full
@@ -58,6 +68,17 @@ with open(os.environ["RENDER_LOG"], "a") as fh:
 print("FLEET 0 fronts")
 """
 
+# Stands in for `fleet-panes.sh`. Records the workspace it was handed, and
+# prints on both streams — so a `fleet-watch` that stopped redirecting either
+# one shows up as a corrupted frame rather than as nothing at all.
+PANES_STUB = """\
+#!/bin/bash
+printf '%s\\n' "$WORKSPACE" >> "$PANES_LOG"
+echo "PANES-STDOUT"
+echo "PANES-STDERR" >&2
+exit 0
+"""
+
 
 class Watch:
     """A copy of the script with a stub renderer beside it.
@@ -78,14 +99,21 @@ class Watch:
         render.write_text(RENDER_STUB)
         os.chmod(render, 0o755)
 
+        self.panes_script = self.scripts / "fleet-panes.sh"
+        self.panes_script.write_text(PANES_STUB)
+        os.chmod(self.panes_script, 0o755)
+
         self.log = tmp_path / "render.log"
         self.log.write_text("")
+        self.panes_log = tmp_path / "panes.log"
+        self.panes_log.write_text("")
         self.marker = tmp_path / "dotfiles" / ".workspace"
 
     def run(self, *args, env=None, cols=200, lines=50):
         environ = dict(os.environ)
         environ.pop("WORKSPACE", None)
         environ["RENDER_LOG"] = str(self.log)
+        environ["PANES_LOG"] = str(self.panes_log)
         environ["COLUMNS"] = str(cols)
         environ["LINES"] = str(lines)
         # `tput` reads `LINES`/`COLUMNS` before asking the terminal, which is
@@ -108,6 +136,7 @@ class Watch:
         environ = dict(os.environ)
         environ.pop("WORKSPACE", None)
         environ["RENDER_LOG"] = str(self.log)
+        environ["PANES_LOG"] = str(self.panes_log)
         environ["COLUMNS"] = str(cols)
         environ["LINES"] = str(lines)
         environ["TERM"] = "xterm"
@@ -153,6 +182,10 @@ class Watch:
     def renders(self):
         return [ln.split() for ln in self.log.read_text().splitlines()]
 
+    def refreshes(self):
+        """One entry per pane-map refresh: the workspace it was handed."""
+        return self.panes_log.read_text().splitlines()
+
 
 @pytest.fixture
 def watch(tmp_path):
@@ -167,6 +200,86 @@ def test_the_environment_resolves_the_workspace(watch, tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert watch.renders()[0][0] == str(ws / ".multiplai" / "data")
+
+
+# --- the pane map, refreshed per frame ----------------------------------------
+
+def test_every_draw_refreshes_the_pane_map_first(watch, tmp_path):
+    """The change that makes a tab rename visible without a relaunch.
+
+    The map used to be written only by `claude.sh`, at launch — so the board
+    re-read a file that could not move between sessions, and a container already
+    running when the map was created could never acquire an entry at all. One
+    refresh per frame makes it a five-second reading instead.
+    """
+    ws = tmp_path / "ws"
+
+    result = watch.run(env={"WORKSPACE": str(ws)})
+
+    assert result.returncode == 0, result.stderr
+    assert watch.refreshes() == [str(ws)]
+    assert len(watch.renders()) == 1
+
+
+def test_the_refresh_is_handed_the_workspace_the_board_resolved(watch, tmp_path):
+    """Both resolve it the same way, so this is belt and braces — but they must
+    not be free to disagree: a board drawing one workspace's data while writing
+    another's map is worse than either failing."""
+    ws = tmp_path / "ws"
+    watch.marker.write_text(f"{ws}\n")
+
+    watch.run()
+
+    assert watch.refreshes() == [str(ws)]
+
+
+def test_the_refresh_never_reaches_the_frame(watch, tmp_path):
+    """`draw` runs inside `board=$(draw)`, so its stdout *is* the frame. And a
+    diagnostic on stderr would print every five seconds forever — the one place
+    this script is deliberately silent, because the map is an enrichment and the
+    board is still a board without it."""
+    result = watch.run(env={"WORKSPACE": str(tmp_path / "ws")})
+
+    assert "PANES-STDOUT" not in result.stdout
+    assert "PANES-STDERR" not in result.stdout
+    assert "PANES-STDERR" not in result.stderr
+
+
+def test_a_missing_pane_script_is_not_an_error(watch, tmp_path):
+    """Unlike the renderer, which the board cannot do without. This one is an
+    enrichment, and a partial install must still draw."""
+    watch.panes_script.unlink()
+
+    result = watch.run(env={"WORKSPACE": str(tmp_path / "ws")})
+
+    assert result.returncode == 0, result.stderr
+    assert len(watch.renders()) == 1
+
+
+def test_a_failing_refresh_does_not_stop_the_board(watch, tmp_path):
+    """A stale map is the behaviour that existed before this refresh did."""
+    watch.panes_script.write_text("#!/bin/bash\nexit 9\n")
+
+    result = watch.run(env={"WORKSPACE": str(tmp_path / "ws")})
+
+    assert result.returncode == 0, result.stderr
+    assert len(watch.renders()) == 1
+
+
+def test_the_board_does_not_reimplement_the_join():
+    """`claude.sh` calls the same script. Two copies of this join is how a
+    launcher and a board come to disagree about which pane is which.
+
+    Comment lines are dropped before looking: this file explains at length what
+    `fleet-panes.sh` does and why, and prose about a `tmux list-panes` is not a
+    `tmux list-panes`.
+    """
+    code = "\n".join(ln for ln in SCRIPT.read_text().splitlines()
+                     if not ln.lstrip().startswith("#"))
+
+    assert "fleet-panes.sh" in code
+    assert "list-panes" not in code
+    assert "docker" not in code
 
 
 def test_the_marker_beside_the_script_resolves_the_workspace(watch, tmp_path):

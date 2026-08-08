@@ -1199,10 +1199,10 @@ tmux_available() {
 # `show-window-options` alias (`unknown flag -A` on 3.4) — it has to be reached
 # as `show-options -w`. `-t` accepts a pane id and resolves to its window.
 #
-# The original bug was `-v`, and an empty answer is not a harmless one: it is
-# read in *both* directions. `write_pane_map` records the tab's name only when
-# this is `off` (so it never did), and the rename guard fires when it is *not*
-# `off` (so it always did, renaming tabs their owner had deliberately named).
+# The original bug was `-v`, and an empty answer is not a harmless one: it was
+# read in *both* directions. The pane map recorded the tab's name only when this
+# was `off` (so it never did), and the rename guard fires when it is *not* `off`
+# (so it always did, renaming tabs their owner had deliberately named).
 # One misread option, two opposite wrong answers. `-gv` fixes both of those but
 # trades one wrong answer for a narrower one — a window explicitly set back to
 # `on` under a global `off` would still read as pinned.
@@ -1240,132 +1240,61 @@ tmux_restore_window() {
     return 0
 }
 
+# --- the pane stamp -----------------------------------------------------------
+# Write the container name onto the *pane*, as a pane-scoped tmux user option.
+#
+# This is the one durable answer to "which container is in this pane?", and the
+# reason is that everything else is a label. A window name is not evidence: the
+# launcher renames the tab to the container name, and the moment you rename it
+# to `inbox-cleanup` that string is gone. A naming convention (`cc-…`) is worse
+# — it is a rule enforced by remembering, and the one time a tab gets called
+# `scratch` the pane stops being identifiable with nothing anywhere reporting it.
+#
+# The stamp is none of those. It is on the pane rather than on its name, so a
+# rename cannot touch it; it is set by the launcher, so it cannot be forgotten;
+# and a non-empty value *is* the definition of "this pane is an agent", which
+# makes an empty one a plain shell. `dotfiles/scripts/fleet-panes.sh` reads the
+# whole fleet back out in a single `tmux list-panes -a`.
+#
+# It outlives the session, deliberately: the pane is still there when the
+# container exits, so the reader cross-checks `docker ps` and treats a stamp
+# naming a dead container as a tab whose work is over. A relaunch in the same
+# pane overwrites it.
+#
+# Needs tmux 3.0 for `set-option -p`. Best-effort like every other tmux call
+# here — the reader falls back to `$TMUX_PANE` for this launch when the stamp
+# does not land, so an older tmux degrades to exactly today's behaviour.
+tmux_stamp_pane() {
+    tmux_available || return 0
+    tmux set-option -p -t "$TMUX_PANE" @cc "$1" 2>/dev/null || true
+    return 0
+}
+
 # --- the pane map -------------------------------------------------------------
 # Which tmux pane is each container sitting in, and what has the user called
-# that tab?
-#
-# The plugin can never answer this. `record_event()` runs *inside* the
-# container and tmux runs on the Mac, so `$TMUX_PANE` is not merely missing
-# there — it is unknowable. Every tmux fact has to be written host-side and
-# joined at render time, exactly as `live_containers.json` already is.
-#
-# Keyed by **container name**, which is the registry's `hostname` field and the
-# one stable join key here: `/clear` mints a fresh session id (one container in
-# this registry carries nine session UUIDs), while the launcher knows both
-# `$TMUX_PANE` and `$CONTAINER_NAME` in one process at one moment.
-#
-# `observer` and `kind` mirror the roster's for the same reason it carries
-# them: a reader must be able to refuse a payload it cannot interpret. `server`
-# is the tmux socket path, and it is load-bearing rather than informational —
-# **pane ids are recycled per tmux server**, so `%12` means nothing without
-# knowing which server issued it. A reader comparing a `viewed` marker against
-# this map must ignore the marker when the two servers differ; degrading to
-# "not seen" is safe, attributing one pane's attention to another session is
-# not.
+# that tab? The join itself lives in `dotfiles/scripts/fleet-panes.sh`, because
+# `fleet-watch` needs the same reading before every redraw and two copies of it
+# is how the two drift. That file carries the reasoning; the short version is
+# that it enumerates the tmux server, keeps every pane carrying an `@cc` stamp
+# whose container `docker ps` still lists, and writes
+# `$WORKSPACE/.multiplai/data/tmux/panes.json`.
 #
 # Called at the same two points as the roster. The pre-run call passes this
-# launch's container name and records it; the post-exit call passes nothing, so
-# the entry for the container that just died is dropped by the same rule that
-# drops every other absent one — an entry survives only while `docker ps` still
-# lists its container. That is what bounds the file and retires a closed tab.
+# launch's container name — at that instant the container is not in `docker ps`
+# yet, and naming it is what says "this one is about to be real". The post-exit
+# call passes nothing, so the container that just died is dropped by the same
+# rule that drops every other absent one.
 #
-# It **merges**: other tabs' entries are the whole point of the file, and a
-# launch in one tab must not blank the map for the nine others.
+# `bash "$script"`, not `"$script"`, for the reason `fleet-watch` runs the
+# renderer through `python3`: the caller should not depend on a checked-out
+# file's exec bit.
 #
-# Best-effort throughout, and guarded by `tmux_available` — no tmux, no
-# `$TMUX`, no `$TMUX_PANE`, no docker, or an unwritable data dir are all silent
-# no-ops. A label on a status bar must never cost a session.
+# Best-effort, silent, and it never changes the exit status. Losing the map
+# costs a label on a board; it must never cost a session.
 write_pane_map() {
-    local self="${1:-}"
-    local data_dir="$WORKSPACE/.multiplai/data"
-    [ -d "$data_dir" ] || return 0
-    tmux_available || return 0
-    command -v docker >/dev/null 2>&1 || return 0
-
-    local names
-    names=$(docker ps --format '{{.Names}}' 2>/dev/null) || return 0
-
-    local server pane window session
-    server=$(tmux display-message -p '#{socket_path}' 2>/dev/null) || server=""
-    pane=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_id}' 2>/dev/null) || pane=""
-    session=$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null) || session=""
-
-    # Only a *pinned* name is a label. With `automatic-rename` on (tmux's
-    # default), `#{window_name}` is whatever tmux last derived from the running
-    # process — `bash` in a fresh window, `claude.sh` mid-launch — and a board
-    # that renders `mktplace@bash` is worse than one that falls through to the
-    # worktree/branch label it already knows how to build. `off` is the one
-    # state that means a human typed this string, and it is the same test the
-    # rename guard below uses, so the two can never disagree.
-    window=""
-    if [ "$TMUX_ORIG_AUTO" = "off" ]; then
-        window=$(tmux display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null) || window=""
-    fi
-
-    # Window and session names are arbitrary user text, unlike a container
-    # name, so they are the one thing here that could corrupt the JSON. Strip
-    # what would — quotes, backslashes, and anything below 0x20 — rather than
-    # escaping it: this is a label, and a lossy label beats an unparseable file
-    # that silently disables the whole feature for every reader.
-    server=$(printf '%s' "$server" | tr -d '"\\[:cntrl:]')
-    window=$(printf '%s' "$window" | tr -d '"\\[:cntrl:]')
-    session=$(printf '%s' "$session" | tr -d '"\\[:cntrl:]')
-
-    local now
-    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-    # One line per entry, deliberately: the merge below re-reads this file with
-    # nothing but `grep`, because `jq` is optional on a host and this runs on
-    # the launch path.
-    local entries="" name line
-    # No pane id is no entry: the map exists to answer "which pane", and a
-    # record that cannot is worse than a missing one. Container names come from
-    # a closed alphabet docker enforces, so the quote guard is belt and braces
-    # — but a corrupt map disables the feature for every reader, not just this
-    # tab.
-    [ -n "$pane" ] || self=""
-    case "$self" in *[\"\\]*) self="" ;; esac
-    if [ -n "$self" ]; then
-        # `server` is repeated per entry, not just at the top level, because the
-        # merge below carries forward lines written by *other* tabs — which may
-        # be on a different tmux server than this launch. A single top-level
-        # socket path would silently relabel every one of them as ours, and a
-        # pane id is only meaningful paired with the server that issued it.
-        entries="    \"$self\": {\"pane\": \"$pane\", \"server\": \"$server\", \"window\": \"$window\", \"session\": \"$session\", \"at\": \"$now\"}"
-    fi
-
-    # Carry forward every other tab whose container is still running. A name
-    # absent from `docker ps` is a tab that has been closed or a container that
-    # has died, and keeping it would leave the board labelling a session that
-    # no longer exists.
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        if [ -n "$self" ] && [ "$name" = "$self" ]; then continue; fi
-        case "$name" in *[\"\\]*) continue ;; esac
-        line=$(grep -m1 -F "    \"$name\": {" "$data_dir/tmux/panes.json" 2>/dev/null) || continue
-        [ -n "$line" ] || continue
-        entries="${entries:+$entries,
-}${line%,}"
-    done <<< "$names"
-
-    mkdir -p "$data_dir/tmux" 2>/dev/null || return 0
-    local tmp="$data_dir/tmux/.panes.json.$$"
-    {
-        printf '{\n'
-        printf '  "version": 1,\n'
-        printf '  "observed_at": "%s",\n' "$now"
-        printf '  "observer": "host",\n'
-        printf '  "kind": "tmux",\n'
-        printf '  "server": "%s",\n' "$server"
-        printf '  "panes": {\n'
-        [ -n "$entries" ] && printf '%s\n' "$entries"
-        printf '  }\n'
-        printf '}\n'
-    } > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 0; }
-
-    # Atomic, for the same reason the roster is: a reader in another container
-    # must never see a half-written file.
-    mv -f "$tmp" "$data_dir/tmux/panes.json" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+    local script="$DOTFILES_DIR/scripts/fleet-panes.sh"
+    [ -r "$script" ] || return 0
+    bash "$script" "${1:-}" >/dev/null 2>&1 || true
     return 0
 }
 
@@ -1470,10 +1399,26 @@ while :; do
     # mapping needed. Each instance gets a unique suffix so multiple
     # containers don't clash; recomputed per pass so a take-back relaunch
     # never races the previous container's --rm cleanup over the name.
+    #
+    # `cc-p-08015414`, not `claude-personal-08015414`. Nothing parses this
+    # string — every consumer in the kit and in the multiplai-context plugin
+    # compares it whole — so the shape is free to be chosen for the places a
+    # person reads it: a tab bar, `docker ps`, and `<name>.orb.local`. Eleven
+    # characters of "claude-personal" were the reason the fleet board's label
+    # column had to be 24 wide, and they identified nothing that the row's own
+    # existence did not.
+    #
+    # The profile survives as its initial rather than being dropped: `cc-w-` is
+    # the work identity and `cc-p-` is not, and the board has no other field
+    # carrying that. Two profiles sharing a first letter would collide — say so
+    # here rather than in a bug report.
+    #
+    # Uniqueness is still `DDHHMMSS`, unchanged: two launches in the same second
+    # collide, as they always have.
     SUFFIX=$(date +%d%H%M%S)
-    CONTAINER_NAME="claude"
+    CONTAINER_NAME="cc"
     if [ -n "$PROFILE" ]; then
-        CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE}"
+        CONTAINER_NAME="${CONTAINER_NAME}-${PROFILE:0:1}"
     fi
     CONTAINER_NAME="${CONTAINER_NAME}-${SUFFIX}"
 
@@ -1487,6 +1432,11 @@ while :; do
     # Same moment, same reasoning: this is the only process that ever holds
     # `$TMUX_PANE` and `$CONTAINER_NAME` together, and the session about to
     # start is the one whose SessionStart renders the fleet view.
+    #
+    # The stamp goes on first, and it is what the map then reads back: from
+    # here on, "which container is in this pane" is a property of the pane
+    # itself rather than a line in a file only this process could have written.
+    tmux_stamp_pane "$CONTAINER_NAME" || true
     write_pane_map "$CONTAINER_NAME" || true
 
     # Inside the loop, not before it: a take-back relaunch computes a NEW
@@ -1626,9 +1576,10 @@ post_exit_drain || true
 # until the next launch.
 write_container_roster || true
 
-# And the pane map with it, for the same reason and by the same rule: no name
-# is passed, so this launch's own entry is not re-recorded, and `docker ps` no
-# longer lists the container — which is what retires the closed tab.
+# And the pane map with it, for the same reason and by the same rule. The pane
+# still carries this launch's `@cc` — the stamp outlives the container by
+# design — so what retires the tab is `docker ps` no longer listing it, and no
+# name is passed here precisely so nothing overrides that.
 write_pane_map || true
 
 exit "$DOCKER_STATUS"

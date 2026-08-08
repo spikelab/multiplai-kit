@@ -2,8 +2,8 @@
 
 A wall of tabs called "bash" tells you nothing about which session is which.
 The launcher renames the tmux window to the container name — the *same* string
-the multiplai-context fleet view prints (``workspace claude-personal-05212125``),
-so a tab and a fleet row match by eye with no lookup step in between.
+the multiplai-context fleet view prints (``workspace cc-p-05212125``), so a tab
+and a fleet row match by eye with no lookup step in between.
 
 The invariants this file breaks if a future edit does:
 
@@ -83,7 +83,15 @@ exit 0
 # The launcher builds this from `date +%d%H%M%S`, so a test can only pin the
 # shape — which is the part that matters: it is the container name, and it is
 # the string the fleet view prints.
-CONTAINER_NAME_RE = re.compile(r"^claude(-[a-z]+)?-\d{8}$")
+#
+# `cc-p-08015414`, one character of profile. It was `claude-personal-08015414`
+# until 2026-08-08, and the change is a rename rather than a schema change:
+# nothing in the kit or in the multiplai-context plugin parses this string —
+# every consumer compares it whole — so there was no parser to update and no
+# migration to run. What it bought is width, in the three places a person reads
+# it: a tmux tab bar, `docker ps`, and `<name>.orb.local`. 24 characters mostly
+# spelling "claude" were why the fleet board's label column had to be 24 wide.
+CONTAINER_NAME_RE = re.compile(r"^cc(-[a-z])?-\d{8}$")
 
 # As the base stub, plus an exit status the caller can choose — the tab name
 # must not be able to change what the launcher reports about the session.
@@ -143,12 +151,20 @@ def test_a_launch_renames_the_window_to_the_container_name(tmuxkit):
 def test_the_name_is_the_one_the_fleet_view_prints(tmuxkit):
     """The whole point of choosing the container name over the session id: the
     tab and the `AGENTS.md` row are the same string, so matching them is
-    reading, not lookup. `--profile` is part of that string in both places."""
+    reading, not lookup. `--profile` is part of that string in both places.
+
+    As its **initial**, and keeping it at all was a deliberate call when the
+    name was shortened: `cc-w-04221854` says at a glance that this is the work
+    identity and `cc-04221854` does not, and no other field on the board carries
+    that. The cost is stated where the name is built — two profiles whose first
+    letter matches are indistinguishable here.
+    """
     tmuxkit.write_profile("personal", "GIT_AUTHOR_NAME='P'\n")
     _launch(tmuxkit, "--profile", "personal", "--shell", "-c", "true")
 
     name = _calls(tmuxkit, "rename-window")[0].split()[-1]
-    assert name.startswith("claude-personal-")
+    assert name.startswith("cc-p-")
+    assert CONTAINER_NAME_RE.match(name)
 
 
 def test_the_name_is_not_a_session_id(tmuxkit):

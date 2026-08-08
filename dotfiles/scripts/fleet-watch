@@ -14,6 +14,14 @@
 # status-bar ancestry is that it does not scroll — overflow is still `+N more`,
 # and the fleet console is what lifts that.
 #
+# Before each redraw it also refreshes the tmux pane map through
+# `fleet-panes.sh`. That is what makes tab labels track reality at the board's
+# own resolution rather than at launch resolution: rename a tab and the next
+# frame has the new name, and a container that was already running when the
+# board started acquires a row label instead of being stuck with its container
+# name forever. The renderer is not involved and must not be — it is pinned
+# stdlib-only *and* subprocess-free, so the tmux call lives here.
+#
 # Host-safe by construction: the renderer is stdlib-only and reads data files.
 # Nothing here resolves or executes plugin code — the plugin's manifest and
 # cache are container-writable. See docs/TMUX-FLEET-BOARD.md.
@@ -32,6 +40,7 @@ case "$interval" in ''|0|*[!0-9]*) interval=5 ;; esac
 
 scripts="$(dirname "$0")"
 renderer="$scripts/fleet-render.py"
+panes="$scripts/fleet-panes.sh"
 
 if [ ! -r "$renderer" ]; then
     echo "fleet-watch: no fleet-render.py beside $scripts" >&2
@@ -76,8 +85,33 @@ command -v python3 >/dev/null 2>&1 || {
 # the tty is immune to whatever stdout happens to be. `tput` stays as the
 # second answer: it is the one that still works when `LINES`/`COLUMNS` are
 # exported but `/dev/tty` is not readable.
+# The tab labels, re-observed. Inside `draw` rather than only in the loop so
+# the one-shot path (`fleet-watch > board.txt`) gets a current map too.
+#
+# **Silent, unlike everything else here**, and that is the one deliberate
+# exception to this script's "a person is reading, so complain" rule. The map is
+# an enrichment: without it the board falls back to container names and is still
+# a board. A diagnostic would print every five seconds forever, and `draw` runs
+# inside `board=$(draw)` — so stdout is the frame, and anything written there
+# would be painted into it. `fleet-panes.sh` never prints on any path; the
+# redirect is belt and braces.
+#
+# It writes nothing when this terminal is not inside tmux: `list-panes -a` sees
+# one tmux server, and a board with no `$TMUX` has no claim on which one — so
+# writing what it saw would empty the map for every reader. That guard is in
+# `fleet-panes.sh`, which is also where the launcher gets it.
+#
+# `bash "$panes"`, not `"$panes"`, for the reason the renderer is run through
+# `python3`: no dependency on a checked-out file's exec bit.
+refresh_panes() {
+    [ -r "$panes" ] || return 0
+    WORKSPACE="$ws" bash "$panes" >/dev/null 2>&1 || true
+    return 0
+}
+
 draw() {
     local rows cols size
+    refresh_panes
     size=$(stty size </dev/tty 2>/dev/null)
     rows=${size%% *}; cols=${size##* }
     case "$rows" in ''|*[!0-9]*) rows=$(tput lines 2>/dev/null) ;; esac

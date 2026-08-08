@@ -60,10 +60,15 @@ VIEWED_DIR = "tmux/viewed"
 STALE_AFTER = timedelta(minutes=10)
 
 # Per-field caps for the fixed columns. A tab name is a handle, not a sentence.
-# 24 is the width of a container name (`claude-personal-08015414`), which is
-# what the label falls back to when a session has no tmux tab — at 16 every one
-# of them rendered as `claude-personal…`, which identifies nobody.
-MAX_LABEL = 24
+#
+# 16 is the width of a container name, which is what the label falls back to
+# when a session has no tmux tab. It was 24 for exactly one launcher release:
+# `claude-personal-08015414` is 24 characters, so anything narrower rendered
+# every unlabelled agent as `claude-personal…`, identifying nobody — the column
+# was widened to fit a string that was mostly the word "claude". The launcher
+# now mints `cc-p-08015414` (13), so the eight columns that bought nothing go
+# back to the summary, which is the field that actually says something.
+MAX_LABEL = 16
 MAX_PROJECT = 12
 
 # The checkpoint text has no cap: it takes whatever the fixed fields leave.

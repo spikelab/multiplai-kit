@@ -14,7 +14,7 @@ shows them:
 
 | Piece | Written by | File |
 |---|---|---|
-| Which pane holds which container | `claude.sh` (`write_pane_map`) | `$WORKSPACE/.multiplai/data/tmux/panes.json` |
+| Which pane holds which container | `dotfiles/scripts/fleet-panes.sh`, run by `claude.sh` at launch and by `fleet-watch` every redraw | `$WORKSPACE/.multiplai/data/tmux/panes.json` |
 | When each pane was last looked at | `dotfiles/scripts/fleet-viewed.sh`, via tmux hooks | `$WORKSPACE/.multiplai/data/tmux/viewed/<n>` |
 | The board itself, in a terminal | `dotfiles/scripts/fleet-watch` + `fleet-render.py` | — (drawn, not stored) |
 
@@ -22,9 +22,42 @@ The join — *is this marker newer than what that agent last did?* — happens a
 render time in the `multiplai-context` plugin. Neither host-side piece knows
 anything about seen-ness; they write facts, and the reader draws the conclusion.
 
-The pane map is automatic: `claude.sh` writes it on every launch, nothing to
-configure. The viewed markers need four lines in your own `~/.tmux.conf`,
-below.
+The pane map is automatic, and nothing to configure. The viewed markers need
+four lines in your own `~/.tmux.conf`, below.
+
+### How a pane says which container it is
+
+`claude.sh` stamps the container name onto the pane at launch, as a pane-scoped
+tmux user option:
+
+```sh
+tmux set-option -p -t "$TMUX_PANE" @cc "$CONTAINER_NAME"
+```
+
+Everything else reads that back. `tmux list-panes -a -F '#{pane_id}|#{@cc}'`
+returns the whole fleet in one call, and **a non-empty `@cc` is the definition
+of "this pane is an agent"** — an empty one is a plain shell. Nothing
+pattern-matches a name and nothing depends on a convention.
+
+Three properties are the reason it is a pane option and not something simpler:
+
+- **It survives renaming.** The stamp is on the pane, not on the tab's name, so
+  `cc-p-08015414` → `inbox-cleanup` moves the label and not the identity. A
+  `cc-` prefix convention on tab names cannot do this.
+- **It cannot be forgotten.** The launcher sets it. A rule you keep by
+  remembering degrades silently the one time a tab gets called `scratch`, and
+  nothing anywhere reports that it happened.
+- **It dies with the pane**, so there are no stale entries to reap.
+
+It **outlives the container**, though — the pane is still there when the session
+exits — which is why the reader cross-checks `docker ps`. A stamp naming a
+container that is not running is a tab whose work is over.
+
+The one thing it cannot do is label a container launched before the stamp
+existed: those panes carry no `@cc` and no process left alive knows which pane
+they are in. They fix themselves on relaunch. `set-option -p` needs tmux 3.0; on
+anything older the stamp silently does not land and the launcher falls back to
+recording its own `$TMUX_PANE`, which is exactly the behaviour that preceded it.
 
 ## Wiring the hooks
 
@@ -161,29 +194,37 @@ session happened to start.
 
 `fleet-render.py` therefore re-derives the *tab name*, and only that, from
 `tmux/panes.json` and `tmux/viewed/*` on every redraw. Both are written by
-host-side kit scripts — the launcher and the `after-rename-window` hook — so
+host-side kit scripts — `fleet-panes.sh` and the `after-rename-window` hook — so
 this stays inside the stdlib-only host boundary below: they are data files, not
 plugin code. Every other field still ages with the document, and the header
 goes on reporting how old that is.
 
+`fleet-watch` refreshes the pane map itself before each draw, which is what puts
+the tab name on the same five-second clock as the frame. The renderer stays out
+of it: it is pinned stdlib-only *and* subprocess-free, so the `tmux` call lives
+in the board, not in the renderer.
+
 Two limits worth knowing.
 
 **An agent absent from `tmux/panes.json` has nothing to join to** and keeps its
-container name. This is more common than it sounds, and it is not simply "the
-map holds only running containers". An entry is written **once, at launch**, by
-the one process that ever holds `$TMUX_PANE` and the container name at the same
-moment. Every later launch rebuilds the file and carries the others forward by
-`grep`-ing the *existing* one — so carry-forward can only preserve what is
-already there. Nothing can add an entry for a container that never got one: it
-is already running, its launcher has long since passed that point, and no other
-process knows which pane it is in. A container that was running when the
-feature first shipped, or when the map was first created, stays unlabelled
-until it is relaunched. As of 2026-08-08 that was three of four live
-containers.
+container name. Since the map became a live query this is a much shorter list
+than it was — an entry no longer has to have been written by the launcher that
+started the session, so a container the map has never seen appears in it after
+one redraw. What is left is the case the stamp cannot reach: a container started
+before `@cc` existed carries no stamp, and no process left alive knows which
+pane it is in. Those stay unlabelled until they are relaunched. (Until
+2026-08-08 the limit was far wider: an entry was written once, at launch, and
+every later launch could only carry forward what was already in the file — so an
+entry could be preserved but never *acquired*, and three of four live containers
+were permanently unlabelled.)
 
 **A marker whose tmux socket does not match the pane's is refused** rather than
 used — tmux recycles pane ids per server, and labelling one agent with another
-agent's tab is worse than labelling it with a container name.
+agent's tab is worse than labelling it with a container name. The same reasoning
+runs the other way in `fleet-panes.sh`: `list-panes -a` only ever enumerates its
+own tmux server, so entries belonging to a *different* socket are carried forward
+untouched rather than dropped, and a board run outside tmux does not write at
+all.
 
 ### What it does and does not do
 

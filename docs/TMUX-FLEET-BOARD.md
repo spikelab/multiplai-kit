@@ -166,12 +166,24 @@ this stays inside the stdlib-only host boundary below: they are data files, not
 plugin code. Every other field still ages with the document, and the header
 goes on reporting how old that is.
 
-Two limits worth knowing. An agent absent from `tmux/panes.json` has nothing to
-join to and keeps the container name (the map holds only containers currently
-in `docker ps`, so a session that outlives its entry falls back). And a marker
-whose tmux socket does not match the pane's is refused rather than used — tmux
-recycles pane ids per server, and labelling one agent with another agent's tab
-is worse than labelling it with a container name.
+Two limits worth knowing.
+
+**An agent absent from `tmux/panes.json` has nothing to join to** and keeps its
+container name. This is more common than it sounds, and it is not simply "the
+map holds only running containers". An entry is written **once, at launch**, by
+the one process that ever holds `$TMUX_PANE` and the container name at the same
+moment. Every later launch rebuilds the file and carries the others forward by
+`grep`-ing the *existing* one — so carry-forward can only preserve what is
+already there. Nothing can add an entry for a container that never got one: it
+is already running, its launcher has long since passed that point, and no other
+process knows which pane it is in. A container that was running when the
+feature first shipped, or when the map was first created, stays unlabelled
+until it is relaunched. As of 2026-08-08 that was three of four live
+containers.
+
+**A marker whose tmux socket does not match the pane's is refused** rather than
+used — tmux recycles pane ids per server, and labelling one agent with another
+agent's tab is worse than labelling it with a container name.
 
 ### What it does and does not do
 

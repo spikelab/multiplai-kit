@@ -9,10 +9,10 @@
 # once and exits, so `fleet-watch > board.txt` is a snapshot rather than a hung
 # process.
 #
-# It renders through `fleet-render.py`, which still carries the fixed column
-# budget it was born with: checkpoint text clipped at 44 characters, no
-# scrolling, `+N more` for the overflow. Those are limits of the renderer, not
-# of a terminal, and the fleet console lifts them.
+# It renders through `fleet-render.py`, which now spends the whole window: the
+# checkpoint text takes whatever the fixed fields leave. What remains of its
+# status-bar ancestry is that it does not scroll — overflow is still `+N more`,
+# and the fleet console is what lifts that.
 #
 # Host-safe by construction: the renderer is stdlib-only and reads data files.
 # Nothing here resolves or executes plugin code — the plugin's manifest and
@@ -58,9 +58,30 @@ command -v python3 >/dev/null 2>&1 || {
 # there is a failure, and a failure painted into the frame would be cleared by
 # the next redraw a few seconds later. It goes to the terminal, and the caller
 # below decides whether to stop.
+# The size comes from `/dev/tty`, not from `tput`, because of where this is
+# called from: `draw` only ever runs inside `board=$(draw)`, and inside a
+# command substitution stdout is a **pipe**. `tput` measures the terminal by
+# asking whatever it was pointed at, so with stdout redirected it finds no
+# window and falls back to the terminfo defaults — `lines#24`, `cols#80` for
+# every xterm entry. That is what a 165-column terminal was drawing an
+# 80-column board into, with the tail line stranded on row 23 of 30.
+#
+# The give-away was that 80 is not one of *our* numbers: the fallbacks below
+# are 24 and 120, so a board 80 columns wide could only have come from a
+# `tput` that read terminfo successfully and measured nothing. (A `TERM` the
+# host cannot look up — macOS has no `tmux-256color` entry — fails differently
+# and lands on 120.)
+#
+# `stty size` asks the file descriptor it is given, so pointing its *stdin* at
+# the tty is immune to whatever stdout happens to be. `tput` stays as the
+# second answer: it is the one that still works when `LINES`/`COLUMNS` are
+# exported but `/dev/tty` is not readable.
 draw() {
-    local rows cols
-    rows=$(tput lines 2>/dev/null); cols=$(tput cols 2>/dev/null)
+    local rows cols size
+    size=$(stty size </dev/tty 2>/dev/null)
+    rows=${size%% *}; cols=${size##* }
+    case "$rows" in ''|*[!0-9]*) rows=$(tput lines 2>/dev/null) ;; esac
+    case "$cols" in ''|*[!0-9]*) cols=$(tput cols 2>/dev/null) ;; esac
     case "$rows" in ''|*[!0-9]*) rows=24 ;; esac
     case "$cols" in ''|*[!0-9]*) cols=120 ;; esac
 

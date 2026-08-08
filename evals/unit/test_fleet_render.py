@@ -28,6 +28,7 @@ It must also stay **stdlib-only and plugin-free**: it runs on the host, and the
 plugin's manifest and cache are container-writable. A test reads its imports.
 """
 
+import ast
 import importlib.util
 import json
 import re
@@ -87,11 +88,24 @@ def doc(agents=(), *, generated=NOW, **kw):
 # --- shape --------------------------------------------------------------------
 
 @pytest.mark.parametrize("lines", [1, 2, 3, 4, 5])
-def test_it_returns_exactly_the_lines_it_was_given(lines):
+def test_it_never_returns_more_lines_than_it_was_given(lines):
+    """A budget, not a shape. With more agents than rows the board fills every
+    line it is allowed; the guarantee is that it never exceeds them."""
     out = board.render(doc([agent(session_id=f"s{i}") for i in range(9)]),
                        lines, 120, NOW)
 
     assert len(out) == lines
+
+
+def test_the_tail_follows_the_list_rather_than_the_window():
+    """The regression, stated directly: with room for 30 lines and 2 agents,
+    the tail sat on line 30 with 26 blank rows above it — a footer far enough
+    from its list to read as an unrelated line."""
+    out = board.render(doc([agent(session_id="a"), agent(session_id="b")]),
+                       30, 120, NOW)
+
+    assert len(out) == 4
+    assert "" not in out
 
 
 def _cols(text):
@@ -142,17 +156,27 @@ def test_the_fields_line_up_across_a_wide_label():
     assert _cols(out[1].split("mktplace")[0]) == _cols(out[2].split("mktplace")[0])
 
 
+def test_the_markers_line_up_despite_being_different_widths():
+    """`✋`/`👀` are two columns and `●`/`⚠` are one, so joined without padding
+    every working row sat one column left of every needs-you row and the board
+    sheared down its whole length. The marker is a column, not a prefix."""
+    out = board.render(doc([agent(session_id="n", group="Needs you"),
+                            agent(session_id="w", group="Working"),
+                            agent(session_id="s", group="Working", seen=True)]),
+                       5, 120, NOW)
+
+    starts = {_cols(line.split("mktplace")[0]) for line in out[1:4]}
+    assert len(starts) == 1, out
+
+
 def test_zero_lines_is_no_lines_not_a_crash():
     assert board.render(doc([agent()]), 0, 120, NOW) == []
 
 
-def test_a_missing_document_renders_blank_rows_not_an_error():
-    """The rows are already spent. Leaving them empty says "nothing to show"
-    without claiming anything about the fleet — and a traceback repainting a few
-    times a second is the worst output available."""
-    out = board.render(None, 3, 120, NOW)
-
-    assert out == ["", "", ""]
+def test_a_missing_document_renders_nothing_not_an_error():
+    """Saying nothing claims nothing about the fleet — and a traceback
+    repainting a few times a second is the worst output available."""
+    assert board.render(None, 3, 120, NOW) == []
 
 
 def test_a_malformed_fleet_json_loads_as_none(tmp_path):
@@ -353,19 +377,135 @@ def test_control_characters_never_reach_the_screen():
     assert not re.search(r"[\x00-\x1f\x7f-\x9f]", out[1])
 
 
-def test_every_field_is_capped_independently():
-    """One runaway field must not eat the line and push everything else off
-    the right edge, where the terminal would cut it without a word."""
+def test_the_fixed_fields_are_capped_independently():
+    """One runaway *fixed* field must not eat the line and push everything else
+    off the right edge, where the terminal would cut it without a word. The
+    summary is the deliberate exception — it is what the leftover is for."""
     out = board.render(
         doc([agent(tmux_window="w" * 200, project="p" * 200,
                    next_action="n" * 500)]), 3, 400, NOW)
 
-    assert len(out[1]) < 100
+    assert _cols(out[1]) <= 400
+    # marker + label + project + age, and the two spaces before the summary.
+    assert out[1].index("n") == board.MARKER_COLS + 1 + board.MAX_LABEL + 1 \
+        + board.MAX_PROJECT + 1 + 4 + 2
+
+
+def test_the_summary_grows_with_the_terminal():
+    """The bug Spike hit: a 165-column terminal drew 44 columns of summary and
+    the rest blank, because the cap was a status bar's and outlived it."""
+    long = "n" * 500
+    narrow = board.render(doc([agent(next_action=long)]), 3, 100, NOW)[1]
+    wide = board.render(doc([agent(next_action=long)]), 3, 200, NOW)[1]
+
+    assert _cols(narrow) == 100
+    assert _cols(wide) == 200
+
+
+def test_a_window_too_narrow_for_a_summary_drops_it_rather_than_stubbing_it():
+    """Three characters and an ellipsis is not a reading. The row keeps the
+    fields a narrow window can still use."""
+    out = board.render(doc([agent(next_action="n" * 500)]), 3, 50, NOW)
+
+    assert "n" not in out[1]
 
 
 def test_truncation_is_marked():
     assert board.clean("abcdefghij", 5).endswith("…")
     assert board.fit("abcdefghij", 5).endswith("…")
+
+
+# --- the live tab name ---------------------------------------------------------
+#
+# `fleet.json` is a cache the plugin writes at SessionStart, in a container.
+# Nothing on this side recomputes it, so between sessions a board on a timer
+# re-renders the same document forever. The tab name is the one field that can
+# be recovered here, from two files the *kit* writes on the host — and the
+# server check is what keeps that recovery from being worse than the staleness.
+
+def _tmux(tmp_path, panes, markers, server="/tmp/tmux-501/default", **doc_kw):
+    root = tmp_path / "tmux"
+    (root / "viewed").mkdir(parents=True)
+    payload = {"version": 1, "kind": "tmux", "observer": "host",
+               "server": server, "panes": panes}
+    payload.update(doc_kw)
+    (root / "panes.json").write_text(json.dumps(payload))
+    for pane, (window, sock) in markers.items():
+        (root / "viewed" / pane).write_text(f"2026-08-07T23:59:21Z\n{window}\n{sock}\n")
+    return tmp_path
+
+
+def test_a_renamed_tab_relabels_without_waiting_for_a_scan(tmp_path):
+    """Spike's report: a tab renamed at 23:59 still read `zsh` minutes later,
+    because `fleet.json` was generated at 23:54 and nothing had recomputed it.
+    The rename hook had recorded it correctly all along."""
+    sock = "/tmp/tmux-501/default"
+    _tmux(tmp_path, {"claude-a-01": {"pane": "%478", "server": sock, "window": "zsh"}},
+          {"478": ("inbox cleanup", sock)})
+
+    windows = board.live_windows(tmp_path)
+    out = board.render(doc([agent(tmux_window="zsh")]), 3, 120, NOW, windows=windows)
+
+    assert windows == {"claude-a-01": "inbox cleanup"}
+    assert "inbox cleanup" in out[1]
+
+
+def test_a_marker_from_another_tmux_server_is_refused(tmp_path):
+    """tmux recycles pane ids per server, so `%478` on yesterday's server says
+    nothing about `%478` on today's. Labelling one agent with another's tab is
+    worse than labelling it with a container name — degrade to the map."""
+    _tmux(tmp_path, {"claude-a-01": {"pane": "%478", "server": "/tmp/now",
+                                     "window": "from-the-map"}},
+          {"478": ("from-a-dead-server", "/tmp/yesterday")})
+
+    assert board.live_windows(tmp_path) == {"claude-a-01": "from-the-map"}
+
+
+def test_the_pane_maps_own_name_is_used_when_no_marker_exists(tmp_path):
+    sock = "/tmp/tmux-501/default"
+    _tmux(tmp_path, {"claude-a-01": {"pane": "%478", "server": sock, "window": "named"}}, {})
+
+    assert board.live_windows(tmp_path) == {"claude-a-01": "named"}
+
+
+def test_an_agent_with_no_pane_keeps_what_the_document_gave_it(tmp_path):
+    """Only two of eleven agents were in the pane map; the rest must not be
+    blanked by a join that has nothing to say about them."""
+    _tmux(tmp_path, {}, {})
+
+    out = board.render(doc([agent(tmux_window="from-the-scan")]), 3, 120, NOW,
+                       windows=board.live_windows(tmp_path))
+
+    assert "from-the-scan" in out[1]
+
+
+@pytest.mark.parametrize("payload", [
+    '{"kind": "pids", "observer": "host", "panes": {}}',
+    '{"kind": "tmux", "observer": "container", "panes": {}}',
+    '{"kind": "tmux", "observer": "host", "panes": []}',
+    "{not json",
+])
+def test_a_document_it_cannot_interpret_yields_no_labels(tmp_path, payload):
+    """A roster of pids in a file called `panes.json` is not a pane map, and a
+    reader that shrugged and used it anyway would join a pid to a pane id."""
+    (tmp_path / "tmux").mkdir()
+    (tmp_path / "tmux" / "panes.json").write_text(payload)
+
+    assert board.live_windows(tmp_path) == {}
+
+
+def test_no_tmux_data_at_all_is_not_an_error(tmp_path):
+    assert board.live_windows(tmp_path) == {}
+
+
+def test_a_hostile_tab_name_is_cleaned_like_every_other_field(tmp_path):
+    """The marker is written from tmux's `#{window_name}`, which is whatever a
+    person typed — and it is painted into a terminal every few seconds."""
+    sock = "/tmp/tmux-501/default"
+    _tmux(tmp_path, {"claude-a-01": {"pane": "%1", "server": sock}},
+          {"1": ("a\x1b[2Jb", sock)})
+
+    assert "\x1b" not in board.live_windows(tmp_path)["claude-a-01"]
 
 
 # --- the host boundary ---------------------------------------------------------
@@ -374,10 +514,24 @@ def test_the_renderer_imports_nothing_outside_the_standard_library():
     """It runs on the host. The plugin's manifest and cache are
     container-writable, so a host process that resolved plugin code would
     execute whatever a container could write — the same reasoning that keeps
-    `claude.sh`'s drain path host-side."""
+    `claude.sh`'s drain path host-side.
+
+    Parsed, not grepped. A line-anchored regex over the source reads prose as
+    code — a docstring wrapping onto `from the \\`multiplai-context\\` plugin`
+    failed this — and the same looseness runs the other way: an indented import
+    inside a function is a real one the regex never sees. `ast` sees exactly
+    the imports and exactly nothing else."""
     stdlib = {"argparse", "json", "re", "sys", "unicodedata", "datetime", "pathlib"}
-    imported = set(re.findall(r"^(?:import|from)\s+([a-zA-Z_][\w.]*)",
-                              RENDERER.read_text(encoding="utf-8"), re.MULTILINE))
+    tree = ast.parse(RENDERER.read_text(encoding="utf-8"))
+
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import has no module and is a package this file is
+            # not part of; record it as itself so it can never pass silently.
+            imported.add((node.module or ".").split(".")[0])
 
     assert imported <= stdlib, f"non-stdlib import: {imported - stdlib}"
 

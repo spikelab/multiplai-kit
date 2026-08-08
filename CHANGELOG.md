@@ -17,6 +17,19 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **The launcher stamps the container name onto its tmux pane**
+  (`tmux set-option -p @cc "$CONTAINER_NAME"`), which makes "which container is
+  in this pane" a property of the pane rather than a line in a file. Rename a
+  tab to whatever the work actually is and the fleet board follows on its next
+  redraw instead of losing the session; a non-empty `@cc` *is* the definition of
+  an agent pane, so `tmux list-panes -a -F '#{pane_id}|#{@cc}'` prints the fleet.
+  Needs tmux 3.0; on anything older the stamp silently does not land and the
+  behaviour is exactly what it was before.
+
+- **`dotfiles/scripts/fleet-panes.sh`** — the pane→container join, extracted from
+  `claude.sh` so the launcher and `fleet-watch` run the same code. Two copies of
+  a join is how the two come to disagree about which pane is which.
+
 - **`/ide` now works from inside the container.** The launcher mounts the host's
   `~/.claude/ide/` read-only at `/home/agent/.claude/ide` whenever it exists, so
   the containerised CLI can find the lockfiles your editor extension writes —
@@ -41,12 +54,36 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **Container names are now `cc-p-08015414`, not `claude-personal-08015414`** —
+  `cc-<profile initial>-<DDHHMMSS>`. **User-visible**: this is the string in your
+  tmux tab bar, in `docker ps`, and in the OrbStack hostname, so
+  `claude-personal-08015414.orb.local` becomes `cc-p-08015414.orb.local`. If you
+  have a bookmark, a script, or a `curl` pointing at one of those URLs, it will
+  need the new name; sessions already running keep the old one until relaunched.
+
+  Safe to do because **nothing parses it**. Every consumer — in this kit, in the
+  `multiplai-context` plugin, in the pane map and the container roster — compares
+  the name whole, as an opaque join key, so this is a rename and not a schema
+  change: no migration, no deprecation window, and old sessions go on joining
+  correctly among themselves because every record for one was written with the
+  same string.
+
+  The profile survives as its initial rather than being dropped, because
+  `cc-w-04221854` tells you at a glance that it is the work identity and the
+  fleet board has no other field carrying that. Two profiles whose first letter
+  matches are indistinguishable in the name — that is the one cost.
+
+  The fleet board's label column goes 24 → 16 with it, handing eight columns
+  back to the checkpoint summary. 24 was never a width anyone wanted; it was the
+  length of `claude-personal-08015414`, and below it every unlabelled agent
+  rendered as `claude-personal…`.
+
 - **The fleet board spends the whole window.** The checkpoint summary was
   capped at 44 characters — a tmux status bar's column budget, kept after the
   status bar was deleted — and now takes whatever the fixed fields leave, so a
   wider terminal buys more of the sentence instead of more blank space. The tab
-  label grew from 16 to 24 columns, the width of a container name, which is
-  what the label falls back to when a session has no tmux tab. And the board is
+  label was widened to fit a container name (see the naming entry above, which
+  then made it narrow again). And the board is
   now a block at the top of the window rather than a fixed number of rows: the
   tail line (`+N more`, `👀N seen`, PRs) follows the last agent instead of being
   pinned to the bottom with blank rows between. `--lines` is a budget, not a
@@ -101,6 +138,29 @@ public repo has shipped without in-tree memory hooks from day one (see the
   setting and the model's own context window).
 
 ### Fixed
+
+- **The fleet board can now label a session it did not watch start.** The pane
+  map was a launch-time record: `claude.sh` wrote the entry for the pane it was
+  launching in and carried every other tab forward by `grep`-ing the file it had
+  written last time, so an entry could be *preserved* but never acquired.
+  Anything already running when the map was created — or when the feature first
+  shipped — was permanently stuck showing its container name, because its
+  launcher was long past the only moment that knew which pane it was in. On
+  2026-08-08 that was three of four live containers.
+
+  The map is now a live `tmux list-panes -a` query over the `@cc` pane stamps,
+  re-run by the launcher at both of its usual points *and* by `fleet-watch`
+  before every redraw. A pane missing yesterday appears at the next tick; a
+  renamed tab relabels within one frame; there is no migration and no repair
+  path, because there is nothing accreted left to repair. Sessions started
+  before this shipped carry no stamp and still need a relaunch — that is the one
+  case nothing can reach.
+
+  Two guards keep it from being worse than what it replaced: `fleet-watch` run
+  **outside tmux** does not write at all (`list-panes -a` enumerates one server,
+  and a plain terminal has no claim on which), and entries belonging to a
+  **different tmux server** are carried forward untouched rather than dropped or
+  relabelled — pane ids are recycled per server.
 
 - **`fleet-watch` drew an 80×24 board into whatever size terminal you gave
   it.** `draw()` measured the window with `tput`, but it is only ever called as

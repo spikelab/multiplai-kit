@@ -41,6 +41,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The fleet board spends the whole window.** The checkpoint summary was
+  capped at 44 characters — a tmux status bar's column budget, kept after the
+  status bar was deleted — and now takes whatever the fixed fields leave, so a
+  wider terminal buys more of the sentence instead of more blank space. The tab
+  label grew from 16 to 24 columns, the width of a container name, which is
+  what the label falls back to when a session has no tmux tab. And the board is
+  now a block at the top of the window rather than a fixed number of rows: the
+  tail line (`+N more`, `👀N seen`, PRs) follows the last agent instead of being
+  pinned to the bottom with blank rows between. `--lines` is a budget, not a
+  shape.
 - **The shipped `dotfiles/settings.json` now matches how the kit is actually
   run**, folding in what had accumulated as local drift on the reference
   runtime: all six multiplai skill packs enabled alongside `multiplai-context`,
@@ -92,6 +102,29 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Fixed
 
+- **`fleet-watch` drew an 80×24 board into whatever size terminal you gave
+  it.** `draw()` measured the window with `tput`, but it is only ever called as
+  `board=$(draw)` — inside a command substitution stdout is a pipe, so `tput`
+  has nothing to measure and answers with terminfo's `lines#24` / `cols#80`. In
+  a 165×30 terminal that clipped every summary at the 80th column and left the
+  tail line stranded on row 23, halfway up the screen. The size now comes from
+  `stty size </dev/tty`, which asks the terminal rather than stdout, with
+  `tput` and then the built-in constants behind it. The existing size tests
+  could not have caught this: they export `LINES`/`COLUMNS`, which `tput` reads
+  before asking anything.
+- **The board's rows did not line up.** `✋` and `👀` are two columns wide and
+  `●` and `⚠` are one, and the marker was joined to the row without padding —
+  so every working row sat one column left of every needs-you row, all the way
+  down the board.
+- **A renamed tmux tab kept its old name on the board.** The rename hook was
+  working; `fleet.json` was not being rewritten. It is a cache the plugin
+  produces in a container at SessionStart, so nothing on the host recomputes
+  it, and a five-second redraw loop re-rendered the same document with only the
+  clock moving. `fleet-render.py` now re-reads the tab name — and only the tab
+  name — from `tmux/panes.json` and `tmux/viewed/*` on every redraw. Both are
+  host-side kit data files, so the renderer's stdlib-only boundary is
+  unchanged. Everything else still ages with the document, and the header still
+  says how old it is.
 - **The tmux fleet board rendered permanently empty for everyone who followed
   the documented wiring.** `fleet-bar` and `fleet-viewed.sh` resolved the
   workspace via `$CLAUDE_CONFIG_DIR/.workspace`, but `setup.sh` writes that

@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""Render the fleet board — a few fixed-width lines, from data files only.
+"""Render the fleet board — a block of lines sized to the window, from data
+files only.
 
 Called by `fleet-watch`, which redraws it in a terminal on a timer. It was
-written for the tmux status bar, and the shape still shows: fixed column
-budgets, a hard line count, `+N more` instead of scrolling. The bar is gone
-(deleted with the script that fed it), so those budgets are now a limitation
-rather than a constraint — lifting them is the fleet console's job, not a patch
-to this file.
+written for the tmux status bar, and one piece of that shape survives on
+purpose: it does not scroll, so overflow is `+N more`. The column budgets and
+the padded-to-exactly-N-rows layout were the other two, and they went when the
+bar did — a 44-column summary and a footer marooned twenty blank rows below its
+list are status-bar constraints being paid for by a terminal that has neither.
+Scrolling is still the fleet console's job, not a patch to this file.
 
-**This file is host-side kit code and must stay stdlib-only.** It reads
-`fleet.json` and nothing else — it does not import from the
-`multiplai-context` plugin, does not shell out to `fleet_status.py`, and is
-never invoked through `uv run`. That is a security boundary, not a packaging
-preference: the plugin's manifest and cache are container-writable, so a host
-process that resolved plugin code would execute whatever a container could
-write. The same reasoning already keeps `claude.sh`'s drain path host-side.
+**This file is host-side kit code and must stay stdlib-only.** It never imports
+from the `multiplai-context` plugin, does not shell out to `fleet_status.py`,
+and is never invoked through `uv run`. That is a security
+boundary, not a packaging preference: the plugin's manifest and cache are
+container-writable, so a host process that resolved plugin code would execute
+whatever a container could write. The same reasoning already keeps
+`claude.sh`'s drain path host-side.
+
+It reads three things, all of them **data**: `fleet.json` for the fleet, and
+`tmux/panes.json` + `tmux/viewed/*` for the one field that would otherwise be
+as old as the last SessionStart — see :func:`live_windows`. The first is
+written by the plugin, the other two by the kit's own host-side scripts; none
+of them is code, and reading a file the plugin wrote is not the same act as
+resolving one.
 
 Three rules the rendering obeys:
 
@@ -23,7 +32,9 @@ is advice, and a board you glance at is the wrong surface to argue with.
 
 **It never looks confident about stale data.** Every line's ages are recomputed
 from `generated_at` on each render, so the clock stays live between scans, and
-past ten minutes the header says so.
+past ten minutes the header says so. Where a field can be re-read fresh rather
+than aged — the tab name, and only the tab name — it is, and the header goes on
+reporting the document's real age for everything else.
 
 **It never hides silently.** Whatever does not fit becomes an explicit `+N
 more`. A board that dropped the last two agents without saying so is worse than
@@ -39,6 +50,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 FLEET_JSON = "fleet.json"
+PANE_MAP = "tmux/panes.json"
+VIEWED_DIR = "tmux/viewed"
 
 # Past this, the board stops presenting its numbers as current. Ten minutes is
 # chosen against what writes the file: every SessionStart re-renders it, and
@@ -46,12 +59,22 @@ FLEET_JSON = "fleet.json"
 # stopped in a while", not "the renderer is broken".
 STALE_AFTER = timedelta(minutes=10)
 
-# Per-field caps. A tab name is a handle, not a sentence — but 44 columns of
-# checkpoint text is a status bar's budget, and this now draws in a terminal
-# that has three times that. The console is where it gets spent.
-MAX_LABEL = 16
+# Per-field caps for the fixed columns. A tab name is a handle, not a sentence.
+# 24 is the width of a container name (`claude-personal-08015414`), which is
+# what the label falls back to when a session has no tmux tab — at 16 every one
+# of them rendered as `claude-personal…`, which identifies nobody.
+MAX_LABEL = 24
 MAX_PROJECT = 12
-MAX_TEXT = 44
+
+# The checkpoint text has no cap: it takes whatever the fixed fields leave.
+# There *was* one — 44 columns, a status bar's budget — and it survived the bar
+# it was written for, so a 165-column terminal drew 44 columns of summary and
+# 80 columns of nothing.
+#
+# Below `MIN_TEXT` the field is dropped rather than shown, because three
+# characters and an ellipsis is not a reading; the row still carries its
+# marker, label, project and age, which is the part a narrow window can use.
+MIN_TEXT = 12
 
 # Markers carry the signal instead of colour — they survive a pipe, a `less`,
 # and a terminal with no colour, and they cost nothing to emit.
@@ -59,6 +82,12 @@ M_NEEDS = "✋"       # ✋ stopped to ask you something
 M_LIVE = "●"        # ● working
 M_SEEN = "\U0001f440"    # 👀 you have looked at it since it last acted
 M_WARN = "⚠"        # ⚠ collision, or stale data
+
+# The marker is a *column*, not a prefix, and it has to be padded to one.
+# `✋` and `👀` are East_Asian_Wide and occupy two columns; `●` and `⚠` are
+# ambiguous-width and occupy one. Joined raw, every working row sat one column
+# left of every needs-you row and the whole board sheared down its length.
+MARKER_COLS = 2
 
 # Everything that is not printable text. A checkpoint is LLM-written from a
 # session transcript, so its contents are untrusted (see the marketplace's
@@ -172,6 +201,91 @@ def load(data_dir):
     return raw if isinstance(raw, dict) else None
 
 
+def live_windows(data_dir):
+    """``{container name: tab name}``, read fresh on every redraw.
+
+    This exists because `fleet.json` is a **cache with no writer on this
+    side**. It is produced by the plugin's fleet scan, in a container, at
+    SessionStart — so between sessions it does not move, and a board on a
+    five-second timer re-renders the same document with only the clock
+    advancing. Rename a tab and the label stayed wrong for as long as no
+    session happened to start: not a stale render, a document nobody had
+    recomputed.
+
+    The tab name is the one field that can be recovered here, and cheaply,
+    because both halves of the join are **host-side kit data**:
+    `tmux/panes.json` is written by `claude.sh`, and `tmux/viewed/*` by
+    `fleet-viewed.sh` from tmux's own hooks — including `after-rename-window`,
+    which is what makes a marker fresher than the map it is joined to. Reading
+    them keeps the stdlib-only host boundary in this module's docstring intact:
+    these are data files, not plugin code, and nothing here is resolved or
+    executed.
+
+    It recovers the *name*, not the *fleet*. Every other field — who is
+    waiting, on what, for how long — still ages with the document, and the
+    header still says how old that is. An agent with no entry in the pane map
+    has nothing to join to and keeps whatever `fleet.json` gave it.
+
+    The join is `_window_of` from the plugin's `lib/fleet.py`, deliberately
+    duplicated rather than imported (importing it is the boundary violation),
+    so the two must be kept in step. Its one load-bearing rule: **tmux recycles
+    pane ids per server**, so a marker is only usable when its socket matches
+    the pane's. A mismatch degrades to the map's own name rather than
+    borrowing an unrelated tab's — labelling one agent with another's tab is
+    worse than labelling it with a container name.
+    """
+    root = Path(data_dir)
+    try:
+        raw = json.loads((root / PANE_MAP).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    # A roster of pids in a file called `panes.json` is not a pane map, and a
+    # reader that shrugged and used it anyway would join a pid to a pane id.
+    if not isinstance(raw, dict) or raw.get("kind") != "tmux":
+        return {}
+    if raw.get("observer") != "host":
+        return {}
+    entries = raw.get("panes")
+    if not isinstance(entries, dict):
+        return {}
+    doc_server = str(raw.get("server") or "")
+
+    out = {}
+    for name, value in entries.items():
+        if not isinstance(name, str) or not isinstance(value, dict):
+            continue
+        pane = value.get("pane")
+        if not isinstance(pane, str) or not pane:
+            continue
+        # Per-entry socket first: the map merges tabs across launches, so the
+        # document-level one describes only whoever wrote the file last.
+        server = str(value.get("server") or doc_server)
+        window = _marker_window(root, pane, server) or str(value.get("window") or "")
+        if window:
+            out[name] = window
+    return out
+
+
+def _marker_window(root, pane, server):
+    """The tab name `fleet-viewed.sh` last recorded for *pane*, or ``""``.
+
+    Three lines, written by a tmux hook: the timestamp, the window name at that
+    moment, and the socket. A marker missing the socket cannot be checked
+    against the pane, which is the same as not having one — that field is the
+    whole defence against crediting one tmux server's `%12` to another's.
+    """
+    pane_id = pane.lstrip("%")
+    if not pane_id.isdigit():
+        return ""
+    try:
+        lines = (root / VIEWED_DIR / pane_id).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    if len(lines) < 3 or lines[2].strip() != server or not server:
+        return ""
+    return clean(lines[1], MAX_LABEL)
+
+
 def _rank(agent):
     """Sort tier. Lower comes first.
 
@@ -188,13 +302,24 @@ def _rank(agent):
     return 2 if agent.get("seen") else 1
 
 
-def _agent_line(agent, now, generated, width):
-    """One agent: marker, tab, project, age, and what it is waiting on."""
+def _agent_line(agent, now, generated, width, windows=None):
+    """One agent: marker, tab, project, age, and what it is waiting on.
+
+    The fixed fields are sized by constant and the last one takes the rest of
+    the line, so widening the terminal buys summary rather than blank space.
+    """
     mark = M_NEEDS if agent.get("group") == "Needs you" else M_LIVE
     if agent.get("seen"):
         mark = M_SEEN
+    # A live tab name beats the document's, which was true whenever the fleet
+    # scan last ran. Never the other way round, and never a blank: an agent
+    # missing from the pane map keeps what it already had.
+    fresh = (windows or {}).get(agent.get("hostname"))
     label = clean(
-        agent.get("tmux_window") or agent.get("hostname") or agent.get("session_id", "")[:8],
+        fresh
+        or agent.get("tmux_window")
+        or agent.get("hostname")
+        or agent.get("session_id", "")[:8],
         MAX_LABEL,
     )
     project = clean(agent.get("project"), MAX_PROJECT)
@@ -207,8 +332,13 @@ def _agent_line(agent, now, generated, width):
         shown = age(timedelta(seconds=seconds))
     else:
         shown = "?"
-    what = clean(agent.get("next_action") or agent.get("intent"), MAX_TEXT)
-    bits = [mark, ljust(label, MAX_LABEL), ljust(project, MAX_PROJECT), shown.rjust(4)]
+    bits = [ljust(mark, MARKER_COLS), ljust(label, MAX_LABEL),
+            ljust(project, MAX_PROJECT), shown.rjust(4)]
+    prefix = " ".join(bits)
+    # Two columns rather than one, because the text is prose butting against a
+    # right-aligned number and a single space reads as a run-on.
+    budget = width - cols(prefix) - 2
+    what = clean(agent.get("next_action") or agent.get("intent"), budget) if budget >= MIN_TEXT else ""
     if what:
         bits.append(f" {what}")
     return fit(" ".join(bits).rstrip(), width)
@@ -292,22 +422,28 @@ def _tail(doc, agents, shown, now, width):
     return fit(" · ".join(bits), width)
 
 
-def render(doc, lines, width, now=None):
-    """Exactly *lines* lines, each at most *width* columns. Never raises.
+def render(doc, lines, width, now=None, windows=None):
+    """**At most** *lines* lines, each at most *width* columns. Never raises.
 
-    Layout is fixed so a reader's eye can land in the same place every tick:
-    the header on the first line, the tail on the last, agents in between.
-    Fixed beats adaptive here — a board whose rows move around is one you have
-    to read rather than glance at.
+    Header first, agents under it, tail immediately after the last agent. The
+    tail used to be pinned to line *lines* with the gap padded blank — a status
+    bar's layout, where the row count was the whole canvas. In a terminal that
+    stranded `PRs not collected` twenty blank rows below the list it belongs
+    to, which reads as a stray line rather than a footer.
+
+    So *lines* is now a **budget, not a shape**: the board is a block at the
+    top of the window and the rest of the screen stays clear. The header is
+    still line one and the tail is still last, which is the part of "fixed
+    layout" a reader's eye actually uses.
     """
     now = now or datetime.now(timezone.utc)
     if lines <= 0:
         return []
     if not isinstance(doc, dict):
-        # A blank board, not an error and not a stale one. The rows are already
-        # spent; leaving them empty says "nothing to show" without claiming
-        # anything about the fleet.
-        return [""] * lines
+        # A blank board, not an error and not a stale one. Saying nothing is
+        # the honest reading of a fleet document that could not be read; the
+        # rows are no longer spent whether we use them or not.
+        return []
 
     generated = _parse_ts(doc.get("generated_at"))
     out = [_header(doc, now, generated, width)]
@@ -321,11 +457,12 @@ def render(doc, lines, width, now=None):
     agents = [a for a in agents if a.get("group") not in (None, "", "Idle")]
     agents.sort(key=_rank)
 
+    # One row held back for the tail, which must always be reachable: it is
+    # where `+N more` lives, and a board that dropped agents without saying so
+    # is the one thing this file will not do.
     room = lines - 2
     for agent in agents[:room]:
-        out.append(_agent_line(agent, now, generated, width))
-    while len(out) < lines - 1:
-        out.append("")
+        out.append(_agent_line(agent, now, generated, width, windows))
     out.append(_tail(doc, agents, min(room, len(agents)), now, width))
     return out
 
@@ -338,7 +475,10 @@ def main(argv=None):
     parser.add_argument("--out", default="")
     args = parser.parse_args(argv)
 
-    body = "\n".join(render(load(args.data_dir), args.lines, args.width)) + "\n"
+    doc = load(args.data_dir)
+    body = "\n".join(
+        render(doc, args.lines, args.width, windows=live_windows(args.data_dir))
+    ) + "\n"
     if not args.out:
         sys.stdout.write(body)
         return 0

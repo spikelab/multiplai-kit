@@ -144,9 +144,46 @@ window permanently to show two agents, tmux caps `status` at five lines, and a
 `#()` job can neither wrap nor scroll, so half a wide terminal sat empty while
 the checkpoint text was cut at 44 characters.
 
-The renderer still carries that budget — the fixed columns and the `+N more`
-are a status bar's constraints outliving the status bar. Lifting them is the
-fleet console's job, not a patch to `fleet-render.py`.
+Two of those constraints outlived the bar and were fixed on 2026-08-08: the
+44-character cap (the summary now takes whatever the fixed columns leave) and
+the padded-to-exactly-N-rows layout that left the tail line marooned at the
+bottom of the window (it now follows the last agent). What remains is `+N more`
+— the board does not scroll, and that one is the fleet console's job rather
+than a patch to `fleet-render.py`.
+
+### The tab name is re-read on every redraw; nothing else is
+
+`fleet.json` is a cache with no writer on this side. The plugin's fleet scan
+produces it **in a container, at SessionStart**, so between sessions it does
+not move — and a board on a five-second timer re-renders the same document with
+only the clock advancing. Rename a tab and the board kept the old name until a
+session happened to start.
+
+`fleet-render.py` therefore re-derives the *tab name*, and only that, from
+`tmux/panes.json` and `tmux/viewed/*` on every redraw. Both are written by
+host-side kit scripts — the launcher and the `after-rename-window` hook — so
+this stays inside the stdlib-only host boundary below: they are data files, not
+plugin code. Every other field still ages with the document, and the header
+goes on reporting how old that is.
+
+Two limits worth knowing.
+
+**An agent absent from `tmux/panes.json` has nothing to join to** and keeps its
+container name. This is more common than it sounds, and it is not simply "the
+map holds only running containers". An entry is written **once, at launch**, by
+the one process that ever holds `$TMUX_PANE` and the container name at the same
+moment. Every later launch rebuilds the file and carries the others forward by
+`grep`-ing the *existing* one — so carry-forward can only preserve what is
+already there. Nothing can add an entry for a container that never got one: it
+is already running, its launcher has long since passed that point, and no other
+process knows which pane it is in. A container that was running when the
+feature first shipped, or when the map was first created, stays unlabelled
+until it is relaunched. As of 2026-08-08 that was three of four live
+containers.
+
+**A marker whose tmux socket does not match the pane's is refused** rather than
+used — tmux recycles pane ids per server, and labelling one agent with another
+agent's tab is worse than labelling it with a container name.
 
 ### What it does and does not do
 

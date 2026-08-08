@@ -30,12 +30,15 @@ other tests skip. Owning a pty is the price of covering them, and `pty.fork`
 makes it about fifteen lines.
 """
 
+import fcntl
 import os
 import pty
 import select
 import shutil
 import signal
+import struct
 import subprocess
+import termios
 import time
 from pathlib import Path
 
@@ -111,7 +114,7 @@ class Watch:
         environ.update(env or {})
         return environ
 
-    def spawn_on_a_tty(self, *args, env=None):
+    def spawn_on_a_tty(self, *args, env=None, winsize=None):
         """The script with a real controlling terminal, so it takes the loop.
 
         `pty.fork` rather than a pipe because the script asks two separate
@@ -122,11 +125,23 @@ class Watch:
 
         Returns `(pid, master_fd)`. The caller owns both; `_drain` and
         `_reap` below are the two things it ever needs to do with them.
+
+        `winsize=(rows, cols)` gives the pty a real window size **and drops
+        `LINES`/`COLUMNS` from the environment**, which is the only way to
+        test how the script measures a terminal. The size is stamped in the
+        child before `exec`, not on the master afterwards, because afterwards
+        is a race the script can win.
         """
         environ = self._environ(env=env)
+        if winsize is not None:
+            environ.pop("LINES", None)
+            environ.pop("COLUMNS", None)
         pid, fd = pty.fork()
         if pid == 0:                                    # pragma: no cover
             try:
+                if winsize is not None:
+                    fcntl.ioctl(1, termios.TIOCSWINSZ,
+                                struct.pack("HHHH", winsize[0], winsize[1], 0, 0))
                 os.execve("/bin/bash",
                           ["bash", str(self.scripts / "fleet-watch"), *args],
                           environ)
@@ -325,6 +340,44 @@ class TestOnARealTerminal:
     break, and neither is reachable from the one-shot branch every other test
     in this file uses.
     """
+
+    def test_it_measures_the_terminal_when_tput_cannot_answer(self, watch, tmp_path):
+        """The size comes from the tty, so the board fills the window.
+
+        Every *other* size assertion in this file exports `LINES`/`COLUMNS`,
+        which `tput` reads before asking anything — so none of them exercises
+        the measurement at all, and all of them passed against the version that
+        drew an 80×24 board into a 165×30 terminal. This one unsets both and
+        gives the pty a real window.
+
+        `TERM` is deliberately something no terminfo database has, because that
+        is the failure mode this environment can actually produce: `tput` gives
+        no answer, and only a reader that asks the terminal itself has one. It
+        is **not** the route the reported bug took — there `tput` read terminfo
+        fine and measured nothing, because `draw` runs inside `board=$(draw)`
+        where stdout is a pipe. Linux ncurses falls back to `/dev/tty` in that
+        case and returns the right size anyway, so the reported failure cannot
+        be reproduced here; it was diagnosed from the numbers on screen, which
+        were 80×24 — terminfo's defaults, and not the 120 this script falls
+        back to on its own.
+
+        Both routes end at the same line of code and the same fix, so this
+        pins the fix. It does not pin the macOS reproduction, and no test in
+        this container can.
+        """
+        pid, fd = watch.spawn_on_a_tty("30",
+                                       env={"WORKSPACE": str(tmp_path / "ws"),
+                                            "TERM": "no-such-terminal"},
+                                       winsize=(30, 165))
+
+        _drain(fd, seconds=5, until=b"FLEET")
+        os.write(fd, b"q")
+        _reap(pid, fd, seconds=5)
+
+        assert watch.renders(), "the renderer was never called"
+        _, lines, width = watch.renders()[0]
+        assert (lines, width) == ("29", "165"), \
+            "the board was sized from a fallback constant, not from the terminal"
 
     def test_a_single_keystroke_quits(self, watch, tmp_path):
         """The documented contract is *any key*, and a bare `read` does not

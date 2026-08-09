@@ -94,7 +94,7 @@
         "enable_resources": false,
         "resources_dir": "",
         "enable_costs": true,
-        "memory_router": "llm",
+        "memory_router": "token_overlap",
         "router_model": "claude-haiku-4-5",
         "checkpoint_timeout_s": "480",
         "checkpoint_hard_stop_tokens": "250000"

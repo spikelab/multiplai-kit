@@ -54,6 +54,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The shipped `memory_router` default is now `token_overlap`, not `llm`**
+  (`dotfiles/settings.json`). The `llm` router spawns the Agent SDK as a
+  subprocess per prompt, and that spawn — not the model — is the cost: measured
+  over five real prompts, uncapped routing takes a median **27.4 s** (range
+  14.8–52.6 s) against a 30 s hook kill. No timeout value fixes that, so the
+  shipped default should not be a router that usually loses its race. `llm`
+  remains a one-line opt-in for anyone who wants the smaller injection it
+  produces when it does finish. Nobody who has already set `memory_router` in
+  their own `settings.local.json` is affected.
+
 - **`dotfiles/CLAUDE.md` replaces "be concise" with six mechanical rules for how
   Claude writes to you** (new top section, "How to respond to the user"). The old
   rule — *"You MUST save tokens. Be concise…"* — named an intent, not a

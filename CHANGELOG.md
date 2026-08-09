@@ -54,6 +54,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **`dotfiles/CLAUDE.md` replaces "be concise" with six mechanical rules for how
+  Claude writes to you** (new top section, "How to respond to the user"). The old
+  rule — *"You MUST save tokens. Be concise…"* — named an intent, not a
+  mechanism, and only ever targeted length. The complaint it failed to fix was
+  density: replies that are hard to read, not merely long. The replacement is
+  checkable — answer first, one idea per sentence with a 50-word cap, concrete
+  subject and active verb, no invented vocabulary, no "the key insight is",
+  numbers instead of adjectives. `Save tokens` stays as tiebreaker 4 under "When
+  rules conflict". **User-visible**: replies get shorter and plainer after the
+  next session start.
+
 - **Container names are now `cc-p-08015414`, not `claude-personal-08015414`** —
   `cc-<profile initial>-<DDHHMMSS>`. **User-visible**: this is the string in your
   tmux tab bar, in `docker ps`, and in the OrbStack hostname, so

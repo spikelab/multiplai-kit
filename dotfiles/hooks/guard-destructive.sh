@@ -19,6 +19,10 @@
 # Denying every Bash call is a loud failure, deliberately. The alternative is
 # an unguarded session that looks normal.
 
+# Child session guard — skip for SDK-spawned sessions (multiplai-core sets
+# _HOOK_CHILD_SESSION on every SDK child), same as validate-syntax.sh.
+[ -n "${_HOOK_CHILD_SESSION:-}" ] && exit 0
+
 set -u
 
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -31,5 +35,5 @@ status=$?
 # JSON assembled with printf, not a heredoc: the reason string carries `\n`
 # escapes and `$`-prefixed paths that must reach the agent verbatim.
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
-  "The multiplai destructive-command guard could not run (exit $status), so no Bash command can be checked. This session runs with permissions bypassed, and this guard is the only layer that can refuse an unrecoverable command, so Bash is denied until it works.\\n\\nTell the user, and read \$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log for the cause — usually no Python reachable from \$CLAUDE_CONFIG_DIR/hooks/run-hook-python, or a missing guard_destructive.py. Do not work around this by disabling the hook."
+  "The multiplai destructive-command guard could not run (exit $status), so no Bash command can be checked. This session runs with permissions bypassed, and this guard is the only layer that can refuse an unrecoverable command, so Bash is denied until it works.\\n\\nTell the user, and read \$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log for the cause — usually no Python reachable from \$CLAUDE_CONFIG_DIR/hooks/run-hook-python, a missing guard_destructive.py, or the guard itself crashed (see \$CLAUDE_MULTIPLAI_HOME/runtime/logs/guard-destructive.log). Do not work around this by disabling the hook."
 exit 0

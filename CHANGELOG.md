@@ -76,6 +76,14 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **All four kit hook entry points now honor `_HOOK_CHILD_SESSION`.**
+  `validate-syntax.sh` already skipped SDK-spawned child sessions
+  (multiplai-core sets the variable on every SDK child);
+  `guard-destructive.sh`, `gh-app-auth.sh` and `gh-app-refresh.sh` now carry
+  the same one-line guard. Children share the parent's credential store and
+  run headless pipelines, so the skip removes a Python spawn per child Bash
+  call — and the coverage is uniform instead of accidental.
+
 - **`gh-app-auth.sh` no longer re-mints on every SessionStart.** SessionStart
   also fires on `resume` and after a compaction, when the token minted at the
   real session start is usually still live; the hook now runs the same
@@ -198,6 +206,33 @@ public repo has shipped without in-tree memory hooks from day one (see the
   setting and the model's own context window).
 
 ### Fixed
+
+- **A typo'd model or effort ceiling no longer reaches the API.**
+  `model_resolver.py` returned an unrecognized `MULTIPLAI_MODEL` string
+  verbatim whenever it downgraded a request — the typo then travelled to the
+  API as a model id and failed as a 404, the worst place to learn about a
+  config error. Ceilings naming no known tier now fall back to the default
+  ceiling with a stderr note (which run-hook-python routes to
+  `hook-errors.log`); `resolve_effort(None)` returns the default effort
+  instead of raising.
+
+- **`log_utils.py` no longer dies on import when
+  `CLAUDE_MULTIPLAI_HOME` is unwritable.** The module-scope `mkdir` is now
+  best-effort; `setup_logging` keeps the loud failure for callers that
+  actually need the log directory. Previously every hook and plugin skill
+  that merely imported the module crashed.
+
+- **Log-retention config is read the same way everywhere.** `log_utils.py`'s
+  lightweight conf reader now drops inline `#` comments and refuses negative
+  values, matching `run-hook-python`'s parser — a value like `7  # one week`
+  used to fail `int()` and silently land on the default. `run-hook-python`
+  also exports `MULTIPLAI_LOG_RETENTION_DAYS`, so hooks it launches read the
+  conf through one parser instead of two.
+
+- **The guard's deny-on-failure message now names a guard crash as a cause**
+  and points at `runtime/logs/guard-destructive.log` alongside
+  `hook-errors.log`. The deny-on-crash behaviour itself is unchanged and
+  intentional: only a verdict may let a command through.
 
 - **`gh-tok` now bounds the mint itself, on both routes.** `ssh -o
   ConnectTimeout=10` bounds only the TCP connect — a bridge that accepts and

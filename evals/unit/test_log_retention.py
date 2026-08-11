@@ -161,3 +161,39 @@ class TestRetentionResolution:
     def test_zero_is_honoured_as_keep_forever(self, monkeypatch):
         monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "0")
         assert _get_retention_days() == 0
+
+    def test_conf_value_with_inline_comment(self):
+        """run-hook-python's conf parser drops inline comments; this reader
+        must agree, or the same line means two different things depending on
+        which parser saw it."""
+        self._write_conf("30  # one month")
+        assert _get_retention_days() == 30
+
+    def test_conf_negative_falls_back_like_env(self):
+        """The docstring's negative rule applies to both sources — a negative
+        from the conf would put the cutoff in the future too."""
+        self._write_conf(-5)
+        assert _get_retention_days() == log_utils._DEFAULT_RETENTION_DAYS
+
+
+def test_import_survives_an_unwritable_home(tmp_path):
+    """The module-scope mkdir is best-effort: an unwritable
+    CLAUDE_MULTIPLAI_HOME must not kill every hook and skill that merely
+    imports log_utils. setup_logging keeps the loud failure for callers that
+    actually need the directory."""
+    import importlib
+
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)
+    old = os.environ.get("CLAUDE_MULTIPLAI_HOME")
+    os.environ["CLAUDE_MULTIPLAI_HOME"] = str(ro / "nested")
+    try:
+        importlib.reload(log_utils)  # must not raise
+    finally:
+        if old is None:
+            os.environ.pop("CLAUDE_MULTIPLAI_HOME", None)
+        else:
+            os.environ["CLAUDE_MULTIPLAI_HOME"] = old
+        ro.chmod(0o700)
+        importlib.reload(log_utils)

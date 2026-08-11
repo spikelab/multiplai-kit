@@ -123,10 +123,15 @@ class TestWrapperFailsClosed:
         (config / "hooks" / "guard_destructive.py").write_text("")
         return config
 
-    def _run(self, config: Path) -> subprocess.CompletedProcess:
+    def _run(self, config: Path, **extra_env) -> subprocess.CompletedProcess:
+        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config)}
+        # The suite itself may run inside an SDK child session; the wrapper's
+        # child-session guard must not make these tests pass vacuously.
+        env.pop("_HOOK_CHILD_SESSION", None)
+        env.update(extra_env)
         return subprocess.run(
             ["bash", str(WRAPPER)],
-            env={**os.environ, "CLAUDE_CONFIG_DIR": str(config)},
+            env=env,
             input=BASH_PAYLOAD,
             capture_output=True,
             text=True,
@@ -140,6 +145,26 @@ class TestWrapperFailsClosed:
         decision = json.loads(result.stdout)["hookSpecificOutput"]
         assert decision["permissionDecision"] == "deny"
         assert "127" in decision["permissionDecisionReason"]
+
+    def test_deny_message_names_a_guard_crash_as_a_cause(self, tmp_path):
+        """The guard exits 0 by contract, so a non-zero exit usually means the
+        wrapper never reached it — but the guard raising IS one of the causes,
+        and the deny message must say where that one is diagnosed."""
+        config = self._config_dir(tmp_path, "#!/bin/bash\nexit 1\n")
+        result = self._run(config)
+
+        reason = json.loads(result.stdout)["hookSpecificOutput"][
+            "permissionDecisionReason"]
+        assert "guard-destructive.log" in reason
+
+    def test_child_sessions_skip_the_wrapper_entirely(self, tmp_path):
+        """multiplai-core sets _HOOK_CHILD_SESSION on every SDK child; the kit
+        hooks honor it. No verdict, no deny — not even for a broken guard."""
+        config = self._config_dir(tmp_path, "#!/bin/bash\nexit 127\n")
+        result = self._run(config, _HOOK_CHILD_SESSION="1")
+
+        assert result.returncode == 0
+        assert result.stdout.strip() == ""
 
     def test_silent_when_the_guard_allows(self, tmp_path):
         """No verdict on stdout is how PreToolUse says 'carry on'."""

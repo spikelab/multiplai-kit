@@ -7,7 +7,7 @@
 | `INBOX/` | Landing zone | Unsorted items, screenshots, bookmarks, new research dumps — **and plans**. Temporary and gitignored; nothing here is version-controlled. |
 | `PROJECTS/` | Where work happens | Everything you have multiple sessions about — code, job search, relocation, finances, health plans, writing projects. If you're working on it, it's a project. |
 | `RESOURCES/` | Reference material | Research about things *outside* this workspace — deep dives, technical references, templates. Pure knowledge, indexed for retrieval. |
-| `ARTIFACTS/` | Records of work you did | Investigations, measurements, benchmark data, published artifacts, plans that ran. Tracked and committed. Organised per piece of work, not flat. |
+| `ARTIFACTS/` | Records of work you did | Investigations, measurements, benchmark data, published artifacts, plans that ran. Committed, unlike `INBOX/` — assuming you ran `git init` in the workspace. A multi-file investigation gets its own subdirectory (`ARTIFACTS/perf-audit/`); a single standalone file, such as a published Artifact page, sits at the top level. |
 | `.multiplai/memory/` | Claude's context about you | Profile, preferences, career history. Managed by the `multiplai-context` plugin; also reachable via the `dotfiles/memory/` symlink. See `.multiplai/memory/CLAUDE.md` for the index. |
 | `.multiplai/diary/` | Session diary | Auto-generated per-day session logs (`YYYY-MM-DD.md`). Don't edit directly. |
 | `.multiplai/learnings/` | Pending learnings | Auto-captured on session stop. Consolidate via `/multiplai-context:dream-remember`. |
@@ -19,8 +19,8 @@ When creating or saving files, put them in the right place:
 | Content type | Goes to | Example |
 |-------------|---------|---------|
 | Research about something external | `RESOURCES/` | `RESOURCES/topic-name-YYYY-MM-DD.md` |
-| A record of work you did here | `ARTIFACTS/` | `ARTIFACTS/{investigation}/measurements.md` |
-| **Any published Artifact** | `ARTIFACTS/` | The source `.html`/`.md` behind an Artifact URL — see below |
+| A multi-file record of work you did here | `ARTIFACTS/{name}/` | `ARTIFACTS/perf-audit/measurements.md` |
+| A single-file record, or **any published Artifact** | `ARTIFACTS/` | `ARTIFACTS/perf-audit.html` — see below |
 | Plans and recommendations | `INBOX/` | `INBOX/plan-{name}-YYYY-MM-DD.md` |
 | New unsorted items | `INBOX/` | Screenshots, links, raw notes |
 | Memory updates | `.multiplai/memory/` | Update existing files, don't create new ones without asking |

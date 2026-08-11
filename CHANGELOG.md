@@ -28,7 +28,23 @@ public repo has shipped without in-tree memory hooks from day one (see the
   in the workspace goes to `ARTIFACTS/`.
 
   Existing workspaces get the directory on the next `./setup.sh` — `mkdir -p` is
-  idempotent and nothing is moved for you.
+  idempotent and nothing is moved for you. They do **not** get the routing rules
+  that explain it: setup never overwrites a `CLAUDE.md` you already have. It now
+  prints a notice when yours has no `ARTIFACTS/` rule, pointing at the template
+  to diff against. The edit is yours to make.
+
+### Fixed
+
+- **`setup.sh` now adds `INBOX/` to the workspace `.gitignore`.** It only ever
+  wrote `.multiplai/cc-state/` and `.multiplai/data/`, so on a fresh install
+  `INBOX/` was tracked — while the workspace `CLAUDE.md` told both you and Claude
+  it was "temporary and gitignored". Every plan routed there would have been
+  committed by the first `git add -A`, which is the opposite of the documented
+  contract and the premise the `INBOX/`-vs-`ARTIFACTS/` split rests on.
+
+  Existing workspaces pick the rule up on the next `./setup.sh`. If you have
+  already committed files under `INBOX/`, the new rule does not untrack them —
+  `git rm -r --cached INBOX/` does.
 
 - **Published Artifacts route to `ARTIFACTS/`, not `INBOX/`.** The workspace
   `CLAUDE.md` template now says so directly. The file Claude writes before

@@ -15,6 +15,28 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Security
+
+- **The destructive-command guard closes four bypass classes** in
+  `guard_destructive.py` (2026-08-10 hooks review, C1/M9/K1). Rules and
+  allowlist now match each shell segment with quotes stripped and `$WORKSPACE`
+  expanded, so `rm -rf '/etc'` reads as `rm -rf /etc`; the rm rule accepts
+  long flags (`rm --recursive --force /etc`, `rm -r --interactive=never
+  /etc`, `rm -rf --no-preserve-root /`) and `${HOME}`; a target containing
+  `..` is never allowlisted and the `/tmp` / `/var/folders` exemptions no
+  longer cover traversals (`rm -rf /tmp/../etc`, `rm -rf $WORKSPACE/../..`);
+  the force-push rule now catches `git push --force origin refs/heads/main`
+  and the refspec force syntax (`git push origin +main:main`) while still
+  allowing `--force-with-lease` and forced pushes of non-protected branches;
+  `docker container prune` joins the prune rule.
+
+- **New guard rule: `git-hook-bypass`.** `git -c core.hooksPath=…`,
+  `--no-verify`, and `GIT_CONFIG_NOSYSTEM=` prefixes all skip the git hooks
+  that gate commits — including the container's pre-commit secret scan — and
+  bypassing that gate is the user's call, not the agent's. Query forms
+  (`git config core.hooksPath`) and prose mentions (`git commit -m 'no-verify
+  discussion'`) stay allowed.
+
 ### Added
 
 - **The launcher stamps the container name onto its tmux pane**
@@ -53,6 +75,23 @@ public repo has shipped without in-tree memory hooks from day one (see the
   override resolves but nothing answers.
 
 ### Changed
+
+- **`gh-app-auth.sh` no longer re-mints on every SessionStart.** SessionStart
+  also fires on `resume` and after a compaction, when the token minted at the
+  real session start is usually still live; the hook now runs the same
+  builtin-only freshness check as `gh-app-refresh.sh` against the `.exp`
+  sidecar and exits before forking anything while the cached token comfortably
+  outlives the skew window. A missing or stale sidecar mints exactly as
+  before.
+
+- **The App hooks' mint/store block now lives once, in
+  `dotfiles/hooks/gh-store-token`.** `gh-app-auth.sh` and `gh-app-refresh.sh`
+  carried byte-identical copies (backoff pre-write, mint, emptiness check,
+  bounded store); both now source the shared helper, so the check that ended
+  the 2026-07-30 device-flow hang cannot drift between them. The helper also
+  validates `GH_TOKEN_APP` against `[A-Za-z0-9._-]+` before the app name
+  reaches any filesystem path — previously a malformed name reached the
+  backoff-marker path unvalidated.
 
 - **The shipped `memory_router` default is now `token_overlap`, not `llm`**
   (`dotfiles/settings.json`). The `llm` router spawns the Agent SDK as a
@@ -159,6 +198,67 @@ public repo has shipped without in-tree memory hooks from day one (see the
   setting and the model's own context window).
 
 ### Fixed
+
+- **A typo'd model or effort ceiling no longer reaches the API.**
+  `model_resolver.py` returned an unrecognized `MULTIPLAI_MODEL` string
+  verbatim whenever it downgraded a request — the typo then travelled to the
+  API as a model id and failed as a 404, the worst place to learn about a
+  config error. Ceilings naming no known tier now fall back to the default
+  ceiling with a stderr note (which run-hook-python routes to
+  `hook-errors.log`); `resolve_effort(None)` returns the default effort
+  instead of raising.
+
+- **`log_utils.py` no longer dies on import when
+  `CLAUDE_MULTIPLAI_HOME` is unwritable.** The module-scope `mkdir` is now
+  best-effort; `setup_logging` keeps the loud failure for callers that
+  actually need the log directory. Previously every hook and plugin skill
+  that merely imported the module crashed.
+
+- **Log-retention config is read the same way everywhere.** `log_utils.py`'s
+  lightweight conf reader now drops inline `#` comments and refuses negative
+  values, matching `run-hook-python`'s parser — a value like `7  # one week`
+  used to fail `int()` and silently land on the default. `run-hook-python`
+  also exports `MULTIPLAI_LOG_RETENTION_DAYS`, so hooks it launches read the
+  conf through one parser instead of two.
+
+- **The guard's deny-on-failure message now names a guard crash as a cause**
+  and points at `runtime/logs/guard-destructive.log` alongside
+  `hook-errors.log`. The deny-on-crash behaviour itself is unchanged and
+  intentional: only a verdict may let a command through.
+
+- **`gh-tok` now bounds the mint itself, on both routes.** `ssh -o
+  ConnectTimeout=10` bounds only the TCP connect — a bridge that accepts and
+  then stalls held the mint (and the hook waiting on it) indefinitely, and the
+  bare-Mac route had no bound at all. Both routes now run under the same
+  bounded-execution idiom the App hooks use for the store call (GNU `timeout`,
+  perl-alarm fallback on a coreutils-free Mac). Failure semantics unchanged:
+  nothing on stdout, diagnosis on stderr, non-zero exit.
+
+- **`validate-syntax.sh` no longer goes silent on unexpected parse failures.**
+  Under `set -euo pipefail`, the message probe caught only the expected
+  exception class (`json.JSONDecodeError` / `yaml.YAMLError`); anything else —
+  demonstrated with a non-UTF-8 `.json` file — killed the `ERROR=$(...)`
+  assignment before `emit_error` ran: exit 1, empty stderr, the model never
+  told the file it just wrote is broken. Each format is now parsed exactly
+  once by a probe that prints the diagnosis and exits non-zero, captured with
+  `|| true` and a bare `except Exception` fallback. The hook also gains its
+  first test suite (`evals/unit/test_validate_syntax.py`).
+
+- **`NotebookEdit` results are now syntax-checked too.** The PostToolUse
+  matcher in `dotfiles/settings.json` was `Write|Edit`, and the hook only read
+  `file_path`; it now also matches `NotebookEdit`, reads `notebook_path`, and
+  validates `.ipynb` files as the JSON they are.
+
+- **The guard's SQL rule no longer fires on prose.** `DROP TABLE` in a commit
+  message, an `echo`, or a heredoc-written migration file was denied — the
+  false-positive class that trains whoever hits it to disable the hook. The
+  rule now requires a SQL client in the same segment (`psql`, `mysql`,
+  `sqlite3`, `mongosh`, `clickhouse-client`, `bq`, `manage.py dbshell`);
+  `psql -c 'DROP TABLE foo'` is still denied.
+
+- **The guard hook entry in `dotfiles/settings.json` now carries
+  `"timeout": 10`** like the other hook entries, so a wedged guard cannot
+  hold a Bash call for the harness's much longer default hook timeout.
 
 - **The fleet board can now label a session it did not watch start.** The pane
   map was a launch-time record: `claude.sh` wrote the entry for the pane it was

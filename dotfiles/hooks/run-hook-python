@@ -64,7 +64,7 @@ if [ -f "$CONF_FILE" ]; then
   done < "$CONF_FILE"
   unset _line _key _val
 fi
-export MULTIPLAI_DEBUG MULTIPLAI_MODEL MULTIPLAI_EFFORT MULTIPLAI_LOG_LEVEL
+export MULTIPLAI_DEBUG MULTIPLAI_MODEL MULTIPLAI_EFFORT MULTIPLAI_LOG_LEVEL MULTIPLAI_LOG_RETENTION_DAYS
 
 _debug() {
   # Compare as data — never run $MULTIPLAI_DEBUG as a command (a tampered conf

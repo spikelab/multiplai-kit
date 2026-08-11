@@ -44,7 +44,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_CONFIG_DIR/hooks/guard-destructive.sh"
+            "command": "bash $CLAUDE_CONFIG_DIR/hooks/guard-destructive.sh",
+            "timeout": 10
           },
           {
             "type": "command",
@@ -56,7 +57,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Write|Edit|NotebookEdit",
         "hooks": [
           {
             "type": "command",

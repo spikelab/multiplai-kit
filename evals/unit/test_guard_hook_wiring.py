@@ -75,7 +75,8 @@ class TestSettingsWiring:
 
     @pytest.mark.parametrize(
         "event,matcher",
-        [("SessionStart", None), ("PreToolUse", "Bash"), ("PostToolUse", "Write|Edit")],
+        [("SessionStart", None), ("PreToolUse", "Bash"),
+         ("PostToolUse", "Write|Edit|NotebookEdit")],
     )
     def test_every_redirecting_command_creates_the_directory_first(self, event, matcher):
         """Any command that still redirects must make its own sink first.
@@ -122,10 +123,15 @@ class TestWrapperFailsClosed:
         (config / "hooks" / "guard_destructive.py").write_text("")
         return config
 
-    def _run(self, config: Path) -> subprocess.CompletedProcess:
+    def _run(self, config: Path, **extra_env) -> subprocess.CompletedProcess:
+        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config)}
+        # Deterministic regardless of where the suite runs; tests that care
+        # about the variable set it explicitly via extra_env.
+        env.pop("_HOOK_CHILD_SESSION", None)
+        env.update(extra_env)
         return subprocess.run(
             ["bash", str(WRAPPER)],
-            env={**os.environ, "CLAUDE_CONFIG_DIR": str(config)},
+            env=env,
             input=BASH_PAYLOAD,
             capture_output=True,
             text=True,
@@ -139,6 +145,29 @@ class TestWrapperFailsClosed:
         decision = json.loads(result.stdout)["hookSpecificOutput"]
         assert decision["permissionDecision"] == "deny"
         assert "127" in decision["permissionDecisionReason"]
+
+    def test_deny_message_names_a_guard_crash_as_a_cause(self, tmp_path):
+        """The guard exits 0 by contract, so a non-zero exit usually means the
+        wrapper never reached it — but the guard raising IS one of the causes,
+        and the deny message must say where that one is diagnosed."""
+        config = self._config_dir(tmp_path, "#!/bin/bash\nexit 1\n")
+        result = self._run(config)
+
+        reason = json.loads(result.stdout)["hookSpecificOutput"][
+            "permissionDecisionReason"]
+        assert "guard-destructive.log" in reason
+
+    def test_child_sessions_are_still_guarded(self, tmp_path):
+        """The _HOOK_CHILD_SESSION skip in validate-syntax.sh must NOT spread
+        here: that guard stops recursive heavy work in SDK children, and this
+        wrapper is a security control — child sessions still run Bash, with
+        the least oversight. Briefly shipped and reverted, 2026-08-10."""
+        config = self._config_dir(tmp_path, "#!/bin/bash\nexit 127\n")
+        result = self._run(config, _HOOK_CHILD_SESSION="1")
+
+        assert result.returncode == 0
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
 
     def test_silent_when_the_guard_allows(self, tmp_path):
         """No verdict on stdout is how PreToolUse says 'carry on'."""

@@ -26,9 +26,15 @@ _MULTIPLAI_HOME = Path(os.environ.get("CLAUDE_MULTIPLAI_HOME", str(_CONFIG_DIR.p
 LOG_DIR = _MULTIPLAI_HOME / "runtime" / "logs"
 STATE_DIR = LOG_DIR / "state"
 
-# Ensure directories exist on import
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-STATE_DIR.mkdir(parents=True, exist_ok=True)
+# Ensure directories exist on import — best-effort. An unwritable
+# CLAUDE_MULTIPLAI_HOME must not kill every hook that merely imports this
+# module; setup_logging() re-attempts the mkdir loudly for callers that
+# actually need the directory.
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 
 # Default retention — overridden by MULTIPLAI_LOG_RETENTION_DAYS in multiplai.conf
 _DEFAULT_RETENTION_DAYS = 7
@@ -83,7 +89,13 @@ def _get_retention_days() -> int:
         except ValueError:
             pass
 
-    # Read from multiplai.conf directly (lightweight — no full conf parser needed)
+    # Read from multiplai.conf directly (lightweight — no full conf parser
+    # needed). This branch stays even though run-hook-python exports the env
+    # var: plugin skills import this module outside run-hook-python, where the
+    # env var is absent. Parsing must match run-hook-python's: drop an inline
+    # `#` comment, strip whitespace, then one layer of quotes — a value like
+    # `7  # one week` used to fail int() here and silently fall back to 7 only
+    # by accident of the default.
     conf_path = _MULTIPLAI_HOME / "multiplai.conf"
     if conf_path.exists():
         try:
@@ -91,8 +103,9 @@ def _get_retention_days() -> int:
                 line = line.strip()
                 if line.startswith("MULTIPLAI_LOG_RETENTION_DAYS"):
                     _, _, val = line.partition("=")
-                    val = val.strip().strip('"').strip("'")
-                    return int(val)
+                    val = val.split("#", 1)[0].strip().strip('"').strip("'")
+                    n = int(val)
+                    return n if n >= 0 else _DEFAULT_RETENTION_DAYS
         except (OSError, ValueError):
             pass
 

@@ -19,6 +19,13 @@
 # Denying every Bash call is a loud failure, deliberately. The alternative is
 # an unguarded session that looks normal.
 
+# Deliberately NO _HOOK_CHILD_SESSION skip here (unlike validate-syntax.sh).
+# That guard exists to stop recursive heavy work — LLM calls, drains — in
+# SDK-spawned children, not to disable a security control. This hook is the
+# only enforcement layer in bypass-permissions mode, and child sessions still
+# run Bash; skipping it would remove protection exactly where oversight is
+# lowest. Do not re-add it (briefly shipped and reverted, 2026-08-10).
+
 set -u
 
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -31,5 +38,5 @@ status=$?
 # JSON assembled with printf, not a heredoc: the reason string carries `\n`
 # escapes and `$`-prefixed paths that must reach the agent verbatim.
 printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' \
-  "The multiplai destructive-command guard could not run (exit $status), so no Bash command can be checked. This session runs with permissions bypassed, and this guard is the only layer that can refuse an unrecoverable command, so Bash is denied until it works.\\n\\nTell the user, and read \$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log for the cause — usually no Python reachable from \$CLAUDE_CONFIG_DIR/hooks/run-hook-python, or a missing guard_destructive.py. Do not work around this by disabling the hook."
+  "The multiplai destructive-command guard could not run (exit $status), so no Bash command can be checked. This session runs with permissions bypassed, and this guard is the only layer that can refuse an unrecoverable command, so Bash is denied until it works.\\n\\nTell the user, and read \$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log for the cause — usually no Python reachable from \$CLAUDE_CONFIG_DIR/hooks/run-hook-python, a missing guard_destructive.py, or the guard itself crashed (see \$CLAUDE_MULTIPLAI_HOME/runtime/logs/guard-destructive.log). Do not work around this by disabling the hook."
 exit 0

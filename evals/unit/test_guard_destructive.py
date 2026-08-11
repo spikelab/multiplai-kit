@@ -24,9 +24,28 @@ class TestDeniesUnrecoverableCommands:
         "rm -rf ~/Library",
         "rm -rf $HOME/projects",
         "sudo rm -rf /etc/nginx",
+        # Quoting a path is a normal shell idiom, not an exotic bypass.
+        "rm -rf '/etc'",
+        'rm -rf "/etc"',
+        # ${HOME} is the same directory as $HOME.
+        "rm -rf ${HOME}/.ssh",
+        # Long flags spell the same delete.
+        "rm --recursive --force /etc",
+        "rm -r --interactive=never /etc",
+        "rm -rf --no-preserve-root /",
+        # `..` walks straight out of the exempted trees.
+        "rm -rf /tmp/../etc",
+        "rm -rf /var/folders/zz/../../etc",
     ])
     def test_recursive_delete_outside_workspace(self, command):
         assert _denied(command), command
+
+    def test_traversal_out_of_the_workspace(self, monkeypatch):
+        """$WORKSPACE/../.. is not the workspace — the allowance must refuse
+        any target that traverses."""
+        monkeypatch.setenv("WORKSPACE", "/Users/spike/Documents/knowhere")
+        assert _denied("rm -rf $WORKSPACE/../..")
+        assert _denied("rm -rf ${WORKSPACE}/../../etc")
 
     def test_deleting_multiplai_state(self):
         assert _denied("rm -rf .multiplai/memory")
@@ -37,8 +56,23 @@ class TestDeniesUnrecoverableCommands:
         "git push -f origin main",
         "git push origin main --force",
         "git push --force upstream master",
+        # The same branch, fully qualified.
+        "git push --force origin refs/heads/main",
+        # The refspec force syntax — no --force flag involved.
+        "git push origin +main:main",
+        "git push origin +feature/x:main",
     ])
     def test_force_push_to_protected_branch(self, command):
+        assert _denied(command), command
+
+    @pytest.mark.parametrize("command", [
+        "git -c core.hooksPath=/dev/null commit -m 'x'",
+        "git commit --no-verify -m 'x'",
+        "git push --no-verify",
+        "GIT_CONFIG_NOSYSTEM=1 git commit -m 'x'",
+    ])
+    def test_git_hook_bypass(self, command):
+        """All three forms skip the pre-commit secret scan — a human call."""
         assert _denied(command), command
 
     def test_hard_reset_to_remote(self):
@@ -47,6 +81,7 @@ class TestDeniesUnrecoverableCommands:
     @pytest.mark.parametrize("command", [
         "docker system prune -af",
         "docker volume prune",
+        "docker container prune -f",
         "docker volume rm multiplai-data",
     ])
     def test_docker_prune(self, command):
@@ -103,6 +138,8 @@ class TestAllowsOrdinaryWork:
         "git push --force-with-lease origin feat/my-branch",
         "git commit -m 'fix: thing'",
         "rm -rf /tmp/claude-501/scratch",
+        "rm -rf '/tmp/x'",
+        "rm -rf /tmp/build",
         "rm build/output.txt",
         "rm -rf node_modules",
         "pytest tests/ -q",
@@ -114,6 +151,19 @@ class TestAllowsOrdinaryWork:
         # Branches that merely contain a protected-branch word are ordinary.
         "git push --force origin main-fix",
         "git push -f origin feature/main",
+        # Forcing a non-protected branch via refspec is the agent's own risk.
+        "git push origin +feature/x:feature/x",
+        # SQL keywords in prose are not a database client (M10): commit
+        # messages, echo'd notes and heredoc'd migration files must pass.
+        "echo 'drop table foo'",
+        'git commit -m "DROP TABLE users migration"',
+        # Hook-bypass rule: query forms and prose mentions are not bypasses.
+        "git config core.hooksPath",
+        "git config --get core.hooksPath",
+        "git commit -m 'no-verify discussion'",
+        "echo GIT_CONFIG_NOSYSTEM=1",
+        # --no-verify-signatures is GPG verification, not the hook gate.
+        "git merge --no-verify-signatures feature/x",
         # Each segment is benign on its own, so the compound is too.
         "rm -rf /tmp/a && rm -rf /tmp/b",
         "git worktree remove .worktrees/f && git push --force-with-lease origin feat/x",
@@ -125,6 +175,10 @@ class TestAllowsOrdinaryWork:
         """Cleaning up inside the workspace is the agent's own job."""
         monkeypatch.setenv("WORKSPACE", "/Users/spike/Documents/knowhere")
         assert not _denied("rm -rf /Users/spike/Documents/knowhere/build")
+        # The same delete spelled through the variable, or with long flags.
+        assert not _denied("rm -rf $WORKSPACE/build")
+        assert not _denied(
+            "rm --recursive --force /Users/spike/Documents/knowhere/build")
 
     def test_delete_with_where_clause_is_fine(self):
         assert not _denied('psql -c "DELETE FROM logs WHERE ts < now()"')

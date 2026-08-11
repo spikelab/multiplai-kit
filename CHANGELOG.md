@@ -15,6 +15,28 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Security
+
+- **The destructive-command guard closes four bypass classes** in
+  `guard_destructive.py` (2026-08-10 hooks review, C1/M9/K1). Rules and
+  allowlist now match each shell segment with quotes stripped and `$WORKSPACE`
+  expanded, so `rm -rf '/etc'` reads as `rm -rf /etc`; the rm rule accepts
+  long flags (`rm --recursive --force /etc`, `rm -r --interactive=never
+  /etc`, `rm -rf --no-preserve-root /`) and `${HOME}`; a target containing
+  `..` is never allowlisted and the `/tmp` / `/var/folders` exemptions no
+  longer cover traversals (`rm -rf /tmp/../etc`, `rm -rf $WORKSPACE/../..`);
+  the force-push rule now catches `git push --force origin refs/heads/main`
+  and the refspec force syntax (`git push origin +main:main`) while still
+  allowing `--force-with-lease` and forced pushes of non-protected branches;
+  `docker container prune` joins the prune rule.
+
+- **New guard rule: `git-hook-bypass`.** `git -c core.hooksPath=…`,
+  `--no-verify`, and `GIT_CONFIG_NOSYSTEM=` prefixes all skip the git hooks
+  that gate commits — including the container's pre-commit secret scan — and
+  bypassing that gate is the user's call, not the agent's. Query forms
+  (`git config core.hooksPath`) and prose mentions (`git commit -m 'no-verify
+  discussion'`) stay allowed.
+
 ### Added
 
 - **The launcher stamps the container name onto its tmux pane**
@@ -159,6 +181,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
   setting and the model's own context window).
 
 ### Fixed
+
+- **The guard's SQL rule no longer fires on prose.** `DROP TABLE` in a commit
+  message, an `echo`, or a heredoc-written migration file was denied — the
+  false-positive class that trains whoever hits it to disable the hook. The
+  rule now requires a SQL client in the same segment (`psql`, `mysql`,
+  `sqlite3`, `mongosh`, `clickhouse-client`, `bq`, `manage.py dbshell`);
+  `psql -c 'DROP TABLE foo'` is still denied.
+
+- **The guard hook entry in `dotfiles/settings.json` now carries
+  `"timeout": 10`** like the other hook entries, so a wedged guard cannot
+  hold a Bash call for the harness's much longer default hook timeout.
 
 - **The fleet board can now label a session it did not watch start.** The pane
   map was a launch-time record: `claude.sh` wrote the entry for the pane it was

@@ -182,6 +182,21 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Fixed
 
+- **`validate-syntax.sh` no longer goes silent on unexpected parse failures.**
+  Under `set -euo pipefail`, the message probe caught only the expected
+  exception class (`json.JSONDecodeError` / `yaml.YAMLError`); anything else —
+  demonstrated with a non-UTF-8 `.json` file — killed the `ERROR=$(...)`
+  assignment before `emit_error` ran: exit 1, empty stderr, the model never
+  told the file it just wrote is broken. Each format is now parsed exactly
+  once by a probe that prints the diagnosis and exits non-zero, captured with
+  `|| true` and a bare `except Exception` fallback. The hook also gains its
+  first test suite (`evals/unit/test_validate_syntax.py`).
+
+- **`NotebookEdit` results are now syntax-checked too.** The PostToolUse
+  matcher in `dotfiles/settings.json` was `Write|Edit`, and the hook only read
+  `file_path`; it now also matches `NotebookEdit`, reads `notebook_path`, and
+  validates `.ipynb` files as the JSON they are.
+
 - **The guard's SQL rule no longer fires on prose.** `DROP TABLE` in a commit
   message, an `echo`, or a heredoc-written migration file was denied — the
   false-positive class that trains whoever hits it to disable the hook. The

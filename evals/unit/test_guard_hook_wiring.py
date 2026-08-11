@@ -75,7 +75,8 @@ class TestSettingsWiring:
 
     @pytest.mark.parametrize(
         "event,matcher",
-        [("SessionStart", None), ("PreToolUse", "Bash"), ("PostToolUse", "Write|Edit")],
+        [("SessionStart", None), ("PreToolUse", "Bash"),
+         ("PostToolUse", "Write|Edit|NotebookEdit")],
     )
     def test_every_redirecting_command_creates_the_directory_first(self, event, matcher):
         """Any command that still redirects must make its own sink first.

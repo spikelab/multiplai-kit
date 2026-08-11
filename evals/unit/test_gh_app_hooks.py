@@ -55,6 +55,10 @@ KIT_ROOT = Path(__file__).resolve().parents[2]
 HOOKS_DIR = KIT_ROOT / "dotfiles" / "hooks"
 AUTH_HOOK = HOOKS_DIR / "gh-app-auth.sh"
 REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"
+# The mint+store block both hooks source — the emptiness check, the backoff
+# pre-write and the bounded store live here, once.
+STORE_HELPER = HOOKS_DIR / "gh-store-token"
+GH_TOK = HOOKS_DIR / "gh-tok"
 
 SKEW = 120  # both hooks re-mint this many seconds before the real expiry
 
@@ -118,8 +122,9 @@ class Session:
         for d in (self.home, self.hooks, self.bin):
             d.mkdir(parents=True, exist_ok=True)
 
-        # The hooks under test, verbatim from the kit.
-        for src in (AUTH_HOOK, REFRESH_HOOK):
+        # The hooks under test, verbatim from the kit — plus the shared
+        # mint/store helper they source.
+        for src in (AUTH_HOOK, REFRESH_HOOK, STORE_HELPER):
             dst = self.hooks / src.name
             dst.write_text(src.read_text())
             dst.chmod(0o755)
@@ -274,6 +279,53 @@ def test_auth_hook_clears_an_inherited_environment_token(session):
     result = session.run("gh-app-auth.sh", GH_TOKEN="ghp_stray")
     assert result.returncode == 0
     assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+
+
+def test_auth_hook_skips_the_mint_while_the_cached_token_is_fresh(session):
+    """SessionStart also fires on resume and after a compaction, when the token
+    minted at the real start is usually still live — re-minting there costs a
+    bridge round-trip for nothing. Same freshness check as the refresh hook."""
+    session.write_sidecar("acme", str(_now() + 3600))
+    result = session.run("gh-app-auth.sh")
+    assert result.returncode == 0
+    assert session.mint_attempts == 0
+    assert session.gh_invocations == []
+    assert not session.fail_marker().exists(), (
+        "the skip path must not leave a backoff marker behind"
+    )
+
+
+def test_auth_hook_still_mints_inside_the_skew_window(session):
+    """Fresh means comfortably fresh: a token dying in under the skew window is
+    renewed at SessionStart, not handed to the session."""
+    session.write_sidecar("acme", str(_now() + SKEW - 30))
+    session.run("gh-app-auth.sh")
+    assert session.mint_attempts == 1
+
+
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+def test_hook_is_inert_in_a_child_session(session, hook):
+    """SDK-spawned children (multiplai-core sets _HOOK_CHILD_SESSION) inherit
+    the parent's credential store; they must not mint, store, or stall."""
+    session.write_sidecar("acme", "0")  # stale — would mint in a real session
+    result = session.run(hook, _HOOK_CHILD_SESSION="1")
+    assert result.returncode == 0
+    assert session.mint_attempts == 0
+    assert session.gh_invocations == []
+
+
+@pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
+@pytest.mark.parametrize("app", ["../evil", "a/b", "acme$(x)", "acme evil"])
+def test_a_malformed_app_name_never_reaches_the_filesystem(session, hook, app):
+    """The app name becomes a cache filename. gh-tok validates it, but the
+    backoff marker is written before gh-tok runs — the shared helper must
+    refuse first, or `../evil` writes outside the cache directory."""
+    result = session.run(hook, app=app)
+    assert result.returncode == 0
+    assert session.mint_attempts == 0, "a malformed name reached the minter"
+    assert session.gh_invocations == []
+    outside = session.home / ".cache" / "multiplai" / "evil.json.fail"
+    assert not outside.exists(), "a traversal in the app name escaped the cache dir"
 
 
 # --- PreToolUse: renew only when the cached token has run out ----------------
@@ -472,6 +524,19 @@ def test_successful_mint_still_stores_against_a_realistic_gh(session, hook):
 
 
 @pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+def test_hooks_source_the_shared_store_helper(hook):
+    """Both hooks run the ONE copy of the mint/store block. A hook that grows
+    its own inline copy re-opens the drift that let the 2026-07-30 hang ship."""
+    code = [
+        ln for ln in hook.read_text().splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    sourcing = [ln for ln in code if "hooks/gh-store-token" in ln]
+    assert len(sourcing) == 1, "hook does not source gh-store-token exactly once"
+    assert sourcing[0].lstrip().startswith(". "), sourcing[0]
+
+
+@pytest.mark.parametrize("hook", [STORE_HELPER])
 def test_the_minter_is_never_piped_straight_into_gh(hook):
     """Shape guard on the exact construct that broke. The token must be captured
     and tested before it goes anywhere near `gh`; a pipe straight off the minter
@@ -497,7 +562,7 @@ def test_the_minter_is_never_piped_straight_into_gh(hook):
             pytest.fail(f"minter piped straight into gh auth login:\n{stmt}")
 
 
-@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+@pytest.mark.parametrize("hook", [STORE_HELPER])
 def test_the_store_call_is_bounded(hook):
     """Belt-and-braces behind the emptiness check: whatever `gh` decides to do
     with its stdin in some future version, it cannot stall a session. The bound
@@ -569,7 +634,7 @@ def _bounded_fn(hook):
     return "\n".join(lines[start : end + 1])
 
 
-@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+@pytest.mark.parametrize("hook", [STORE_HELPER, GH_TOK])
 @pytest.mark.parametrize("with_gnu_timeout", [True, False])
 def test_bounded_actually_bounds(session, hook, with_gnu_timeout):
     """Both branches of `bounded` must genuinely kill a stuck command —
@@ -592,7 +657,7 @@ def test_bounded_actually_bounds(session, hook, with_gnu_timeout):
     assert result.returncode != 0, "a stuck store call survived its bound"
 
 
-@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK, STORE_HELPER])
 def test_hooks_carry_no_bash5_only_constructs(hook):
     """A bare Mac runs these under /bin/bash 3.2. Bare $EPOCHSECONDS is silently
     empty there (the guard would compare against nothing), and printf '%(...)T'
@@ -654,7 +719,7 @@ def test_refresh_guard_forks_zero_processes():
 # --- shape ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
+@pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK, STORE_HELPER])
 def test_hooks_are_shell_and_parse(hook):
     assert hook.read_text().splitlines()[0].startswith("#!"), "no shebang"
     assert "bash" in hook.read_text().splitlines()[0], "container has bash, not zsh"
@@ -741,3 +806,28 @@ def test_gh_tok_uses_the_bridge_without_the_host_script(tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ghs_bridge_token"
     assert "multiplai-gh-token --json acme" in ssh_calls.read_text()
+
+
+def test_gh_tok_bounds_both_mint_routes():
+    """`ConnectTimeout` bounds only the TCP connect: a bridge that accepts and
+    then stalls held the mint forever, and the bare-Mac route had no bound at
+    all. Both routes must go through `bounded` (GNU timeout / perl alarm)."""
+    body = GH_TOK.read_text()
+    code = [
+        ln for ln in body.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+    # Rejoin backslash continuations — the ssh route spans two physical lines.
+    logical, buf = [], ""
+    for ln in code:
+        buf += ln.rstrip("\\") if ln.rstrip().endswith("\\") else ln
+        if not ln.rstrip().endswith("\\"):
+            logical.append(buf)
+            buf = ""
+    mints = [s for s in logical if "multiplai-gh-token --json" in s]
+    assert len(mints) == 2, "expected exactly the local and the bridge route"
+    for stmt in mints:
+        assert "bounded " in stmt, f"unbounded mint route: {stmt}"
+    assert "command -v timeout" in body and "alarm" in body, (
+        "bounded() must try GNU timeout and fall back to a perl alarm"
+    )

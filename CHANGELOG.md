@@ -76,6 +76,23 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **`gh-app-auth.sh` no longer re-mints on every SessionStart.** SessionStart
+  also fires on `resume` and after a compaction, when the token minted at the
+  real session start is usually still live; the hook now runs the same
+  builtin-only freshness check as `gh-app-refresh.sh` against the `.exp`
+  sidecar and exits before forking anything while the cached token comfortably
+  outlives the skew window. A missing or stale sidecar mints exactly as
+  before.
+
+- **The App hooks' mint/store block now lives once, in
+  `dotfiles/hooks/gh-store-token`.** `gh-app-auth.sh` and `gh-app-refresh.sh`
+  carried byte-identical copies (backoff pre-write, mint, emptiness check,
+  bounded store); both now source the shared helper, so the check that ended
+  the 2026-07-30 device-flow hang cannot drift between them. The helper also
+  validates `GH_TOKEN_APP` against `[A-Za-z0-9._-]+` before the app name
+  reaches any filesystem path — previously a malformed name reached the
+  backoff-marker path unvalidated.
+
 - **The shipped `memory_router` default is now `token_overlap`, not `llm`**
   (`dotfiles/settings.json`). The `llm` router spawns the Agent SDK as a
   subprocess per prompt, and that spawn — not the model — is the cost: measured
@@ -181,6 +198,14 @@ public repo has shipped without in-tree memory hooks from day one (see the
   setting and the model's own context window).
 
 ### Fixed
+
+- **`gh-tok` now bounds the mint itself, on both routes.** `ssh -o
+  ConnectTimeout=10` bounds only the TCP connect — a bridge that accepts and
+  then stalls held the mint (and the hook waiting on it) indefinitely, and the
+  bare-Mac route had no bound at all. Both routes now run under the same
+  bounded-execution idiom the App hooks use for the store call (GNU `timeout`,
+  perl-alarm fallback on a coreutils-free Mac). Failure semantics unchanged:
+  nothing on stdout, diagnosis on stderr, non-zero exit.
 
 - **`validate-syntax.sh` no longer goes silent on unexpected parse failures.**
   Under `set -euo pipefail`, the message probe caught only the expected

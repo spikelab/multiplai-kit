@@ -29,6 +29,9 @@
 # in the URL and no bespoke helper.
 
 [ -n "${GH_TOKEN_APP:-}" ] || exit 0
+# Child session guard — skip for SDK-spawned sessions (multiplai-core sets it;
+# the parent session's credential store is already populated and shared).
+[ -n "${_HOOK_CHILD_SESSION:-}" ] && exit 0
 
 set -uo pipefail
 
@@ -47,53 +50,23 @@ CACHE_DIR="$HOME/.cache/multiplai/gh"
 # costs one `date` fork — off the hot path, so that is fine here.
 now=${EPOCHSECONDS:-$(date +%s)}
 
-# The store call must be bounded on EVERY platform. GNU `timeout` exists in the
-# container (Linux); macOS ships no coreutils, and an unguarded `timeout 20 gh`
-# there is exit 127 — a perfectly good mint turned into a failed store. The
-# fallback is a perl alarm: alarm(2) survives exec(2), so it is a real bound,
-# not decoration (macOS always ships perl).
-bounded() {  # bounded <seconds> <command...>
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "$@"
-    else
-        perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$@"
-    fi
-}
+# SessionStart also fires on `resume` and after a compaction, and the token
+# minted at the real session start is usually still live then. Same freshness
+# check as gh-app-refresh (seeded read, unparseable counts as stale): while the
+# sidecar says the cached token comfortably outlives the skew window, there is
+# nothing to do — no mint, no backoff write, no `gh` fork. A missing or stale
+# sidecar falls through to the mint exactly as before.
+exp=0
+{ read -r exp < "$CACHE_DIR/$GH_TOKEN_APP.json.exp"; } 2>/dev/null
+case "$exp" in ''|*[!0-9]*) exp=0 ;; esac
+(( exp > now + 120 )) && exit 0
 
-# Backoff FIRST, cleared on success — never written only on the failure branch.
-# The hook entry in settings.json carries "timeout": 30; a slow bridge plus a
-# slow store can exceed that, and when Claude Code kills this hook mid-mint a
-# failure-branch marker never lands — so the FIRST Bash call re-pays the whole
-# stall the marker exists to prevent. Pre-writing costs one tiny write per mint
-# (SessionStart only); being killed now leaves the backoff behind, which is
-# exactly what the refresh hook needs to see.
-mkdir -p "$CACHE_DIR" 2>/dev/null || true
-printf '%s\n' "$((now + 60))" > "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
-
-# Mint into a variable and only reach for `gh` once there is something to store.
-#
-# `gh auth login --with-token` does NOT fail on empty stdin. Measured on gh
-# 2.96.0: it falls through to the interactive OAuth **device flow**, prints a
-# one-time code, and blocks forever waiting on a terminal no hook has. So the
-# obvious `gh-tok | gh auth login --with-token` pipeline turns every failed mint
-# into a HUNG SessionStart rather than a degraded one — `gh-tok`'s
-# empty-stdout-on-failure contract does not save the caller, the caller has to
-# check for itself. (2026-07-30: a wrong `org` in the host App profile made
-# every mint fail, and no session would start at all.)
-#
-# `bounded` is the belt-and-braces behind the emptiness check: no future change
-# in how `gh` handles its stdin can stall a session again. It is generous
-# because the store call talks to the API to validate the token before writing.
-tok=$("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-tok" "$GH_TOKEN_APP" 2>>"$LOG") || tok=""
-
-if [ -n "$tok" ] && printf '%s\n' "$tok" \
-     | bounded 20 gh auth login --with-token --hostname github.com >>"$LOG" 2>&1; then
-    rm -f "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
-else
-    printf '%s gh-app-auth: mint/store failed for app "%s"; gh will be unauthenticated\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GH_TOKEN_APP" >>"$LOG" 2>/dev/null || true
-fi
-unset tok
+# Mint+store — backoff marker first, mint via gh-tok, emptiness check, bounded
+# store — is the block shared with gh-app-refresh.sh; all the reasoning
+# (device-flow hang, kill-mid-mint, bash-3.2) lives in gh-store-token.
+_GH_STORE_TAG="gh-app-auth"
+_GH_STORE_FAIL_HINT="gh will be unauthenticated"
+. "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-store-token"
 
 # A failed mint must never block session start.
 exit 0

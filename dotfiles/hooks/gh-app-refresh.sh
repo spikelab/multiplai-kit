@@ -43,6 +43,9 @@
 # negative.
 
 [ -n "${GH_TOKEN_APP:-}" ] || exit 0
+# Child session guard — skip for SDK-spawned sessions (multiplai-core sets it;
+# a builtin test, so the hot path stays fork-free).
+[ -n "${_HOOK_CHILD_SESSION:-}" ] && exit 0
 # bash-5 builtin clock, zero forks; /bin/bash 3.2 on a bare Mac has no
 # $EPOCHSECONDS, so the idiom falls back to one `date` fork there. Keep the
 # fallback as exactly this idiom — the zero-fork test knows it and no other.
@@ -73,45 +76,11 @@ CACHE_DIR="$HOME/.cache/multiplai/gh"
 # forwards none, but a stray one must not silently block the store either.
 unset GH_TOKEN GITHUB_TOKEN
 
-# Bounded on EVERY platform: GNU `timeout` in the container, a perl alarm on a
-# bare Mac (no coreutils there — an unguarded `timeout` is exit 127, turning a
-# good mint into a failed store). alarm(2) survives exec(2), so the perl form
-# is a real bound, not decoration.
-bounded() {  # bounded <seconds> <command...>
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "$@"
-    else
-        perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$@"
-    fi
-}
-
-# Backoff FIRST, cleared on success — see the header. A hook killed by its
-# outer timeout never reaches a failure branch; the marker must already exist.
-# mkdir because a first-ever mint precedes the cache dir existing.
-mkdir -p "$CACHE_DIR" 2>/dev/null || true
-printf '%s\n' "$((now + 60))" > "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
-
-# Mint into a variable, then pipe only if it produced something. Still piped and
-# never on argv — argv is visible in `ps`.
-#
-# The emptiness check is load-bearing, not defensive: `gh auth login
-# --with-token` does NOT fail on empty stdin. Measured on gh 2.96.0, it falls
-# through to the interactive OAuth **device flow**, prints a one-time code and
-# blocks forever on a terminal that does not exist here. Piping a failed mint
-# straight in would hang this hook — and it runs before EVERY Bash call, so that
-# is "Bash stopped working", the one outcome the whole design forbids. The
-# minting primitive's empty-stdout-on-failure contract does not rescue the
-# caller; the caller must look. `bounded` bounds the store call regardless, so
-# no future change in gh's stdin handling can stall a session again.
-tok=$("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-tok" "$GH_TOKEN_APP" 2>>"$LOG") || tok=""
-
-if [ -n "$tok" ] && printf '%s\n' "$tok" \
-     | bounded 20 gh auth login --with-token --hostname github.com >>"$LOG" 2>&1; then
-    rm -f "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
-else
-    printf '%s gh-app-refresh: renewal failed for app "%s"; the next gh call may 401 (backing off 60s)\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GH_TOKEN_APP" >>"$LOG" 2>/dev/null || true
-fi
-unset tok
+# Mint+store — backoff marker first, mint via gh-tok, emptiness check, bounded
+# store — is the block shared with gh-app-auth.sh; all the reasoning
+# (device-flow hang, kill-mid-mint, bash-3.2) lives in gh-store-token.
+_GH_STORE_TAG="gh-app-refresh"
+_GH_STORE_FAIL_HINT="the next gh call may 401 (backing off 60s)"
+. "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-store-token"
 
 exit 0

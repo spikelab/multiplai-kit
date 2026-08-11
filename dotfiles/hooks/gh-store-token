@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# gh-store-token — the shared mint+store sequence of the two GitHub App hooks.
+#
+# SOURCED by gh-app-auth.sh (SessionStart) and gh-app-refresh.sh (PreToolUse
+# Bash), never executed on its own. The two hooks used to carry byte-identical
+# copies of this block; extracting it means the emptiness check that ended the
+# 2026-07-30 device-flow hang exists exactly once, and cannot drift.
+#
+# Caller sets, before sourcing:
+#   GH_TOKEN_APP         App profile name (validated HERE before any path use)
+#   LOG                  append-target for diagnostics
+#   CACHE_DIR            the token cache directory
+#   now                  current epoch seconds
+#   _GH_STORE_TAG        log tag naming the calling hook
+#   _GH_STORE_FAIL_HINT  what a failed mint means for that hook's caller
+#
+# Everything here must stay bash-3.2-safe and coreutils-free (the kit also
+# runs bare on a Mac) — see the hooks' headers; the tests pin the offenders.
+
+# The app name becomes a filename ($CACHE_DIR/$GH_TOKEN_APP.json.fail). gh-tok
+# validates the same value before its own paths, but the backoff marker below
+# is written before gh-tok ever runs — so validate here too, or a malformed
+# name (path separators, `..`) reaches the filesystem first.
+case "$GH_TOKEN_APP" in
+    ''|*[!A-Za-z0-9._-]*)
+        printf '%s %s: invalid app name in GH_TOKEN_APP (allowed: alnum . _ -); not minting\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_GH_STORE_TAG" >>"$LOG" 2>/dev/null || true
+        return 0 2>/dev/null || exit 0
+        ;;
+esac
+
+# The store call must be bounded on EVERY platform. GNU `timeout` exists in the
+# container (Linux); macOS ships no coreutils, and an unguarded `timeout 20 gh`
+# there is exit 127 — a perfectly good mint turned into a failed store. The
+# fallback is a perl alarm: alarm(2) survives exec(2), so it is a real bound,
+# not decoration (macOS always ships perl).
+bounded() {  # bounded <seconds> <command...>
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$@"
+    else
+        perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$@"
+    fi
+}
+
+# Backoff FIRST, cleared on success — never written only on the failure branch.
+# The hook entries in settings.json carry "timeout": 30; a slow bridge plus a
+# slow store can exceed that, and a hook Claude Code kills mid-mint never
+# reaches any failure branch — the marker must already exist by then, or the
+# next Bash call re-pays the whole stall the marker exists to prevent. mkdir
+# because a first-ever mint precedes the cache dir existing.
+mkdir -p "$CACHE_DIR" 2>/dev/null || true
+printf '%s\n' "$((now + 60))" > "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
+
+# Mint into a variable and only reach for `gh` once there is something to
+# store. Piped, never on argv — argv is visible in `ps`.
+#
+# The emptiness check is load-bearing, not defensive: `gh auth login
+# --with-token` does NOT fail on empty stdin. Measured on gh 2.96.0, it falls
+# through to the interactive OAuth **device flow**, prints a one-time code and
+# blocks forever on a terminal no hook has (2026-07-30: a wrong `org` in the
+# host App profile made every mint fail, and no session would start at all).
+# `gh-tok`'s empty-stdout-on-failure contract does not save the caller — the
+# caller has to check. Never rewrite this as `gh-tok | gh auth login`.
+# `bounded` is belt-and-braces behind the check: no future change in how `gh`
+# handles its stdin can stall a session again. It is generous because the
+# store call talks to the API to validate the token before writing.
+tok=$("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-tok" "$GH_TOKEN_APP" 2>>"$LOG") || tok=""
+
+if [ -n "$tok" ] && printf '%s\n' "$tok" \
+     | bounded 20 gh auth login --with-token --hostname github.com >>"$LOG" 2>&1; then
+    rm -f "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
+else
+    printf '%s %s: mint/store failed for app "%s"; %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_GH_STORE_TAG" "$GH_TOKEN_APP" "$_GH_STORE_FAIL_HINT" \
+        >>"$LOG" 2>/dev/null || true
+fi
+unset tok

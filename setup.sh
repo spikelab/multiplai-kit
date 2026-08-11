@@ -127,7 +127,10 @@ STEP=1
 echo "[$STEP/$TOTAL_STEPS] Creating workspace directories..."
 # .multiplai/ is the multiplai-context plugin's state root: memory (you edit),
 # diary/learnings/now (auto-captured), data (runtime: catalogs, logs, plugin venv).
-mkdir -p "$WORKSPACE"/{INBOX,PROJECTS,PROJECTS/plans,RESOURCES,.multiplai/{memory,diary,learnings,now,data}}
+# ARTIFACTS/ is where a finished piece of work is kept — an investigation, a
+# measurement, a published artifact. INBOX/ is scratch and is gitignored, so
+# anything that must survive has to leave it.
+mkdir -p "$WORKSPACE"/{INBOX,PROJECTS,RESOURCES,ARTIFACTS,.multiplai/{memory,diary,learnings,now,data}}
 
 # --- Step 2: Copy memory templates ---
 STEP=$((STEP + 1))
@@ -156,6 +159,16 @@ if [ ! -f "$WS_CLAUDE" ]; then
   echo "  Created workspace CLAUDE.md"
 else
   echo "  Skipped (already exists)"
+  # An existing CLAUDE.md is the user's — never rewrite it. But a workspace that
+  # predates ARTIFACTS/ now has the directory and no rule pointing at it, and may
+  # still route plans to PROJECTS/plans/, which setup no longer creates. Say so
+  # once; the edit is theirs to make.
+  if ! grep -q "ARTIFACTS" "$WS_CLAUDE" 2>/dev/null; then
+    echo "  NOTE: your CLAUDE.md has no ARTIFACTS/ routing rule."
+    echo "        ARTIFACTS/ now holds records of completed work (tracked);"
+    echo "        plans live in INBOX/ (gitignored). PROJECTS/plans/ is retired."
+    echo "        Compare against: $SCRIPT_DIR/workspace-scaffold/CLAUDE.md.template"
+  fi
 fi
 
 # --- Step 4: Create Python venv and install dependencies ---
@@ -252,6 +265,12 @@ echo "  Linked sessions/history/todos → $CC_STATE_DIR"
 WS_GITIGNORE="$WORKSPACE/.gitignore"
 grep -qxF ".multiplai/cc-state/" "$WS_GITIGNORE" 2>/dev/null || echo ".multiplai/cc-state/" >> "$WS_GITIGNORE"
 grep -qxF ".multiplai/data/" "$WS_GITIGNORE" 2>/dev/null || echo ".multiplai/data/" >> "$WS_GITIGNORE"
+
+# INBOX/ is scratch, and the routing rules in CLAUDE.md.template tell both the
+# user and Claude so — "temporary and gitignored". That has to be true here or
+# the whole INBOX-vs-ARTIFACTS split is a claim the install does not honour:
+# plans routed to INBOX/ would be committed by the first `git add -A`.
+grep -qxF "INBOX/" "$WS_GITIGNORE" 2>/dev/null || echo "INBOX/" >> "$WS_GITIGNORE"
 
 # --- Step 6: Seed .claude.json (onboarding state) ---
 STEP=$((STEP + 1))

@@ -97,7 +97,9 @@ For **plugin development**, sideload a checkout instead with `claude --plugin-di
 
 ## The Workspace Model
 
-Setup creates a workspace with `INBOX/`, `PROJECTS/`, `RESOURCES/`, and the plugin's `.multiplai/` state directory. The key concept: **everything you work on is a project.**
+Setup creates a workspace with `INBOX/`, `PROJECTS/`, `RESOURCES/`, `ARTIFACTS/`, and the plugin's `.multiplai/` state directory. The key concept: **everything you work on is a project.**
+
+Two of those are easy to confuse. `RESOURCES/` is research about things *outside* your workspace; `ARTIFACTS/` is the record of work you actually did — what you measured, what you tried, and any Artifact page Claude published. `INBOX/` is scratch and is gitignored, so anything that must survive has to leave it.
 
 Projects aren't just code. A project is anything you have multiple sessions about:
 

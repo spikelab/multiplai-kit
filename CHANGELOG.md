@@ -15,6 +15,53 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **`setup.sh` creates `ARTIFACTS/` in the workspace.** It holds the record of
+  work you did — an investigation, a set of measurements, benchmark data, a
+  published Artifact page. It is tracked and committed, which is the difference
+  that matters: `INBOX/` is gitignored, so anything left there is one cleanup
+  away from gone.
+
+  The dividing line against `RESOURCES/` is who produced the subject matter.
+  Research about something external stays in `RESOURCES/`. A record of work done
+  in the workspace goes to `ARTIFACTS/`.
+
+  Existing workspaces get the directory on the next `./setup.sh` — `mkdir -p` is
+  idempotent and nothing is moved for you. They do **not** get the routing rules
+  that explain it: setup never overwrites a `CLAUDE.md` you already have. It now
+  prints a notice when yours has no `ARTIFACTS/` rule, pointing at the template
+  to diff against. The edit is yours to make.
+
+### Fixed
+
+- **`setup.sh` now adds `INBOX/` to the workspace `.gitignore`.** It only ever
+  wrote `.multiplai/cc-state/` and `.multiplai/data/`, so on a fresh install
+  `INBOX/` was tracked — while the workspace `CLAUDE.md` told both you and Claude
+  it was "temporary and gitignored". Every plan routed there would have been
+  committed by the first `git add -A`, which is the opposite of the documented
+  contract and the premise the `INBOX/`-vs-`ARTIFACTS/` split rests on.
+
+  Existing workspaces pick the rule up on the next `./setup.sh`. If you have
+  already committed files under `INBOX/`, the new rule does not untrack them —
+  `git rm -r --cached INBOX/` does.
+
+- **Published Artifacts route to `ARTIFACTS/`, not `INBOX/`.** The workspace
+  `CLAUDE.md` template now says so directly. The file Claude writes before
+  calling the Artifact tool is the source behind a URL someone may hold for
+  months; parking it in a gitignored scratch directory means losing the ability
+  to update that URL later.
+
+### Removed
+
+- **`setup.sh` no longer creates `PROJECTS/plans/`.** Nothing in the kit ever
+  read it, wrote to it, or referred to it — the sole mention in the repo was the
+  `mkdir` that created it. Plans now live in `INBOX/` and are disposable by
+  design: a plan either materialises into work or goes stale, and what is worth
+  keeping afterwards is the record of the work, in `ARTIFACTS/`.
+
+  An existing `PROJECTS/plans/` is left alone. Delete it yourself if it is empty.
+
 ### Security
 
 - **The destructive-command guard closes four bypass classes** in

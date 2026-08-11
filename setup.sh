@@ -127,7 +127,10 @@ STEP=1
 echo "[$STEP/$TOTAL_STEPS] Creating workspace directories..."
 # .multiplai/ is the multiplai-context plugin's state root: memory (you edit),
 # diary/learnings/now (auto-captured), data (runtime: catalogs, logs, plugin venv).
-mkdir -p "$WORKSPACE"/{INBOX,PROJECTS,PROJECTS/plans,RESOURCES,.multiplai/{memory,diary,learnings,now,data}}
+# ARTIFACTS/ is where a finished piece of work is kept — an investigation, a
+# measurement, a published artifact. INBOX/ is scratch and is gitignored, so
+# anything that must survive has to leave it.
+mkdir -p "$WORKSPACE"/{INBOX,PROJECTS,RESOURCES,ARTIFACTS,.multiplai/{memory,diary,learnings,now,data}}
 
 # --- Step 2: Copy memory templates ---
 STEP=$((STEP + 1))

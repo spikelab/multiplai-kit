@@ -304,14 +304,17 @@ def test_auth_hook_still_mints_inside_the_skew_window(session):
 
 
 @pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
-def test_hook_is_inert_in_a_child_session(session, hook):
-    """SDK-spawned children (multiplai-core sets _HOOK_CHILD_SESSION) inherit
-    the parent's credential store; they must not mint, store, or stall."""
-    session.write_sidecar("acme", "0")  # stale — would mint in a real session
+def test_child_sessions_still_refresh_tokens(session, hook):
+    """No _HOOK_CHILD_SESSION skip here, deliberately: SDK children run git
+    and gh legitimately and need the freshness path, and both hooks are
+    already cheap on the common path (builtins guard / sidecar skip). The
+    child guard exists to stop recursive heavy work, and a stale token in a
+    child is real work to fix. Briefly shipped and reverted, 2026-08-10."""
+    session.write_sidecar("acme", "0")  # stale — a child must still renew
     result = session.run(hook, _HOOK_CHILD_SESSION="1")
     assert result.returncode == 0
-    assert session.mint_attempts == 0
-    assert session.gh_invocations == []
+    assert session.mint_attempts == 1
+    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
 
 
 @pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])

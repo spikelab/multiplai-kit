@@ -19,9 +19,12 @@
 # Denying every Bash call is a loud failure, deliberately. The alternative is
 # an unguarded session that looks normal.
 
-# Child session guard — skip for SDK-spawned sessions (multiplai-core sets
-# _HOOK_CHILD_SESSION on every SDK child), same as validate-syntax.sh.
-[ -n "${_HOOK_CHILD_SESSION:-}" ] && exit 0
+# Deliberately NO _HOOK_CHILD_SESSION skip here (unlike validate-syntax.sh).
+# That guard exists to stop recursive heavy work — LLM calls, drains — in
+# SDK-spawned children, not to disable a security control. This hook is the
+# only enforcement layer in bypass-permissions mode, and child sessions still
+# run Bash; skipping it would remove protection exactly where oversight is
+# lowest. Do not re-add it (briefly shipped and reverted, 2026-08-10).
 
 set -u
 

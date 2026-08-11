@@ -29,9 +29,6 @@
 # in the URL and no bespoke helper.
 
 [ -n "${GH_TOKEN_APP:-}" ] || exit 0
-# Child session guard — skip for SDK-spawned sessions (multiplai-core sets it;
-# the parent session's credential store is already populated and shared).
-[ -n "${_HOOK_CHILD_SESSION:-}" ] && exit 0
 
 set -uo pipefail
 

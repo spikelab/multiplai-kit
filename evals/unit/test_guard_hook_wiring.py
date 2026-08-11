@@ -125,8 +125,8 @@ class TestWrapperFailsClosed:
 
     def _run(self, config: Path, **extra_env) -> subprocess.CompletedProcess:
         env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config)}
-        # The suite itself may run inside an SDK child session; the wrapper's
-        # child-session guard must not make these tests pass vacuously.
+        # Deterministic regardless of where the suite runs; tests that care
+        # about the variable set it explicitly via extra_env.
         env.pop("_HOOK_CHILD_SESSION", None)
         env.update(extra_env)
         return subprocess.run(
@@ -157,14 +157,17 @@ class TestWrapperFailsClosed:
             "permissionDecisionReason"]
         assert "guard-destructive.log" in reason
 
-    def test_child_sessions_skip_the_wrapper_entirely(self, tmp_path):
-        """multiplai-core sets _HOOK_CHILD_SESSION on every SDK child; the kit
-        hooks honor it. No verdict, no deny — not even for a broken guard."""
+    def test_child_sessions_are_still_guarded(self, tmp_path):
+        """The _HOOK_CHILD_SESSION skip in validate-syntax.sh must NOT spread
+        here: that guard stops recursive heavy work in SDK children, and this
+        wrapper is a security control — child sessions still run Bash, with
+        the least oversight. Briefly shipped and reverted, 2026-08-10."""
         config = self._config_dir(tmp_path, "#!/bin/bash\nexit 127\n")
         result = self._run(config, _HOOK_CHILD_SESSION="1")
 
         assert result.returncode == 0
-        assert result.stdout.strip() == ""
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny"
 
     def test_silent_when_the_guard_allows(self, tmp_path):
         """No verdict on stdout is how PreToolUse says 'carry on'."""

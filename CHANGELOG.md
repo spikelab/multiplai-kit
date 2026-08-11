@@ -76,14 +76,6 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
-- **All four kit hook entry points now honor `_HOOK_CHILD_SESSION`.**
-  `validate-syntax.sh` already skipped SDK-spawned child sessions
-  (multiplai-core sets the variable on every SDK child);
-  `guard-destructive.sh`, `gh-app-auth.sh` and `gh-app-refresh.sh` now carry
-  the same one-line guard. Children share the parent's credential store and
-  run headless pipelines, so the skip removes a Python spawn per child Bash
-  call — and the coverage is uniform instead of accidental.
-
 - **`gh-app-auth.sh` no longer re-mints on every SessionStart.** SessionStart
   also fires on `resume` and after a compaction, when the token minted at the
   real session start is usually still live; the hook now runs the same

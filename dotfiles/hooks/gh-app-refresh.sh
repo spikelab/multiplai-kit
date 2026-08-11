@@ -43,9 +43,6 @@
 # negative.
 
 [ -n "${GH_TOKEN_APP:-}" ] || exit 0
-# Child session guard — skip for SDK-spawned sessions (multiplai-core sets it;
-# a builtin test, so the hot path stays fork-free).
-[ -n "${_HOOK_CHILD_SESSION:-}" ] && exit 0
 # bash-5 builtin clock, zero forks; /bin/bash 3.2 on a bare Mac has no
 # $EPOCHSECONDS, so the idiom falls back to one `date` fork there. Keep the
 # fallback as exactly this idiom — the zero-fork test knows it and no other.

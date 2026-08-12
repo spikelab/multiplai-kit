@@ -33,6 +33,18 @@ public repo has shipped without in-tree memory hooks from day one (see the
   prints a notice when yours has no `ARTIFACTS/` rule, pointing at the template
   to diff against. The edit is yours to make.
 
+### Changed
+
+- **The writing rules in `dotfiles/CLAUDE.md` now cover documents, not just
+  chat.** The scope line read "all console output". On a literal reading that
+  left out plans, reports, README and doc-site pages, commit bodies, PR
+  descriptions, and published Artifacts. Those are named explicitly now. The
+  closing line states the general case: if the user will read it, the rules
+  apply.
+
+  Three rules join the list. Never open with a correction or a revision note.
+  Never report what is good. Cut context that does not change a decision.
+
 ### Fixed
 
 - **`setup.sh` now adds `INBOX/` to the workspace `.gitignore`.** It only ever

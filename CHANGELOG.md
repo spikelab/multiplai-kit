@@ -65,6 +65,25 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **Context overflow is now handled by native autocompaction, not a hard stop.**
+  `dotfiles/settings.json` no longer sets `DISABLE_AUTO_COMPACT=1`; it sets
+  `"autoCompactEnabled": true` with `"autoCompactWindow": 400000`, and the
+  `checkpoint_hard_stop_tokens` plugin option is removed. Before this, a session
+  past 250K tokens refused new prompts until a manual `/clear` or `/compact` —
+  which also stalled overnight goal runs, with nobody there to hand off. Now the
+  multiplai-context handoff nudge stays advisory from its 200K default, and the
+  CLI compacts on its own near the 400K window (the actual trigger sits ~33K
+  below it: a 20K output reserve plus a 13K margin, per the binary formula the
+  plugin mirrors in `lib/checkpoint.py`).
+
+  The window is steered via the `autoCompactWindow` settings key on purpose,
+  not the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` env var. The plugin's nudge hook
+  detects only env-var steering (`autocompact_trigger_tokens()`), so with the
+  settings key it keeps nudging every 25K past 200K instead of going silent
+  until compaction is overdue. Both behaviours are wanted: advice from 200K,
+  enforcement near 400K. Verified against Claude Code 2.1.226, whose own
+  diagnostics list the settings key as a window source alongside the env var.
+
 - **The writing rules in `dotfiles/CLAUDE.md` now cover documents, not just
   chat.** The scope line read "all console output". On a literal reading that
   left out plans, reports, README and doc-site pages, commit bodies, PR

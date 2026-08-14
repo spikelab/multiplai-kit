@@ -174,6 +174,37 @@ To test the memory/lifecycle hooks, run them from the plugin repo (it has its ow
 
 The skill library ships as themed marketplace plugins (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`) developed in the marketplace repo (`multiplai-cc-mktplace`), not here. `dotfiles/skills/` is reserved for the user's own local skills: one directory per skill with a `SKILL.md` (frontmatter + prompt) and optionally `scripts/`, `references/`, or supporting `.md` files. The `/multiplai-context:*` skills live in the marketplace repo too.
 
+## Editing the Output Style
+
+`dotfiles/output-styles/clear-writing.md` holds the writing rules, and
+`"outputStyle": "Clear Writing"` in `dotfiles/settings.json` turns it on for
+every project. `CLAUDE_CONFIG_DIR` *is* `dotfiles/`, so the directory ships as
+`$CLAUDE_CONFIG_DIR/output-styles/` with no `setup.sh` change.
+
+**Why the rules live here and not in `dotfiles/CLAUDE.md`.** That file is read
+once, at session start. In a long session the rules end up hundreds of thousands
+of tokens back and the model drifts. An output style goes into the core system
+prompt *and* is re-stated every turn — the emitter builds
+`` `${t.name} output style is active. ${e.turnReminder ?? "Remember to follow the
+specific guidelines for this style."}` `` next to the other per-turn reminders.
+`dotfiles/CLAUDE.md` keeps two rules as a fallback and points here for the rest;
+don't re-add the full list there.
+
+**Three things to know before writing another one:**
+
+- **`keep-coding-instructions: true` is mandatory.** The gate is
+  `c === null || c.keepCodingInstructions === !0`, so a custom style *without*
+  it silently drops Claude Code's own software-engineering system prompt. All
+  three built-in styles set it.
+- **`turn-reminder` is not a frontmatter key.** Only `keep-coding-instructions`
+  and `force-for-plugin` are read from a custom style's frontmatter;
+  `turnReminder` is set on built-in styles only. A custom style always gets the
+  generic sentence, so the **name** is the only part of the reminder you control.
+  Name it so that sentence reads well.
+- **The setting takes the `name` from frontmatter, not the filename.** Styles are
+  keyed `[t.name]=t`. `clear-writing.md` declares `name: Clear Writing`, which is
+  why the setting says `"Clear Writing"`.
+
 ## Configuration
 
 `multiplai.conf` (at the kit project root, NOT in dotfiles/) sets the model/effort ceilings for hooks and the buildme / deep-research SDK pipelines, plus log level/retention and per-task model tiers. Changes take effect on next invocation. See the file for documentation on each setting.
@@ -200,7 +231,8 @@ Run the kit's unit tests after any change to live kit code:
 
 | File | Purpose |
 |------|---------|
-| `dotfiles/settings.json` | Registers the `validate-syntax` + `guard_destructive` hooks; `pluginConfigs["multiplai-context@multiplai"]`; statusline; permissions |
+| `dotfiles/settings.json` | Registers the `validate-syntax` + `guard_destructive` hooks; selects the `Clear Writing` output style; `pluginConfigs["multiplai-context@multiplai"]`; statusline; permissions |
+| `dotfiles/output-styles/clear-writing.md` | The writing rules — in the core system prompt and re-stated every turn, which `dotfiles/CLAUDE.md` cannot do |
 | `multiplai.conf` | Kit config (model/effort ceiling for hooks + SDK pipelines, per-task tiers) — at project root, NOT in dotfiles/ |
 | `dotfiles/hooks/validate-syntax.sh` | Runtime hook (PostToolUse Write\|Edit) — YAML/JSON syntax validation |
 | `dotfiles/hooks/guard-destructive.sh` | The registered PreToolUse(Bash) entry point — runs the guard and denies if it could not run |

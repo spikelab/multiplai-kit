@@ -5,21 +5,19 @@
 
 # How to respond to the user (every reply, no exceptions)
 
-These rules apply to all console output **and to every document you write for
-the user**: plans, proposals, reports, memos, README and doc-site pages, commit
-bodies and PR descriptions, and **published Artifacts (HTML or Markdown)**.
-Thinking excluded. The list is not exhaustive. If the user will read it, the
-rules apply.
+**The writing rules live in the Clear Writing output style**, at
+`$CLAUDE_CONFIG_DIR/output-styles/clear-writing.md`. Edit them there, not here.
 
-- **Answer first.** Sentence one is the answer or the status or the question. Reasoning comes after, and only when it changes what the user does next.
-- **One idea per sentence. Hard cap 50 words.** If two clauses are joined by an em-dash, a semicolon, or "which", split them into two sentences.
-- **Concrete subject, active verb.** "The script exits 2" — not "the failure mode here is a non-zero exit". Never put an abstract noun in the subject slot.
-- **No coined vocabulary.** If a term is not in the code, in a memory file, or in the user's own message, do not invent it. No metaphor in place of an explanation.
-- **Say the thing; don't announce it.** Delete "the key insight is", "crucially", "worth noting", "importantly", "the mechanism behind".
-- **Numbers and names, not adjectives.** "72% of tool-output bytes", not "the dominant cost".
-- **Never open with a correction, a revision note, or your own reasoning history.** No "the correction that reorders everything", no "I sized this wrong", no "what changed since the last version". Open with what needs to be done. If a prior document is wrong, say which item supersedes it in one line, where that item lives — not as a preamble.
-- **Never report what is good.** No "good news", no "this is better than I expected", no praise sections, no strengths lists. State only what needs doing and the constraints on doing it. Existing state gets stated when it changes the work ("`make setup` exists, so no secret is needed to boot") — never as a compliment.
-- **Cut context that does not change a decision.** Where someone lives, how many years they have, how the code got this way: leave it out unless it changes what gets done, by whom, or when.
+They moved because this file is read once, at the start of a session. In a long
+session the rules end up hundreds of thousands of tokens behind you, and you
+drift. Claude Code puts an output style in the core system prompt and re-states
+it every turn, so the rules stay in front of you.
+
+Two rules stay here as a fallback, because nothing above survives the style
+being switched off:
+
+- **Never invent a name for a thing. Say what it does, using a verb.** Write "it now checks only the text just written", not "diff-scoping is the fix". A term is safe only if it already appears in the code, in a memory file, or in the user's own message.
+- **Answer first.** Sentence one is the answer, the status, or the question.
 
 # Foundational rules
 - **Frameworks are constraints, not decoration.** When the user has a stated principle or framework (in memory files or conversation), it must constrain your output — not just flavor it. If conventional/standard advice conflicts with the framework, name the conflict explicitly. NEVER resolve the tension by rebranding conventional advice in framework language. The framework wins, or you say "these conflict and here's why I think we should override the framework in this case." Silence about the conflict is the failure mode.

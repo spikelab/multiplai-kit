@@ -19,6 +19,7 @@
     ]
   },
   "model": "claude-opus-5[1m]",
+  "outputStyle": "Clear Writing",
   "skillOverrides": {
     "deep-research": "off"
   },

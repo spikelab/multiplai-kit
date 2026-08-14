@@ -37,6 +37,29 @@ public repo has shipped without in-tree memory hooks from day one (see the
   marketplace. Land marketplace PR #208 first — enabling a plugin the
   marketplace does not publish resolves to nothing.
 
+- **Container launches carry `--add-host host.docker.internal:host-gateway`,
+  which is what makes them work on native Linux (docker-ce).** In-container
+  code addresses the host as `host.docker.internal` — the SSH build bridge,
+  `CLAUDE_CODE_IDE_HOST_OVERRIDE`, an `ANTHROPIC_BASE_URL` proxy. Docker
+  Desktop and OrbStack resolve that name natively; native Linux docker-ce does
+  not, so on a Linux host every one of those silently failed to resolve. The
+  flag is passed unconditionally rather than gated on `uname`: `host-gateway`
+  is a daemon-side special value (Docker 20.10+) that macOS engines accept and
+  resolve to the same place their built-in alias points, so one argv works
+  everywhere. Applies to interactive session containers and hub driver
+  containers; the drain container receives none of the env that could address
+  the host and is unchanged.
+
+- **CI now exercises the two install rungs end-to-end on Linux.** One job runs
+  `./setup.sh` against a throwaway workspace on a runner with real docker —
+  the pinned `multiplai-container` image builds for real — then launches the
+  built image through `./claude.sh --shell` on docker-ce, and separately
+  asserts the composed `docker run` argv (stub docker) carries the host alias
+  and skip-permissions only where the container is the sandbox. A second job
+  removes docker from the runner and verifies the bare rung: `setup.sh` exits
+  0, `claude.sh` launches without `--dangerously-skip-permissions`, and a
+  launch with no GitHub config prints nothing about GitHub.
+
 - **The writing rules moved into a Claude Code output style, and are now on by
   default.** New file: `dotfiles/output-styles/clear-writing.md`, selected by
   `"outputStyle": "Clear Writing"` in `dotfiles/settings.json`.
@@ -129,6 +152,25 @@ public repo has shipped without in-tree memory hooks from day one (see the
   allowlist or in the pack install; that is separate work and is not attempted
   here.
 
+- **Bare mode (no Docker) is presented as what it is: a supported rung of the
+  install ladder, not a failure state.** `setup.sh` and `claude.sh` framed the
+  no-Docker path as a WARNING with degraded-mode language, which told a Linux
+  user without Docker that their supported configuration was broken. Both now
+  say which mode the install/launch is (claude directly on the host, permission
+  prompts on — the prompts are the boundary there) and how to add the container
+  sandbox later. The behaviour is unchanged: permission prompts stay on in bare
+  mode, and container mode remains the default when Docker is present.
+
+- **Launch-time GitHub warnings only fire for misconfiguration, never for
+  absence.** A GitHub credential is optional, but every launch without one
+  warned about it. Now a launch with nothing GitHub-related configured — no
+  `GH_TOKEN`, `GH_TOKEN_APP`, or `GH_TOKEN_KEYCHAIN` in the environment or any
+  env file — prints nothing. Half-configured states keep their noise: a
+  `GH_TOKEN_KEYCHAIN` item that does not resolve warns (naming the item, and
+  noting that Keychain lookups fail over SSH where the login keychain is
+  locked), and a `GH_TOKEN_KEYCHAIN` set on a non-Mac host warns that there is
+  no Keychain to probe.
+
 - **Context overflow is now handled by native autocompaction, not a hard stop.**
   `dotfiles/settings.json` no longer sets `DISABLE_AUTO_COMPACT=1`; it sets
   `"autoCompactEnabled": true` with `"autoCompactWindow": 400000`, and the
@@ -188,6 +230,14 @@ public repo has shipped without in-tree memory hooks from day one (see the
   none of it can run. The skill's own `SKILL.md` documents its operation, and
   its description already names those tasks, so prompt routing still finds it.
   The always-loaded file keeps only the mid-turn pointer (see *Changed*).
+
+- **The implicit `gh-token` Keychain probe.** The launcher used to query macOS
+  Keychain for a default item named `gh-token` even when `GH_TOKEN_KEYCHAIN`
+  was never set — an invisible lookup that also made the no-config launch warn
+  about a Keychain item nobody had created. The Keychain is now probed only
+  when `GH_TOKEN_KEYCHAIN` names an item. **Migration:** if you relied on the
+  default, set `GH_TOKEN_KEYCHAIN=gh-token` in `.env` to keep the old
+  behaviour. Keychain support itself is unchanged.
 
 - **`setup.sh` no longer creates `PROJECTS/plans/`.** Nothing in the kit ever
   read it, wrote to it, or referred to it — the sole mention in the repo was the

@@ -75,6 +75,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
   must carry the session id, or a commissioned session hangs at start) still
   holds underneath.
 
+- **`dotfiles/CLAUDE.md` no longer advertises the `host-browser` skill.** That
+  skill drives the real logged-in Chrome on the macOS host over the SSH
+  bridge — a deliberate, controlled container escape — so it must be an
+  explicit opt-in, never something every session is steered toward by
+  always-loaded prose. The generic `WebFetch`-failure guidance stays: a
+  403/429 is a bot wall a verbatim retry never clears (drop the URL and say
+  so); on 404 fix the URL; on 303 re-fetch the redirect target. The
+  browser-specific routing (block classes, `ab` quick path) moved into the
+  skill's own SKILL.md in the marketplace repo, which loads only where the
+  `multiplai-media` pack is installed.
+
 - **Context overflow is now handled by native autocompaction, not a hard stop.**
   `dotfiles/settings.json` no longer sets `DISABLE_AUTO_COMPACT=1`; it sets
   `"autoCompactEnabled": true` with `"autoCompactWindow": 400000`, and the

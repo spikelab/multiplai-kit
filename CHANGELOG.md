@@ -17,6 +17,36 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **The writing rules moved into a Claude Code output style, and are now on by
+  default.** New file: `dotfiles/output-styles/clear-writing.md`, selected by
+  `"outputStyle": "Clear Writing"` in `dotfiles/settings.json`.
+
+  They moved because `CLAUDE.md` is read once, at the start of a session. In a
+  long session the rules end up hundreds of thousands of tokens behind, and
+  Claude drifts back to dense, jargon-heavy replies. Claude Code puts an output
+  style in the core system prompt and re-states it every turn, so the rules stay
+  in front of the model. Verified in the CLI binary: the style emitter produces
+  `"<name> output style is active. Remember to follow the specific guidelines
+  for this style."` alongside the other per-turn reminders.
+
+  The rules themselves are the same ones, reordered by how often they break, and
+  with one rewritten. "No coined vocabulary" said only what to avoid; it now says
+  what to do instead — never invent a name for a thing, say what it does with a
+  verb, and describe the thing every time even when that costs more words. It
+  carries measured evidence that brevity is not the goal: every reply flagged as
+  unreadable was *shorter* than the 11-word median.
+
+  `dotfiles/CLAUDE.md` keeps two of the rules as a fallback and points at the
+  style for the rest, so the section cannot drift out of sync with it.
+
+  **If you write your own output style, set `keep-coding-instructions: true` in
+  its frontmatter.** Without it Claude Code drops its own software-engineering
+  system prompt — the gate is `c === null || c.keepCodingInstructions === !0`.
+  All three built-in styles set it. This one does too.
+
+  To turn it off, run `/output-style` and pick another, or drop the
+  `outputStyle` key from `dotfiles/settings.json`.
+
 - **`setup.sh` creates `ARTIFACTS/` in the workspace.** It holds the record of
   work you did — an investigation, a set of measurements, benchmark data, a
   published Artifact page. It is tracked and committed, which is the difference

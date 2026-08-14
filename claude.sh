@@ -5,7 +5,7 @@
 #   --local             Bare mode: CLAUDE_CONFIG_DIR, no container, no skip-permissions
 #   (inside container)  Bare mode: --dangerously-skip-permissions (container IS the sandbox)
 #   (Docker available)  Container mode (default)
-#   (no Docker)         Fallback bare mode with warning, no skip-permissions
+#   (no Docker)         Bare mode (supported), no skip-permissions
 #
 # Additional flags:
 #   --profile <name>    Load env.<name> for git identity + GH token (default: .env)
@@ -450,7 +450,6 @@ _gh_from_shell() {   # is NAME's current value the launching shell's?
     return 1
 }
 
-GH_TOKEN_KEY="${GH_TOKEN_KEYCHAIN:-gh-token}"
 GH_AUTH_MODE=pat
 
 if [ -n "${GH_TOKEN_APP:-}" ]; then
@@ -521,26 +520,33 @@ if [ "$GH_AUTH_MODE" = app ]; then
     unset GH_TOKEN
     export GH_TOKEN_APP
 else
-    # PAT mode — exactly the previous behaviour. The Keychain lookup is macOS-only
-    # (`security`); on Linux we skip it and point at the env var instead of telling
-    # the user to fix a Keychain that can't exist there.
-    if [ -z "${GH_TOKEN:-}" ] && [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
-        # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
-        # docker resolves from this process's ENVIRONMENT, so a plain shell variable
-        # would arrive as nothing at all.
-        # `${USER:-…}`, not `$USER`: this runs under `set -u`, and USER is not
-        # guaranteed — a launch from cron, an SSH forced command, or any other
-        # non-login context has an empty environment. Dying with "USER: unbound
-        # variable" on the way to an optional Keychain lookup is a bad trade.
-        GH_TOKEN=$(security find-generic-password -a "${USER:-$(id -un)}" -s "$GH_TOKEN_KEY" -w 2>/dev/null || true)
-        export GH_TOKEN
-    fi
-    if [ -z "${GH_TOKEN:-}" ]; then
-        if [ "$(uname)" = "Darwin" ]; then
-            echo "Warning: No '$GH_TOKEN_KEY' in Keychain and \$GH_TOKEN unset. GitHub CLI will not be authenticated."
-            echo "         (Or set GH_TOKEN_APP=<app> to use a GitHub App — see docs/PROFILES.md.)"
+    # PAT mode. The Keychain is probed only when GH_TOKEN_KEYCHAIN names an
+    # item — there is no implicit default probe. (The launcher used to try a
+    # default item called `gh-token` even when the variable was never set;
+    # set GH_TOKEN_KEYCHAIN=gh-token to keep that behaviour.)
+    #
+    # Noise policy: a GitHub credential is OPTIONAL, so plain absence — no
+    # GH_TOKEN, no GH_TOKEN_APP, no GH_TOKEN_KEYCHAIN anywhere — launches
+    # silently. A HALF-configured state still warns: a Keychain name that does
+    # not resolve is a misconfiguration worth naming; absence is not.
+    if [ -z "${GH_TOKEN:-}" ] && [ -n "${GH_TOKEN_KEYCHAIN:-}" ]; then
+        if [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
+            # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
+            # docker resolves from this process's ENVIRONMENT, so a plain shell variable
+            # would arrive as nothing at all.
+            # `${USER:-…}`, not `$USER`: this runs under `set -u`, and USER is not
+            # guaranteed — a launch from cron, an SSH forced command, or any other
+            # non-login context has an empty environment. Dying with "USER: unbound
+            # variable" on the way to an optional Keychain lookup is a bad trade.
+            GH_TOKEN=$(security find-generic-password -a "${USER:-$(id -un)}" -s "$GH_TOKEN_KEYCHAIN" -w 2>/dev/null || true)
+            export GH_TOKEN
+            if [ -z "${GH_TOKEN:-}" ]; then
+                echo "Warning: Keychain item '$GH_TOKEN_KEYCHAIN' (named by GH_TOKEN_KEYCHAIN) did not resolve — GitHub CLI will not be authenticated."
+                echo "         Keychain lookups also fail over SSH (the login keychain is locked there): use GH_TOKEN in .env, or GH_TOKEN_APP. See docs/PROFILES.md."
+            fi
         else
-            echo "Warning: \$GH_TOKEN not set. GitHub CLI will not be authenticated (set GH_TOKEN in .env or your profile)."
+            echo "Warning: GH_TOKEN_KEYCHAIN='$GH_TOKEN_KEYCHAIN' is set, but Keychain lookups need macOS ('security'). GitHub CLI will not be authenticated."
+            echo "         On this host set GH_TOKEN in .env or env.<profile> instead."
         fi
     fi
 fi
@@ -556,11 +562,16 @@ if [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/n
     exec_bare skip-permissions
 fi
 
-# --- Docker not available? Warn and fall back to bare mode ---
+# --- No Docker? Bare mode — a supported way to run, not a failure state ---
+# The install ladder has two rungs: bare mode (no container; claude runs
+# directly on this host, permission prompts on — they are the boundary here)
+# and container mode (adds the sandbox, which is what makes skip-permissions
+# safe). No Docker selects the first rung; say which mode this launch is and
+# how to add the sandbox later, without dressing a supported choice up as an
+# error.
 if ! command -v docker &>/dev/null; then
-    echo "WARNING: Docker not found — running without container sandbox."
-    echo "  Host filesystem is NOT isolated. Permission prompts are active."
-    echo "  Install Docker and re-run ./setup.sh to build the sandbox image."
+    echo "[claude] Bare mode (no Docker): claude runs directly on this host; permission prompts stay on."
+    echo "         To add the container sandbox later: install Docker, then re-run ./setup.sh."
     echo ""
     exec_bare
 fi
@@ -624,6 +635,22 @@ case "$MULTIPLAI_NET" in
         exit 1
         ;;
 esac
+
+# --- Host alias: host.docker.internal must resolve on every Docker engine ---
+#
+# `host.docker.internal` is how in-container code addresses the host: the SSH
+# build bridge, CLAUDE_CODE_IDE_HOST_OVERRIDE, an ANTHROPIC_BASE_URL proxy.
+# Docker Desktop and OrbStack resolve the name natively, but native Linux
+# docker-ce does not — there the name only exists when the run carries
+# `--add-host host.docker.internal:host-gateway` (`host-gateway` is a special
+# value the daemon replaces with the host's gateway IP; supported since
+# Docker 20.10). Passed unconditionally rather than gated on `uname`: on
+# macOS engines the flag is accepted and writes an /etc/hosts entry pointing
+# at the same place the built-in resolution goes, so one argv works
+# everywhere instead of forking per platform. Applies to the containers whose
+# code may address the host (interactive sessions and hub drivers); the drain
+# container gets none of the env that could point there, so it stays as-is.
+HOST_ALIAS_ARGS=(--add-host host.docker.internal:host-gateway)
 
 # --- Ensure kit-venv volume is agent-writable ---
 # New Docker named volumes are root-owned. The venv-sync entrypoint runs as
@@ -926,6 +953,7 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
         --name "$DRV_NAME" \
         --hostname "$DRV_NAME" \
         --workdir "$DRV_PROJECT_DIR" \
+        "${HOST_ALIAS_ARGS[@]}" \
         "${MOUNTS[@]}" \
         "${ENV_ARGS[@]}" \
         -e MULTIPLAI_DRIVER_TOKEN \
@@ -1463,6 +1491,7 @@ while :; do
         --name "$CONTAINER_NAME" \
         --hostname "$CONTAINER_NAME" \
         --workdir "$WORKDIR_ARG" \
+        "${HOST_ALIAS_ARGS[@]}" \
         "${MOUNTS[@]}" \
         "${SSH_MOUNT[@]+"${SSH_MOUNT[@]}"}" \
         "${ENV_ARGS[@]}" \

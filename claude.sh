@@ -570,8 +570,10 @@ fi
 # how to add the sandbox later, without dressing a supported choice up as an
 # error.
 if ! command -v docker &>/dev/null; then
-    echo "[claude] Bare mode (no Docker): claude runs directly on this host; permission prompts stay on."
-    echo "         To add the container sandbox later: install Docker, then re-run ./setup.sh."
+    echo "[claude] Bare mode (no Docker): claude runs directly on this host, with your"
+    echo "         whole filesystem in reach. Permission prompts stay on and are the only"
+    echo "         thing standing between a tool call and any file you can write."
+    echo "         Container mode bounds that reach. To add it: install Docker, then re-run ./setup.sh."
     echo ""
     exec_bare
 fi

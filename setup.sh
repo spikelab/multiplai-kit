@@ -108,14 +108,17 @@ echo ""
 # claude runs directly on this host with permission prompts on (the prompts are
 # the boundary there). Container mode is the next rung up — it adds the sandbox,
 # which is what makes skip-permissions safe. Say which rung this install is;
-# don't dress a supported configuration up as a failure.
+# don't dress a supported configuration up as a failure — and say what the next
+# rung buys, or the reader has no basis for choosing between them.
 if ! $HAS_DOCKER; then
   echo "Docker not found or not running — setting up for bare mode."
   echo ""
   echo "  Bare mode is a supported way to run the kit: ./claude.sh launches"
-  echo "  Claude Code directly on this host, with permission prompts on."
+  echo "  Claude Code directly on this host, with your whole filesystem in reach."
+  echo "  Permission prompts stay on and are the only boundary there is."
   echo ""
-  echo "  Container mode adds a sandbox around each session. To move up to it:"
+  echo "  Container mode adds a sandbox that bounds what a session can touch."
+  echo "  To move up to it:"
   echo "    1. Install Docker"
   echo "    2. Re-run ./setup.sh (it fetches container/ and builds the image)"
   echo ""
@@ -468,9 +471,9 @@ echo ""
 if $HAS_DOCKER; then
   echo "Run ./claude.sh to start Claude Code in a container."
 else
-  echo "Run ./claude.sh to start Claude Code in bare mode (directly on this host,"
-  echo "permission prompts on). To add the container sandbox later: install Docker"
-  echo "and re-run ./setup.sh."
+  echo "Run ./claude.sh to start Claude Code in bare mode: directly on this host,"
+  echo "whole filesystem in reach, permission prompts the only boundary. To add the"
+  echo "container sandbox later: install Docker and re-run ./setup.sh."
 fi
 if ! git -C "$WORKSPACE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo ""

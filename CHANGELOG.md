@@ -172,10 +172,13 @@ public repo has shipped without in-tree memory hooks from day one (see the
   install ladder, not a failure state.** `setup.sh` and `claude.sh` framed the
   no-Docker path as a WARNING with degraded-mode language, which told a Linux
   user without Docker that their supported configuration was broken. Both now
-  say which mode the install/launch is (claude directly on the host, permission
-  prompts on — the prompts are the boundary there) and how to add the container
-  sandbox later. The behaviour is unchanged: permission prompts stay on in bare
-  mode, and container mode remains the default when Docker is present.
+  say which mode the install/launch is and how to add the container sandbox
+  later. They also still say what the rung *costs*: claude runs with your whole
+  filesystem in reach, and the permission prompts are the only boundary there
+  is — which is the one fact a reader needs to choose between the rungs, since
+  it is exactly what the container rung changes. The behaviour is unchanged:
+  permission prompts stay on in bare mode, and container mode remains the
+  default when Docker is present.
 
 - **Launch-time GitHub warnings only fire for misconfiguration, never for
   absence.** A GitHub credential is optional, but every launch without one

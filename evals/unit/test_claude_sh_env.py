@@ -37,6 +37,11 @@ import pytest
 KIT_ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = KIT_ROOT / "claude.sh"
 
+# Two contracts live in here — `image` exits 0, and a `run` carrying
+# --entrypoint is the venv-ownership prep call to ignore. A verbatim copy is
+# written by the "Composed docker argv" step in .github/workflows/ci.yml (that
+# one runs on a throwaway runner with no checkout-relative path to source, so
+# it cannot share this text): keep the two in sync.
 DOCKER_STUB = """\
 #!/bin/bash
 case "$1" in

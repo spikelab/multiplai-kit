@@ -53,9 +53,12 @@ public repo has shipped without in-tree memory hooks from day one (see the
 - **CI now exercises the two install rungs end-to-end on Linux.** One job runs
   `./setup.sh` against a throwaway workspace on a runner with real docker —
   the pinned `multiplai-container` image builds for real — then launches the
-  built image through `./claude.sh --shell` on docker-ce, and separately
-  asserts the composed `docker run` argv (stub docker) carries the host alias
-  and skip-permissions only where the container is the sandbox. A second job
+  built image through `./claude.sh --shell` on docker-ce and resolves
+  `host.docker.internal` inside it, which is the one assertion only a real
+  daemon can settle. It separately asserts the composed `docker run` argv
+  (stub docker) carries the host alias, on the flag rather than merely
+  somewhere in the line, and skip-permissions only where the container is the
+  sandbox. A second job
   removes docker from the runner and verifies the bare rung: `setup.sh` exits
   0, `claude.sh` launches without `--dangerously-skip-permissions`, and a
   launch with no GitHub config prints nothing about GitHub.

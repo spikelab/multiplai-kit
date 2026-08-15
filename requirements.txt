@@ -10,14 +10,17 @@ pyyaml                  # JSON/YAML validation in validate-syntax.sh
 pytest
 
 # Model access for the plugin skills (host-injected inside Claude Code; pinned
-# here so the skills also run from the plain venv). >=0.2.116: the hub's driver
-# runner (multiplai-gui ADR 0002) needs the init system message to carry the
-# session id — on 0.1.x it never does, so commissioned sessions hang at start
-# and die on the init timeout. An already-provisioned venv volume holding 0.1.x
-# "satisfies" a bare requirement and never upgrades; editing this file triggers
-# the re-sync, and the floor makes that sync actually upgrade. 0.2.116 is the
-# version the docker e2e was verified against, not necessarily the minimal fix.
-claude-agent-sdk>=0.2.116
+# here so the skills also run from the plain venv). >=0.2.139: ClaudeAgentOptions
+# must carry `thinking`, which multiplai-core's run_agent forwards
+# unconditionally — an older SDK raises TypeError on every call that sets it, and
+# the plugin skills set it. The earlier >=0.2.116 reason still holds underneath:
+# the hub's driver runner (multiplai-gui ADR 0002) needs the init system message
+# to carry the session id — on 0.1.x it never does, so commissioned sessions hang
+# at start and die on the init timeout. An already-provisioned venv volume
+# holding an older release "satisfies" a bare requirement and never upgrades;
+# editing this file triggers the re-sync, and the floor makes that sync actually
+# upgrade.
+claude-agent-sdk>=0.2.139
 
 # Driver-mode runner (multiplai-gui hub, ADR 0002): WS server the hub proxies
 # session frames through. >=14 for the modern asyncio API.

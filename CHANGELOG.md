@@ -65,6 +65,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The kit venv now requires `claude-agent-sdk>=0.2.139` (was `>=0.2.116`).**
+  `multiplai-core`'s `run_agent` forwards a `thinking` setting into
+  `ClaudeAgentOptions`, and an SDK without that field raises `TypeError` on
+  every call that sets it — which the plugin skills now do. A `git pull &&
+  ./setup.sh` re-syncs the venv and picks up a new enough SDK. If you run the
+  skills from a venv you provisioned by hand, upgrade it or they will fail at
+  the first model call. The earlier reason for `>=0.2.116` (the init message
+  must carry the session id, or a commissioned session hangs at start) still
+  holds underneath.
+
 - **Context overflow is now handled by native autocompaction, not a hard stop.**
   `dotfiles/settings.json` no longer sets `DISABLE_AUTO_COMPACT=1`; it sets
   `"autoCompactEnabled": true` with `"autoCompactWindow": 400000`, and the

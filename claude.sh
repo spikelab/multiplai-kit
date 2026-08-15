@@ -530,7 +530,18 @@ else
     # silently. A HALF-configured state still warns: a Keychain name that does
     # not resolve is a misconfiguration worth naming; absence is not.
     if [ -z "${GH_TOKEN:-}" ] && [ -n "${GH_TOKEN_KEYCHAIN:-}" ]; then
-        if [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
+        # Two failure shapes, two messages. They used to share one branch
+        # (`Darwin` AND `security`), which told a Mac with a trimmed PATH — a
+        # cron launch, an SSH forced command — that Keychain lookups "need
+        # macOS", on macOS. A diagnosis that contradicts the host is worse than
+        # none: it sends the reader looking for the wrong problem.
+        if [ "$(uname)" != "Darwin" ]; then
+            echo "Warning: GH_TOKEN_KEYCHAIN='$GH_TOKEN_KEYCHAIN' is set, but the Keychain exists only on macOS and this host is $(uname). GitHub CLI will not be authenticated."
+            echo "         On this host set GH_TOKEN in .env or env.<profile> instead."
+        elif ! command -v security >/dev/null 2>&1; then
+            echo "Warning: GH_TOKEN_KEYCHAIN='$GH_TOKEN_KEYCHAIN' is set, but 'security' is not on PATH, so the Keychain cannot be read. GitHub CLI will not be authenticated."
+            echo "         This is macOS, so the tool exists — the launch inherited a trimmed PATH (cron and SSH forced commands both do). Put /usr/bin back on PATH, or set GH_TOKEN in .env."
+        else
             # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
             # docker resolves from this process's ENVIRONMENT, so a plain shell variable
             # would arrive as nothing at all.
@@ -544,9 +555,38 @@ else
                 echo "Warning: Keychain item '$GH_TOKEN_KEYCHAIN' (named by GH_TOKEN_KEYCHAIN) did not resolve — GitHub CLI will not be authenticated."
                 echo "         Keychain lookups also fail over SSH (the login keychain is locked there): use GH_TOKEN in .env, or GH_TOKEN_APP. See docs/PROFILES.md."
             fi
-        else
-            echo "Warning: GH_TOKEN_KEYCHAIN='$GH_TOKEN_KEYCHAIN' is set, but Keychain lookups need macOS ('security'). GitHub CLI will not be authenticated."
-            echo "         On this host set GH_TOKEN in .env or env.<profile> instead."
+        fi
+    fi
+
+    # --- One-time notice for anyone the removal above just un-authenticated ---
+    #
+    # Dropping the implicit probe is silent by construction, and the new
+    # "plain absence launches quietly" rule makes it doubly so: a user whose
+    # whole setup was `security add-generic-password -s gh-token …` had a
+    # working token yesterday and gets nothing today, with the launcher saying
+    # nothing at all. The first symptom is `gh` failing to authenticate, hours
+    # later, with a `git pull` as the only cause — the exact "silent winner"
+    # failure the App-vs-PAT block above refuses to allow.
+    #
+    # So: look for the item ONCE per host, and only when nothing GitHub is
+    # configured (a configured user is unaffected). This reads no secret — no
+    # `-w`, so `security` prints attributes, never the password — and exports
+    # nothing. Implicit auth stays gone; only the explanation is added.
+    #
+    # The marker is written before the lookup, not after, so this costs exactly
+    # one `security` call per host for all time. Someone who creates a
+    # `gh-token` item AFTER this point is doing it in the new world, where the
+    # documented way to use it is GH_TOKEN_KEYCHAIN.
+    _GH_KEYCHAIN_NOTICE_MARK="$HOME/.claude-container/gh-token-keychain-notice"
+    if [ -z "${GH_TOKEN:-}" ] && [ -z "${GH_TOKEN_KEYCHAIN:-}" ] \
+       && [ ! -e "$_GH_KEYCHAIN_NOTICE_MARK" ] \
+       && [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
+        mkdir -p "$(dirname "$_GH_KEYCHAIN_NOTICE_MARK")" 2>/dev/null || true
+        : > "$_GH_KEYCHAIN_NOTICE_MARK" 2>/dev/null || true
+        if security find-generic-password -a "${USER:-$(id -un)}" -s gh-token >/dev/null 2>&1; then
+            echo "Notice: a Keychain item named 'gh-token' exists, and this launcher no longer reads it on its own."
+            echo "        It used to. If GitHub CLI worked in your sessions before and stops now, that removal is why."
+            echo "        Fix: add GH_TOKEN_KEYCHAIN=gh-token to .env (or env.<profile>). Shown once."
         fi
     fi
 fi

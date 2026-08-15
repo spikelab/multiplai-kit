@@ -131,7 +131,11 @@ security add-generic-password \
 To update it later, add `-U` to overwrite the existing entry. If the named
 entry does not resolve, the launcher warns and `gh` is simply unauthenticated
 for that session. The Keychain is only probed when `GH_TOKEN_KEYCHAIN` names an
-item — with no GitHub auth configured at all, the launcher stays silent.
+item — with no GitHub auth configured at all, the launcher stays silent. One
+exception, and only on macOS: if an item named `gh-token` exists while
+`GH_TOKEN_KEYCHAIN` is unset, the launcher says so once (the launcher used to
+read that item implicitly, and no longer does). Set
+`GH_TOKEN_KEYCHAIN="gh-token"` to use it.
 
 > **Keychain lookups fail from SSH sessions** — the login keychain is locked
 > there, so `security find-generic-password` returns nothing even for an item

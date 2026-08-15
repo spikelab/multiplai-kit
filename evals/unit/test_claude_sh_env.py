@@ -551,8 +551,12 @@ def test_unknown_profile_errors_and_lists_real_ones(kit):
 # permissions bug hours later, in someone else's repo.
 #
 # App mode is macOS-only (minting goes over the Mac host bridge), so the cases
-# below put a `uname` stub printing Darwin first on PATH. It is confined: the
-# launcher calls `uname` in exactly this block and nowhere else.
+# below put a `uname` stub printing Darwin first on PATH. That stub is NOT
+# confined to this block any more — the native-Linux port added `uname` calls
+# on the PAT/Keychain path too (claude.sh: the App-mode refusal here, the
+# Keychain-unavailable split, and the one-shot gh-token notice). Anything it
+# reaches is macOS-only behaviour and reads correctly under a Darwin stub, but
+# do not add a case here assuming `uname` affects nothing else.
 
 APP_ENV_FILE = """\
 WORKSPACE="{ws}"

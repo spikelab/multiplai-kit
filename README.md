@@ -132,7 +132,7 @@ The plugin's routing is project-aware. When you start a session and mention a pr
 | `--local` flag | Bare mode on host, permission prompts active, no container |
 | `--shell` flag | Container bash shell (for debugging) |
 | Already inside container | Bare mode + `--dangerously-skip-permissions` |
-| No Docker installed | Warns, falls back to bare mode without skip-permissions |
+| No Docker installed | Bare mode (a supported rung, not a failure state): claude runs directly on the host with the whole filesystem in reach, permission prompts the only boundary |
 
 ```bash
 ./claude.sh                         # container (default)

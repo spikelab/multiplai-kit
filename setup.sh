@@ -101,22 +101,26 @@ fi
 echo "Setting up multiplai-kit..."
 echo "  Workspace: $WORKSPACE"
 echo "  Name: $GIT_AUTHOR_NAME"
-echo "  Docker: $( $HAS_DOCKER && echo 'available' || echo 'NOT FOUND' )"
+echo "  Docker: $( $HAS_DOCKER && echo 'available (container mode)' || echo 'not found (bare mode)' )"
 echo ""
 
+# Bare mode is a supported rung of the install ladder, not a degraded fallback:
+# claude runs directly on this host with permission prompts on (the prompts are
+# the boundary there). Container mode is the next rung up — it adds the sandbox,
+# which is what makes skip-permissions safe. Say which rung this install is;
+# don't dress a supported configuration up as a failure — and say what the next
+# rung buys, or the reader has no basis for choosing between them.
 if ! $HAS_DOCKER; then
-  echo "================================================================"
-  echo "  WARNING: Docker not found or not running."
+  echo "Docker not found or not running — setting up for bare mode."
   echo ""
-  echo "  Container mode (the default) will not work."
-  echo "  ./claude.sh will fall back to bare mode without a sandbox."
-  echo "  This means Claude runs directly on your host with full"
-  echo "  filesystem access and permission prompts enabled."
+  echo "  Bare mode is a supported way to run the kit: ./claude.sh launches"
+  echo "  Claude Code directly on this host, with your whole filesystem in reach."
+  echo "  Permission prompts stay on and are the only boundary there is."
   echo ""
-  echo "  To enable container mode later:"
+  echo "  Container mode adds a sandbox that bounds what a session can touch."
+  echo "  To move up to it:"
   echo "    1. Install Docker"
   echo "    2. Re-run ./setup.sh (it fetches container/ and builds the image)"
-  echo "================================================================"
   echo ""
 fi
 
@@ -447,6 +451,10 @@ if $HAS_DOCKER; then
       echo "           tooling; fix the issue above and re-run ./setup.sh."
     fi
   }
+  # macOS only, and deliberately so: these three are the Mac host-bridge
+  # tooling (Xcode builds, Keychain-backed App tokens, host Compose stacks).
+  # On a Linux host nothing consumes them — sessions run without the bridge —
+  # so the sane else-path is to install nothing, not to warn.
   if [ "$(uname -s)" = "Darwin" ]; then
     install_host_tool container-build-gateway.sh
     install_host_tool multiplai-gh-token
@@ -463,8 +471,9 @@ echo ""
 if $HAS_DOCKER; then
   echo "Run ./claude.sh to start Claude Code in a container."
 else
-  echo "Run ./claude.sh to start Claude Code (bare mode — no Docker)."
-  echo "Install Docker and re-run setup.sh to enable container mode."
+  echo "Run ./claude.sh to start Claude Code in bare mode: directly on this host,"
+  echo "whole filesystem in reach, permission prompts the only boundary. To add the"
+  echo "container sandbox later: install Docker and re-run ./setup.sh."
 fi
 if ! git -C "$WORKSPACE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo ""

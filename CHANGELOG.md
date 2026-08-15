@@ -37,6 +37,45 @@ public repo has shipped without in-tree memory hooks from day one (see the
   marketplace. Land marketplace PR #208 first — enabling a plugin the
   marketplace does not publish resolves to nothing.
 
+- **Container launches carry `--add-host host.docker.internal:host-gateway`, so
+  the name resolves on native Linux (docker-ce).** In-container code addresses
+  the host as `host.docker.internal` — the SSH build bridge,
+  `CLAUDE_CODE_IDE_HOST_OVERRIDE`, an `ANTHROPIC_BASE_URL` proxy. Docker
+  Desktop and OrbStack resolve that name natively; native Linux docker-ce does
+  not, so on a Linux host the name did not exist at all. The flag is passed
+  unconditionally rather than gated on `uname`: `host-gateway` is a
+  daemon-side special value (Docker 20.10+) that macOS engines accept and
+  resolve to the same place their built-in alias points, so one argv works
+  everywhere. Applies to interactive session containers and hub driver
+  containers; the drain container receives none of the env that could address
+  the host and is unchanged.
+
+  **What this fixes, and what it does not.** The flag buys *resolution*: the
+  name now points at the host's gateway address. That reaches host services
+  listening on a non-loopback address, which is why the SSH build bridge works
+  on docker-ce — sshd binds `0.0.0.0`. It does **not** reach a service bound to
+  the host's own `127.0.0.1`, and two of the three examples above usually are:
+  the VS Code extension binds loopback only, and a local LLM proxy does by
+  default. OrbStack bridges loopback as a separate, OrbStack-specific
+  behaviour; this flag neither provides nor replaces it. On docker-ce those
+  services have to be re-bound to `0.0.0.0`, and a host firewall can still
+  block the `docker0` interface (ufw's default policy does). Setting
+  `CLAUDE_CODE_IDE_HOST_OVERRIDE` on a Linux host and expecting `/ide` to
+  connect is the phantom this paragraph exists to prevent.
+
+- **CI now exercises the two install rungs end-to-end on Linux.** One job runs
+  `./setup.sh` against a throwaway workspace on a runner with real docker —
+  the pinned `multiplai-container` image builds for real — then launches the
+  built image through `./claude.sh --shell` on docker-ce and resolves
+  `host.docker.internal` inside it, which is the one assertion only a real
+  daemon can settle. It separately asserts the composed `docker run` argv
+  (stub docker) carries the host alias, on the flag rather than merely
+  somewhere in the line, and skip-permissions only where the container is the
+  sandbox. A second job
+  removes docker from the runner and verifies the bare rung: `setup.sh` exits
+  0, `claude.sh` launches without `--dangerously-skip-permissions`, and a
+  launch with no GitHub config prints nothing about GitHub.
+
 - **The writing rules moved into a Claude Code output style, and are now on by
   default.** New file: `dotfiles/output-styles/clear-writing.md`, selected by
   `"outputStyle": "Clear Writing"` in `dotfiles/settings.json`.
@@ -129,6 +168,36 @@ public repo has shipped without in-tree memory hooks from day one (see the
   allowlist or in the pack install; that is separate work and is not attempted
   here.
 
+- **Bare mode (no Docker) is presented as what it is: a supported rung of the
+  install ladder, not a failure state.** `setup.sh` and `claude.sh` framed the
+  no-Docker path as a WARNING with degraded-mode language, which told a Linux
+  user without Docker that their supported configuration was broken. Both now
+  say which mode the install/launch is and how to add the container sandbox
+  later. They also still say what the rung *costs*: claude runs with your whole
+  filesystem in reach, and the permission prompts are the only boundary there
+  is — which is the one fact a reader needs to choose between the rungs, since
+  it is exactly what the container rung changes. The behaviour is unchanged:
+  permission prompts stay on in bare mode, and container mode remains the
+  default when Docker is present.
+
+- **Launch-time GitHub warnings only fire for misconfiguration, never for
+  absence.** A GitHub credential is optional, but every launch without one
+  warned about it. Now a launch with nothing GitHub-related configured — no
+  `GH_TOKEN`, `GH_TOKEN_APP`, or `GH_TOKEN_KEYCHAIN` in the environment or any
+  env file — prints nothing. Half-configured states keep their noise: a
+  `GH_TOKEN_KEYCHAIN` item that does not resolve warns (naming the item, and
+  noting that Keychain lookups fail over SSH where the login keychain is
+  locked), and a `GH_TOKEN_KEYCHAIN` set on a non-Mac host warns that there is
+  no Keychain to probe.
+
+- **"Keychain lookups need macOS" is no longer said to a Mac.** That warning
+  covered one branch guarded by `Darwin` AND `security`, so a Mac launched with
+  a trimmed `PATH` — a cron job, an SSH forced command — fell into it and was
+  told its platform was the problem. The two failures now have separate
+  messages: a non-Mac is told the Keychain is macOS-only and is given the
+  host's actual platform name, and a Mac missing `security` is told the tool is
+  off `PATH` and where to put it back.
+
 - **Context overflow is now handled by native autocompaction, not a hard stop.**
   `dotfiles/settings.json` no longer sets `DISABLE_AUTO_COMPACT=1`; it sets
   `"autoCompactEnabled": true` with `"autoCompactWindow": 400000`, and the
@@ -188,6 +257,20 @@ public repo has shipped without in-tree memory hooks from day one (see the
   none of it can run. The skill's own `SKILL.md` documents its operation, and
   its description already names those tasks, so prompt routing still finds it.
   The always-loaded file keeps only the mid-turn pointer (see *Changed*).
+
+- **The implicit `gh-token` Keychain probe.** The launcher used to query macOS
+  Keychain for a default item named `gh-token` even when `GH_TOKEN_KEYCHAIN`
+  was never set — an invisible lookup that also made the no-config launch warn
+  about a Keychain item nobody had created. The Keychain is now probed only
+  when `GH_TOKEN_KEYCHAIN` names an item. **Migration:** if you relied on the
+  default, set `GH_TOKEN_KEYCHAIN=gh-token` in `.env` to keep the old
+  behaviour. Keychain support itself is unchanged.
+
+  **This change is silent, deliberately.** A setup that was nothing but
+  `security add-generic-password -s gh-token …` goes from authenticated to not,
+  and the launcher says nothing — the absence rule above covers it, and the
+  alternative is probing a Keychain nobody pointed the launcher at. Set
+  `GH_TOKEN_KEYCHAIN=gh-token` and it works again.
 
 - **`setup.sh` no longer creates `PROJECTS/plans/`.** Nothing in the kit ever
   read it, wrote to it, or referred to it — the sole mention in the repo was the

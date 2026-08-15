@@ -41,6 +41,215 @@ jobs:
       - name: Run evals
         run: .venv/bin/python -m pytest evals/ -q
 
+  # The two install rungs, end-to-end on Linux. The kit was developed on macOS
+  # (OrbStack); these jobs are what keep native Linux (docker-ce) a supported
+  # platform rather than an aspiration. Scope decisions, made deliberately:
+  #
+  #  * The container job builds the pinned multiplai-container image FOR REAL
+  #    (~15 min). That is the point — `host.docker.internal`, uid mapping, and
+  #    volume ownership only fail against a real docker-ce daemon, which is
+  #    exactly what OrbStack on the dev machine cannot exercise. The follow-up
+  #    launch resolves `host.docker.internal` INSIDE the built image: a full
+  #    container round-trip (venv volume prep, mounts, --add-host, entrypoint
+  #    venv sync) that ends in the one assertion only a real daemon can settle.
+  #    It used to run `bash -c true`, which touched no name resolution at all
+  #    and so proved nothing the stub-argv step below had not already proved.
+  #  * Argv composition is asserted with a stub docker in the same job, so a
+  #    regression in what the launcher ASKS for is named directly instead of
+  #    surfacing as an opaque runtime failure.
+  #  * The bare job removes docker from the runner and verifies the other rung:
+  #    setup completes, and the launch carries NO --dangerously-skip-permissions
+  #    (on the host, permission prompts are the only boundary left).
+  #  * Cost: the heavy job runs on every PR. Accepted — `concurrency` above
+  #    cancels superseded runs, and a Linux break caught at PR time is the
+  #    entire reason the job exists.
+  linux-container-e2e:
+    name: Linux e2e (container rung, real docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # A throwaway workspace and the minimal real .env setup.sh requires.
+      # No GitHub config on purpose: a launch must stay silent about it.
+      # SSH_BUILD_USER is pinned because container/build.sh defaults it to
+      # $USER, which GitHub runners do not always export.
+      - name: Write a throwaway .env
+        run: |
+          mkdir -p "$RUNNER_TEMP/workspace"
+          {
+            echo "WORKSPACE=\"$RUNNER_TEMP/workspace\""
+            echo 'GIT_AUTHOR_NAME="CI Runner"'
+            echo 'GIT_AUTHOR_EMAIL="ci@example.invalid"'
+            echo 'SSH_BUILD_USER="ci"'
+          } > .env
+
+      - name: Run setup.sh (fetches and builds the pinned container image)
+        run: ./setup.sh
+
+      - name: Built image exists
+        run: docker image inspect claude-multiplai:local >/dev/null
+
+      # The launcher's half of the contract, pinned without touching the
+      # daemon: a stub docker first on PATH records the composed `docker run`
+      # argv (same technique as evals/unit/test_claude_sh_env.py).
+      - name: Composed docker argv (stub docker)
+        run: |
+          stub="$RUNNER_TEMP/stub"; mkdir -p "$stub"
+          # This stub encodes two contracts — `image` exits 0, and a `run`
+          # carrying --entrypoint is the venv-ownership prep call to ignore.
+          # It is a copy of DOCKER_STUB in evals/unit/test_claude_sh_env.py:
+          # keep the two in sync. (A copy rather than a shared file because
+          # this one is written by a heredoc onto a throwaway runner, with no
+          # checkout-relative path it could source instead.)
+          cat > "$stub/docker" <<'EOF'
+          #!/bin/bash
+          case "$1" in
+              image) exit 0 ;;
+              run)
+                  for a in "$@"; do
+                      if [ "$a" = "--entrypoint" ]; then exit 0; fi
+                  done
+                  printf '%s\n' "$@" > "$DOCKER_ARGV_OUT"
+                  exit 0
+                  ;;
+          esac
+          exit 0
+          EOF
+          chmod +x "$stub/docker"
+          export DOCKER_ARGV_OUT="$RUNNER_TEMP/argv.txt"
+
+          status=0
+          out=$(PATH="$stub:$PATH" ./claude.sh </dev/null 2>&1) || status=$?
+          printf '%s\n' "$out"
+          [ "$status" -eq 0 ]
+
+          # ADJACENCY, not two independent greps. The dump is one argv entry
+          # per line, so `grep -qx -- '--add-host'` and `grep -qx
+          # 'host.docker.internal:host-gateway'` both pass when the two strings
+          # appear anywhere — including attached to different flags, which is
+          # precisely the regression worth catching. Compare positions instead,
+          # as evals/unit/test_claude_sh_crossplatform.py already does. String
+          # equality also removes the unanchored-BRE hazard in the old value
+          # pattern, where every `.` matched any character.
+          mapfile -t argv < "$DOCKER_ARGV_OUT"
+          found=0
+          for i in "${!argv[@]}"; do
+              if [ "${argv[$i]}" = '--add-host' ] \
+                 && [ "${argv[$((i + 1))]:-}" = 'host.docker.internal:host-gateway' ]; then
+                  found=1
+              fi
+          done
+          if [ "$found" -ne 1 ]; then
+              echo 'no --add-host immediately followed by host.docker.internal:host-gateway' >&2
+              printf '%s\n' "${argv[@]}" >&2
+              exit 1
+          fi
+
+          # In container mode the container IS the sandbox — skip-permissions
+          # must be present here, and only here (the bare job asserts absence).
+          grep -qxF -- '--dangerously-skip-permissions' "$DOCKER_ARGV_OUT"
+          # No GitHub config was declared: the launch must say nothing about it.
+          if printf '%s' "$out" | grep -qF 'GH_TOKEN'; then
+              echo 'launch mentioned GH_TOKEN with no GitHub config declared' >&2
+              exit 1
+          fi
+
+      # The real thing: a full round-trip through the built image on docker-ce.
+      # `--shell -c '<cmd>'` runs `bash -c '<cmd>'` as the container command, so
+      # the whole launch path (venv volume prep, mounts, --add-host, entrypoint
+      # venv sync) is exercised with no claude credentials — and the command
+      # itself is the assertion. `getent hosts` exits non-zero when the name
+      # does not resolve, which is the failure this whole job pays 15 minutes
+      # to catch: on docker-ce, without --add-host, the alias simply is not
+      # there. Nothing cheaper can tell you that; the stub-argv step above only
+      # proves the launcher ASKED for it.
+      - name: Real container launch (resolve host.docker.internal)
+        run: timeout 900 ./claude.sh --shell -c 'getent hosts host.docker.internal' </dev/null
+
+  linux-bare-e2e:
+    name: Linux e2e (bare rung, no docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # The rung under test is "no docker anywhere", which a stub cannot
+      # express — `command -v docker` has to fail. The runner is throwaway.
+      #
+      # `type -a -P` enumerates every PATH match and the loop ends; a `while
+      # command -v docker` loop does not. It must be `type -a -P`, not
+      # `command -v -a`: bash's `command` takes only `-pVv`, so `-a` is an
+      # error there (it is a zsh spelling), the loop body never runs, and the
+      # step fails at the post-check having removed nothing. `-P` also forces
+      # a PATH lookup, which is the point — `command -v` reports functions,
+      # builtins and aliases by NAME, so `sudo rm -f docker` would return 0
+      # against a nonexistent relative path while the name kept resolving.
+      # `|| true` because `type` exits non-zero when nothing matches, and this
+      # step runs under `bash -e`. The post-check below is the verdict:
+      # anything left resolving fails the step with a name to look at.
+      - name: Remove docker from the runner
+        run: |
+          for p in $(type -a -P docker || true); do
+              sudo rm -f "$p"
+          done
+          if command -v docker; then
+              echo 'docker still resolves (a shell function, builtin or alias does not have a path to remove)' >&2
+              exit 1
+          fi
+
+      - name: Write a throwaway .env
+        run: |
+          mkdir -p "$RUNNER_TEMP/workspace"
+          {
+            echo "WORKSPACE=\"$RUNNER_TEMP/workspace\""
+            echo 'GIT_AUTHOR_NAME="CI Runner"'
+            echo 'GIT_AUTHOR_EMAIL="ci@example.invalid"'
+          } > .env
+
+      - name: Run setup.sh (bare rung)
+        run: |
+          status=0
+          out=$(./setup.sh 2>&1) || status=$?
+          printf '%s\n' "$out"
+          [ "$status" -eq 0 ]
+          # Supported-tier framing, not failure framing.
+          printf '%s' "$out" | grep -qi 'bare mode'
+
+      # A stub claude records what exec_bare hands it. On the host the
+      # permission prompts are the only boundary left, so the one assertion
+      # that matters is the absence of --dangerously-skip-permissions.
+      - name: Launch claude.sh bare (stub claude)
+        run: |
+          stub="$RUNNER_TEMP/stub"; mkdir -p "$stub"
+          cat > "$stub/claude" <<'EOF'
+          #!/bin/bash
+          printf '%s\n' "$@" > "$CLAUDE_ARGV_OUT"
+          exit 0
+          EOF
+          chmod +x "$stub/claude"
+          export CLAUDE_ARGV_OUT="$RUNNER_TEMP/claude-argv.txt"
+
+          status=0
+          out=$(PATH="$stub:$PATH" ./claude.sh </dev/null 2>&1) || status=$?
+          printf '%s\n' "$out"
+          [ "$status" -eq 0 ]
+          if grep -qF -- '--dangerously-skip-permissions' "$CLAUDE_ARGV_OUT"; then
+              echo 'bare mode must never skip permissions' >&2
+              exit 1
+          fi
+          printf '%s' "$out" | grep -qi 'bare mode'
+          if printf '%s' "$out" | grep -qF 'GH_TOKEN'; then
+              echo 'launch mentioned GH_TOKEN with no GitHub config declared' >&2
+              exit 1
+          fi
+
   shell-syntax:
     name: Shell syntax (claude.sh, setup.sh)
     runs-on: ubuntu-latest

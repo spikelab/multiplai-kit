@@ -128,8 +128,18 @@ security add-generic-password \
   -w "<paste-the-github-token>"
 ```
 
-To update it later, add `-U` to overwrite the existing entry. If no entry is
-found, the launcher warns and `gh` is simply unauthenticated for that session.
+To update it later, add `-U` to overwrite the existing entry. If the named
+entry does not resolve, the launcher warns and `gh` is simply unauthenticated
+for that session. The Keychain is only probed when `GH_TOKEN_KEYCHAIN` names an
+item — with no GitHub auth configured at all, the launcher stays silent, and it
+never looks in the Keychain it was not pointed at. The launcher used to read an
+item named `gh-token` implicitly; it no longer does. Set
+`GH_TOKEN_KEYCHAIN="gh-token"` to keep using that item.
+
+> **Keychain lookups fail from SSH sessions** — the login keychain is locked
+> there, so `security find-generic-password` returns nothing even for an item
+> that exists. When launching over SSH, use `GH_TOKEN` in `.env` (or the
+> profile) or App mode instead.
 
 ### 3. First launch → log into the right Claude account
 

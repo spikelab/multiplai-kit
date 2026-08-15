@@ -37,6 +37,11 @@ import pytest
 KIT_ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = KIT_ROOT / "claude.sh"
 
+# Two contracts live in here — `image` exits 0, and a `run` carrying
+# --entrypoint is the venv-ownership prep call to ignore. A verbatim copy is
+# written by the "Composed docker argv" step in .github/workflows/ci.yml (that
+# one runs on a throwaway runner with no checkout-relative path to source, so
+# it cannot share this text): keep the two in sync.
 DOCKER_STUB = """\
 #!/bin/bash
 case "$1" in
@@ -546,8 +551,13 @@ def test_unknown_profile_errors_and_lists_real_ones(kit):
 # permissions bug hours later, in someone else's repo.
 #
 # App mode is macOS-only (minting goes over the Mac host bridge), so the cases
-# below put a `uname` stub printing Darwin first on PATH. It is confined: the
-# launcher calls `uname` in exactly this block and nowhere else.
+# below put a `uname` stub printing Darwin first on PATH. That stub is NOT
+# confined to this block any more — the native-Linux port added `uname` calls
+# on the PAT/Keychain path too (claude.sh: the App-mode refusal here, and the
+# Keychain-unavailable split between a non-Mac and a Mac with `security` off
+# PATH). Anything it reaches is macOS-only behaviour and reads correctly under
+# a Darwin stub, but do not add a case here assuming `uname` affects nothing
+# else.
 
 APP_ENV_FILE = """\
 WORKSPACE="{ws}"

@@ -110,6 +110,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 | `evals/unit/test_model_resolver.py` | Model-ceiling logic (`dotfiles/hooks/model_resolver.py`) |
 | `evals/unit/test_config_loading.py` | `multiplai.conf` parsing |
 | `evals/unit/test_claude_sh_env.py` | `claude.sh` env forwarding + GitHub auth-mode selection (stub `docker`) |
+| `evals/unit/test_claude_sh_crossplatform.py` | The `--add-host host.docker.internal:host-gateway` alias on **both** container argv compositions — the interactive `docker run` and the hub driver's, which is a separate call site reached only via the `driver` subcommand — plus GitHub-warning silence when nothing is configured, the two distinct Keychain-unavailable messages (non-Mac vs a Mac with `security` off `PATH`), and the explicit-only Keychain probe — `security` never runs unless `GH_TOKEN_KEYCHAIN` names an item (stub `docker` + stub `security` + stub `uname`) |
 | `evals/unit/test_guard_destructive.py` | PreToolUse destructive-command guard |
 | `evals/unit/test_guard_hook_wiring.py` | Whether the guard is reached at all (hook wiring, log-dir creation, fail-closed wrapper) |
 | `evals/unit/test_log_retention.py` | Log rotation/retention helper |

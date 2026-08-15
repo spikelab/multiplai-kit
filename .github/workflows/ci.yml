@@ -183,16 +183,20 @@ jobs:
       # The rung under test is "no docker anywhere", which a stub cannot
       # express — `command -v docker` has to fail. The runner is throwaway.
       #
-      # `command -v -a` enumerates every match and the loop ends; a `while
-      # command -v docker` loop does not. `command -v` reports functions,
+      # `type -a -P` enumerates every PATH match and the loop ends; a `while
+      # command -v docker` loop does not. It must be `type -a -P`, not
+      # `command -v -a`: bash's `command` takes only `-pVv`, so `-a` is an
+      # error there (it is a zsh spelling), the loop body never runs, and the
+      # step fails at the post-check having removed nothing. `-P` also forces
+      # a PATH lookup, which is the point — `command -v` reports functions,
       # builtins and aliases by NAME, so `sudo rm -f docker` would return 0
-      # against a nonexistent relative path while the name kept resolving —
-      # a spin that ends only at the job timeout, reported as a timeout and
-      # nothing else. Bounded here, with the post-check below as the verdict:
+      # against a nonexistent relative path while the name kept resolving.
+      # `|| true` because `type` exits non-zero when nothing matches, and this
+      # step runs under `bash -e`. The post-check below is the verdict:
       # anything left resolving fails the step with a name to look at.
       - name: Remove docker from the runner
         run: |
-          for p in $(command -v -a docker); do
+          for p in $(type -a -P docker || true); do
               sudo rm -f "$p"
           done
           if command -v docker; then

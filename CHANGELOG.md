@@ -266,18 +266,11 @@ public repo has shipped without in-tree memory hooks from day one (see the
   default, set `GH_TOKEN_KEYCHAIN=gh-token` in `.env` to keep the old
   behaviour. Keychain support itself is unchanged.
 
-  **The launcher tells you, once, if this is you.** Everything about the
-  removal is silent — no `GH_TOKEN`, no `GH_TOKEN_KEYCHAIN`, and the new
-  absence rule above means nothing is printed either — so a setup that was
-  nothing but `security add-generic-password -s gh-token …` would go from
-  authenticated to not, with a `git pull` as the only cause and a `gh` failure
-  hours later as the only symptom. On macOS, when nothing GitHub is configured,
-  the launcher now checks once per host whether a `gh-token` item exists and
-  prints a notice naming `GH_TOKEN_KEYCHAIN=gh-token` if it does. The check
-  reads no secret (it never passes `-w`, so `security` prints attributes and
-  not the password) and authenticates nothing; the implicit probe stays gone.
-  It is recorded in `~/.claude-container/gh-token-keychain-notice` and never
-  repeats — delete that file to see it again.
+  **This change is silent, deliberately.** A setup that was nothing but
+  `security add-generic-password -s gh-token …` goes from authenticated to not,
+  and the launcher says nothing — the absence rule above covers it, and the
+  alternative is probing a Keychain nobody pointed the launcher at. Set
+  `GH_TOKEN_KEYCHAIN=gh-token` and it works again.
 
 - **`setup.sh` no longer creates `PROJECTS/plans/`.** Nothing in the kit ever
   read it, wrote to it, or referred to it — the sole mention in the repo was the

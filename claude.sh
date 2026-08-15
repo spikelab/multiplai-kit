@@ -557,38 +557,6 @@ else
             fi
         fi
     fi
-
-    # --- One-time notice for anyone the removal above just un-authenticated ---
-    #
-    # Dropping the implicit probe is silent by construction, and the new
-    # "plain absence launches quietly" rule makes it doubly so: a user whose
-    # whole setup was `security add-generic-password -s gh-token …` had a
-    # working token yesterday and gets nothing today, with the launcher saying
-    # nothing at all. The first symptom is `gh` failing to authenticate, hours
-    # later, with a `git pull` as the only cause — the exact "silent winner"
-    # failure the App-vs-PAT block above refuses to allow.
-    #
-    # So: look for the item ONCE per host, and only when nothing GitHub is
-    # configured (a configured user is unaffected). This reads no secret — no
-    # `-w`, so `security` prints attributes, never the password — and exports
-    # nothing. Implicit auth stays gone; only the explanation is added.
-    #
-    # The marker is written before the lookup, not after, so this costs exactly
-    # one `security` call per host for all time. Someone who creates a
-    # `gh-token` item AFTER this point is doing it in the new world, where the
-    # documented way to use it is GH_TOKEN_KEYCHAIN.
-    _GH_KEYCHAIN_NOTICE_MARK="$HOME/.claude-container/gh-token-keychain-notice"
-    if [ -z "${GH_TOKEN:-}" ] && [ -z "${GH_TOKEN_KEYCHAIN:-}" ] \
-       && [ ! -e "$_GH_KEYCHAIN_NOTICE_MARK" ] \
-       && [ "$(uname)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
-        mkdir -p "$(dirname "$_GH_KEYCHAIN_NOTICE_MARK")" 2>/dev/null || true
-        : > "$_GH_KEYCHAIN_NOTICE_MARK" 2>/dev/null || true
-        if security find-generic-password -a "${USER:-$(id -un)}" -s gh-token >/dev/null 2>&1; then
-            echo "Notice: a Keychain item named 'gh-token' exists, and this launcher no longer reads it on its own."
-            echo "        It used to. If GitHub CLI worked in your sessions before and stops now, that removal is why."
-            echo "        Fix: add GH_TOKEN_KEYCHAIN=gh-token to .env (or env.<profile>). Shown once."
-        fi
-    fi
 fi
 
 

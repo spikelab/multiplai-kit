@@ -19,10 +19,8 @@ Two contracts, both born from the native-Linux (docker-ce) port:
   misconfiguration worth naming, and the two have separate messages because a
   Mac with a trimmed PATH is not a non-Mac. The Keychain probe itself is
   explicit-only: the old implicit probe of a default `gh-token` item is gone,
-  and these tests fail if it comes back. What did NOT go with it is the
-  explanation — a `gh-token` item that exists while GH_TOKEN_KEYCHAIN is unset
-  earns one notice, once per host, naming the setting that restores the old
-  behaviour. That check reads no secret (never `-w`) and exports nothing.
+  and these tests fail if it comes back. Nothing replaces it — with no item
+  named, `security` does not run at all, and the launch is silent.
 
 Same technique as `test_claude_sh_env.py` (whose `kit` fixture and stubs this
 file reuses): stub `docker` / `claude` first on `PATH` record the composed argv
@@ -58,9 +56,8 @@ def _pretend_linux(kit):
 def _security(kit, argv_log=None, *, found=True, secret="token-from-keychain"):
     """Stub `security`, optionally logging every argv it is called with.
 
-    Two things need pinning and only the log can tell them apart: WHETHER the
-    Keychain was touched, and whether the call asked for the *password* (`-w`).
-    The transitional notice does the first and must never do the second.
+    Only the log can answer the question that matters: WHETHER the Keychain was
+    touched at all. With no item named, the answer must be no.
     """
     body = ["#!/bin/sh"]
     if argv_log is not None:
@@ -78,9 +75,9 @@ def _security(kit, argv_log=None, *, found=True, secret="token-from-keychain"):
 def _no_keychain_at_all(kit):
     """The honest 'nothing is configured' host: `security` finds no item.
 
-    Pinned rather than left to the real tool, because the silence tests below
-    otherwise depend on whether the DEVELOPER happens to have a `gh-token` item
-    in their own Keychain — which decides whether the migration notice fires.
+    Pinned rather than left to the real tool, so the silence tests below cannot
+    depend on whether the DEVELOPER happens to have a `gh-token` item in their
+    own Keychain.
     """
     _security(kit, found=False)
 
@@ -161,19 +158,17 @@ def test_no_github_config_launches_container_in_silence(kit):
     assert not result.mentions("GH_TOKEN")
 
 
-# --- the removed implicit probe, and the notice that replaces it -------------
+# --- the removed implicit probe ----------------------------------------------
 
 
-def test_an_unnamed_keychain_item_is_never_read(kit, tmp_path):
-    """The sharpest pin on explicit-only: with no GitHub config at all, no
-    token comes out of the Keychain, even when a `gh-token` item is sitting
-    right there. The old behaviour read exactly that item on every macOS
-    launch; a user who wants it back sets GH_TOKEN_KEYCHAIN=gh-token.
+def test_keychain_is_not_probed_when_no_item_is_named(kit, tmp_path):
+    """Explicit-only, with no exceptions: with no GitHub config at all the
+    launcher does not touch the Keychain, even when a `gh-token` item is
+    sitting right there. The old behaviour read exactly that item on every
+    macOS launch; a user who wants it back sets GH_TOKEN_KEYCHAIN=gh-token.
 
-    What the launcher may still do is LOOK — once, without `-w`, so `security`
-    prints attributes and never a password — to tell that user why their
-    sessions stopped authenticating. Reading the value is the thing that was
-    removed, so that is what this pins."""
+    `security` is not run at all — not to read a value, and not to look. The
+    launcher has no business in the Keychain it was never pointed at."""
     _pretend_macos(kit)
     log = tmp_path / "security-argv"
     _security(kit, log)
@@ -181,56 +176,9 @@ def test_an_unnamed_keychain_item_is_never_read(kit, tmp_path):
 
     result = kit.launch("--local")
     assert result.status == 0, result.output
+    assert not log.exists(), "`security` ran with no GH_TOKEN_KEYCHAIN naming an item"
     assert "GH_TOKEN" not in result.bare_env, "an unnamed Keychain item authenticated the session"
-    called = log.read_text().splitlines() if log.exists() else []
-    assert "-w" not in called, "the launcher asked the Keychain for a password it was never told to use"
-
-
-def test_an_existing_gh_token_item_earns_one_notice(kit, tmp_path):
-    """A user whose entire setup was `security add-generic-password -s gh-token`
-    had a working token before this change and gets none after it — silently,
-    because plain absence launches quietly now. Name the cause and the fix, or
-    the first symptom is `gh` failing hours later with a `git pull` behind it."""
-    _pretend_macos(kit)
-    _security(kit, found=True)
-    kit.write_env(NO_GITHUB_ENV_FILE.format(ws=kit.workspace))
-
-    result = kit.launch("--local")
-    assert result.status == 0, result.output
-    assert "gh-token" in result.output
-    assert "GH_TOKEN_KEYCHAIN" in result.output, "the notice must name the setting that fixes it"
-
-    # Once per host, not once per launch: the second launch says nothing.
-    again = kit.launch("--local")
-    assert again.status == 0, again.output
-    assert "GH_TOKEN_KEYCHAIN" not in again.output
-
-
-def test_no_gh_token_item_means_no_notice(kit):
-    """Someone who never used the Keychain has nothing to migrate. Absence is
-    not a misconfiguration, and the launch stays silent."""
-    _pretend_macos(kit)
-    _security(kit, found=False)
-    kit.write_env(NO_GITHUB_ENV_FILE.format(ws=kit.workspace))
-
-    result = kit.launch("--local")
-    assert result.status == 0, result.output
-    assert "gh-token" not in result.output
-    assert "GH_TOKEN" not in result.output
-
-
-def test_the_notice_is_macos_only(kit, tmp_path):
-    """There is no Keychain to migrate from on Linux, so nothing runs there —
-    including the lookup itself."""
-    _pretend_linux(kit)
-    log = tmp_path / "security-argv"
-    _security(kit, log)
-    kit.write_env(NO_GITHUB_ENV_FILE.format(ws=kit.workspace))
-
-    result = kit.launch("--local")
-    assert result.status == 0, result.output
-    assert not log.exists(), "`security` ran on a host that has no Keychain"
-    assert "GH_TOKEN" not in result.output
+    assert "GH_TOKEN" not in result.output, "absence is not a misconfiguration — it stays silent"
 
 
 # --- half-configured states keep their noise ---------------------------------

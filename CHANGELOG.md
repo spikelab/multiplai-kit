@@ -37,18 +37,31 @@ public repo has shipped without in-tree memory hooks from day one (see the
   marketplace. Land marketplace PR #208 first — enabling a plugin the
   marketplace does not publish resolves to nothing.
 
-- **Container launches carry `--add-host host.docker.internal:host-gateway`,
-  which is what makes them work on native Linux (docker-ce).** In-container
-  code addresses the host as `host.docker.internal` — the SSH build bridge,
+- **Container launches carry `--add-host host.docker.internal:host-gateway`, so
+  the name resolves on native Linux (docker-ce).** In-container code addresses
+  the host as `host.docker.internal` — the SSH build bridge,
   `CLAUDE_CODE_IDE_HOST_OVERRIDE`, an `ANTHROPIC_BASE_URL` proxy. Docker
   Desktop and OrbStack resolve that name natively; native Linux docker-ce does
-  not, so on a Linux host every one of those silently failed to resolve. The
-  flag is passed unconditionally rather than gated on `uname`: `host-gateway`
-  is a daemon-side special value (Docker 20.10+) that macOS engines accept and
+  not, so on a Linux host the name did not exist at all. The flag is passed
+  unconditionally rather than gated on `uname`: `host-gateway` is a
+  daemon-side special value (Docker 20.10+) that macOS engines accept and
   resolve to the same place their built-in alias points, so one argv works
   everywhere. Applies to interactive session containers and hub driver
   containers; the drain container receives none of the env that could address
   the host and is unchanged.
+
+  **What this fixes, and what it does not.** The flag buys *resolution*: the
+  name now points at the host's gateway address. That reaches host services
+  listening on a non-loopback address, which is why the SSH build bridge works
+  on docker-ce — sshd binds `0.0.0.0`. It does **not** reach a service bound to
+  the host's own `127.0.0.1`, and two of the three examples above usually are:
+  the VS Code extension binds loopback only, and a local LLM proxy does by
+  default. OrbStack bridges loopback as a separate, OrbStack-specific
+  behaviour; this flag neither provides nor replaces it. On docker-ce those
+  services have to be re-bound to `0.0.0.0`, and a host firewall can still
+  block the `docker0` interface (ufw's default policy does). Setting
+  `CLAUDE_CODE_IDE_HOST_OVERRIDE` on a Linux host and expecting `/ide` to
+  connect is the phantom this paragraph exists to prevent.
 
 - **CI now exercises the two install rungs end-to-end on Linux.** One job runs
   `./setup.sh` against a throwaway workspace on a runner with real docker —

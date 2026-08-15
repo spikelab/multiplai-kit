@@ -650,6 +650,17 @@ esac
 # everywhere instead of forking per platform. Applies to the containers whose
 # code may address the host (interactive sessions and hub drivers); the drain
 # container gets none of the env that could point there, so it stays as-is.
+#
+# What the flag buys, precisely: the NAME resolves, to the host's gateway
+# address. That reaches host services listening on a non-loopback address —
+# sshd binds 0.0.0.0, so the build bridge works. It does NOT reach a service
+# bound to the host's own 127.0.0.1, and two of the three above usually are:
+# the VS Code extension binds loopback only (see the IDE-lockfile block
+# below), and a local LLM proxy does by default. OrbStack bridges loopback as
+# a separate, OrbStack-specific behaviour that this flag neither provides nor
+# replaces; on docker-ce those services need to be re-bound to 0.0.0.0 (and a
+# host firewall can still block the docker0 interface — ufw's default policy
+# does). Resolution is the floor here, not reachability.
 HOST_ALIAS_ARGS=(--add-host host.docker.internal:host-gateway)
 
 # --- Ensure kit-venv volume is agent-writable ---

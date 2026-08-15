@@ -75,6 +75,40 @@ public repo has shipped without in-tree memory hooks from day one (see the
   must carry the session id, or a commissioned session hangs at start) still
   holds underneath.
 
+- **The `WebFetch`-failure rule in `dotfiles/CLAUDE.md` now branches by status,
+  and the `host-browser` mention shrinks to one conditional clause.** The old
+  bullet spent a paragraph of always-loaded context teaching the skill — the
+  `ab` quick path, the settle delay for heavy SPAs, the two block classes, a
+  pointer to the host prerequisites — which the skill explains for itself once
+  it loads (see *Removed*). What stays is the one decision that has to be made
+  mid-turn, when the tool result comes back: on 403/429, use
+  `/multiplai-media:host-browser` if the `multiplai-media` pack is installed,
+  otherwise drop the URL and say so. A `SKILL.md` cannot carry that clause —
+  skill routing runs on `UserPromptSubmit`, before any tool call in the turn,
+  so nothing inside a skill file is in context at the moment a 403 arrives.
+
+  Two branches the rule never had. **5xx, a DNS failure and a timeout are the
+  one case where re-fetching the same URL verbatim is right** — the previous
+  blanket "never retry verbatim" turned a single transient 503 into a dropped
+  URL and a page reported unreachable. And a **200 with an empty or skeletal
+  body is a failure too**: the page is client-rendered and `WebFetch` cannot
+  run its JS, so it takes the same remedy as a 403. Nothing had marked that one
+  as a failure at all, which left an empty JS shell to be reported as the
+  page's content.
+
+  This supersedes one clause of the tool-usage audit entry further down this
+  section ("a `WebFetch` 403 is a signal to switch to `host-browser` rather
+  than retry"): the escalation still stands, but it is now conditional on the
+  pack being installed and sits alongside the other status branches.
+
+  It does **not** change what the container can reach. `agent-browser`/`ab`
+  stays on the container build gateway's argv allowlist, `docs/SKILLS.md` still
+  lists the skill and its `SSH_BUILD_USER`/`SSH_BUILD_KEY` prerequisite, and
+  the plugin's own skill description still reaches every prompt-routing pass.
+  Making the host browser an explicit opt-in means a gate in the gateway
+  allowlist or in the pack install; that is separate work and is not attempted
+  here.
+
 - **Context overflow is now handled by native autocompaction, not a hard stop.**
   `dotfiles/settings.json` no longer sets `DISABLE_AUTO_COMPACT=1`; it sets
   `"autoCompactEnabled": true` with `"autoCompactWindow": 400000`, and the
@@ -124,6 +158,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
   to update that URL later.
 
 ### Removed
+
+- **The `host-browser` how-to is out of always-loaded context.** The `ab` quick
+  path (`ab open <url>` → `ab snapshot -i`), the settle delay heavy SPAs need,
+  the behavioral-wall-vs-policy-wall distinction, and the list of tasks that
+  want a real browser (logins, signups, fetching a verification email) all sat
+  in `dotfiles/CLAUDE.md`, which every session on every install pays for —
+  including installs with no `multiplai-media` pack and no SSH bridge, where
+  none of it can run. The skill's own `SKILL.md` documents its operation, and
+  its description already names those tasks, so prompt routing still finds it.
+  The always-loaded file keeps only the mid-turn pointer (see *Changed*).
 
 - **`setup.sh` no longer creates `PROJECTS/plans/`.** Nothing in the kit ever
   read it, wrote to it, or referred to it — the sole mention in the repo was the

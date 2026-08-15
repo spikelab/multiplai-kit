@@ -17,6 +17,26 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
+- **The `multiplai-apple` plugin is enabled by default, so `swift-build` keeps
+  working.** New line in `dotfiles/settings.json` → `enabledPlugins`:
+  `"multiplai-apple@multiplai": true`.
+
+  The marketplace moved the `swift-build` skill out of `multiplai-dev` and into
+  a new mac-only `multiplai-apple` pack. `multiplai-dev` is enabled here and
+  `multiplai-apple` was not, so without this line a `git pull && ./setup.sh`
+  would have taken `swift-build` away from everyone who has it today — Xcode and
+  Swift Package Manager builds, the simulator verbs, and the host bridge that
+  runs them all disappear with no message.
+
+  This keeps the status quo rather than changing it: the skill already shipped
+  to every install as part of `multiplai-dev`, including Linux ones, where it
+  reports that Swift and Xcode builds need macOS. Whether a mac-only pack should
+  be enabled on Linux at all is a separate question this entry does not settle.
+
+  **Merge order matters:** this depends on `multiplai-apple` existing in the
+  marketplace. Land marketplace PR #208 first — enabling a plugin the
+  marketplace does not publish resolves to nothing.
+
 - **The writing rules moved into a Claude Code output style, and are now on by
   default.** New file: `dotfiles/output-styles/clear-writing.md`, selected by
   `"outputStyle": "Clear Writing"` in `dotfiles/settings.json`.

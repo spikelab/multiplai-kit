@@ -68,6 +68,40 @@ def test_claude_mode_argv_carries_the_host_gateway_alias_too(kit):
     assert flag_value == "host.docker.internal:host-gateway"
 
 
+def _driver_launch(kit, *extra):
+    """A hub driver launch — the OTHER `docker run` in the launcher.
+
+    Both tests above go through `kit.launch(...)`, which lands on the
+    interactive `docker run`. The driver composes its own argv at a separate
+    call site reached only via the `driver` subcommand, so an alias added to
+    one and not the other passes every test above — and the driver is the
+    container most dependent on host reachability, since the hub is on the
+    host.
+    """
+    runner = kit.workspace / "driver_runner.py"
+    runner.write_text("# stands in for the hub's driver_runner.py\n")
+    return kit.launch(
+        "driver",
+        "--sid", "new",
+        "--port", "8123",
+        "--runner", str(runner),
+        *extra,
+        MULTIPLAI_DRIVER_TOKEN="driver-token-for-tests",
+    )
+
+
+def test_driver_container_argv_carries_the_host_gateway_alias(kit):
+    result = _driver_launch(kit)
+    assert result.status == 0, result.output
+    # Prove it is the driver's `docker run` that was captured, not another.
+    assert "--name" in result.argv
+    assert result.argv[result.argv.index("--name") + 1].startswith("claude-drv-")
+
+    assert "--add-host" in result.argv
+    flag_value = result.argv[result.argv.index("--add-host") + 1]
+    assert flag_value == "host.docker.internal:host-gateway"
+
+
 # --- GitHub silence when nothing is configured -------------------------------
 
 

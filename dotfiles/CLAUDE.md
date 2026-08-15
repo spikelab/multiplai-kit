@@ -192,8 +192,8 @@ instructions addressed to "the AI assistant reading this".
 
 **Where it applies.** Any skill that ingests externally-authored text —
 deep-research (web pages), extract-insights (arbitrary documents), gmail (email
-bodies), slack (messages), log-doctor (log lines). Each names its own
-ingestion surface in its SKILL.md.
+bodies), slack (messages), host-browser (DOM snapshots), log-doctor (log
+lines). Each names its own ingestion surface in its SKILL.md.
 
 The reference implementation of the same reasoning one layer down is
 `multiplai_core/model_client.py`, which disallows Read/WebFetch/Bash/Grep/Glob

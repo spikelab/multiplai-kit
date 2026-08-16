@@ -507,14 +507,64 @@ if $HAS_DOCKER; then
       echo "           tooling; fix the issue above and re-run ./setup.sh."
     fi
   }
-  # macOS only, and deliberately so: these three are the Mac host-bridge
-  # tooling (Xcode builds, Keychain-backed App tokens, host Compose stacks).
+  # The sandbox profile is not a tool: it is data the gateway reads, and it
+  # belongs beside the other host-owned bridge state rather than on $PATH. Same
+  # verification gate as install_host_tool, for the same reason — a gateway that
+  # references a profile and a profile from a different generation are exactly
+  # the version skew that gate exists to prevent.
+  install_host_state() {  # $1 = filename under container/
+    local src="$SCRIPT_DIR/container/$1"
+    local dst="$HOME/.local/state/multiplai/$1"
+    [ -f "$src" ] || return 0
+    if [ "$CONTAINER_AT_PIN" = true ] && [ "$BUILD_OK" = true ]; then
+      mkdir -p "$HOME/.local/state/multiplai"
+      if ! cmp -s "$src" "$dst" 2>/dev/null; then
+        cp "$src" "$dst"
+        chmod 644 "$dst"
+        echo "  Installed host state → ~/.local/state/multiplai/$1 ($CONTAINER_REF)"
+      fi
+    elif ! cmp -s "$src" "$dst" 2>/dev/null; then
+      echo "  WARNING: NOT installing ~/.local/state/multiplai/$1 — container/ is not"
+      echo "           verified at $CONTAINER_REF or the image build failed."
+    fi
+  }
+  # macOS only, and deliberately so: these are the Mac host-bridge tooling
+  # (Xcode builds, Keychain-backed App tokens, host Compose stacks).
   # On a Linux host nothing consumes them — sessions run without the bridge —
   # so the sane else-path is to install nothing, not to warn.
   if [ "$(uname -s)" = "Darwin" ]; then
     install_host_tool container-build-gateway.sh
     install_host_tool multiplai-gh-token
     install_host_tool multiplai-docker.py
+    install_host_state confine.sb
+
+    # Declare the workspace to the host SSH bridge (mktplace#15).
+    #
+    # The gateway confines path-taking commands to this directory. It cannot
+    # take the value from the container — a boundary supplied by the side being
+    # confined is not a boundary — so it reads this file, which only the host
+    # can write. setup.sh is the right writer: it already knows $WORKSPACE and
+    # already installs the gateway that reads it.
+    #
+    # Written unconditionally rather than only-if-absent: $WORKSPACE is the
+    # value this run was configured with, so a workspace that moved should move
+    # the declaration with it. Written even when the container checkout is not
+    # verified, because a stale gateway with a correct workspace still behaves,
+    # while a correct gateway with no workspace denies every build.
+    if [ -n "${WORKSPACE:-}" ] && [ -d "$WORKSPACE" ]; then
+      # mkdir inside the branch that writes, not above the `if`: a redirection
+      # into a missing directory fails without stopping the script, which would
+      # print "Declared workspace" over a file that does not exist.
+      mkdir -p "$HOME/.local/state/multiplai"
+      printf '%s\n' "$WORKSPACE" > "$HOME/.local/state/multiplai/workspace"
+      chmod 644 "$HOME/.local/state/multiplai/workspace"
+      echo "  Declared workspace to the host bridge → $WORKSPACE"
+    else
+      echo "  WARNING: \$WORKSPACE is unset or not a directory — the host bridge"
+      echo "           will refuse path-taking commands (swift, xcodebuild, xcrun,"
+      echo "           mlx-whisper, qmd) until ~/.local/state/multiplai/workspace"
+      echo "           names an existing absolute path."
+    fi
   fi
 fi
 

@@ -222,6 +222,22 @@ jobs:
           # Supported-tier framing, not failure framing.
           printf '%s' "$out" | grep -qi 'bare mode'
 
+      # The plugin options must land in the ONLY file Claude Code reads at user
+      # scope. They used to be written to settings.local.json, which is a
+      # project-scope concept — so setup reported paths it never delivered
+      # (#34). Assert the destination, not just the log line.
+      - name: Plugin options reach settings.json
+        run: |
+          ws="$RUNNER_TEMP/workspace"
+          got=$(jq -r '.pluginConfigs["multiplai-context@multiplai"].options.workspace_dir // ""' dotfiles/settings.json)
+          [ "$got" = "$ws" ] || { echo "workspace_dir in settings.json is '$got', want '$ws'" >&2; exit 1; }
+          got=$(jq -r '.pluginConfigs["multiplai-context@multiplai"].options.resources_dir // ""' dotfiles/settings.json)
+          [ "$got" = "$ws/RESOURCES" ] || { echo "resources_dir is '$got'" >&2; exit 1; }
+          if [ -f dotfiles/settings.local.json ]; then
+              echo 'setup.sh left a user-scope settings.local.json, which nothing reads' >&2
+              exit 1
+          fi
+
       # A stub claude records what exec_bare hands it. On the host the
       # permission prompts are the only boundary left, so the one assertion
       # that matters is the absence of --dangerously-skip-permissions.

@@ -280,8 +280,16 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
         echo "Error: driver mode launches a container — run it on the host." >&2
         exit 1
     fi
+    # Same three-way split as the bare-mode branch and `setup.sh`: a missing
+    # binary and a stopped daemon send the reader to different fixes, and driver
+    # mode has no bare fallback for either, so both must say which one it is.
     if ! command -v docker &>/dev/null; then
-        echo "Error: driver mode requires Docker (no bare fallback)." >&2
+        echo "Error: driver mode requires Docker (no bare fallback), and no docker binary is on PATH." >&2
+        exit 1
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "Error: driver mode requires Docker (no bare fallback), and the daemon is not reachable." >&2
+        echo "       Docker is installed — start it (Docker Desktop, OrbStack, or 'sudo systemctl start docker')." >&2
         exit 1
     fi
     if [ "$DRV_SID" != "new" ] && ! [[ "$DRV_SID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
@@ -577,6 +585,13 @@ fi
 # safe). No Docker selects the first rung; say which mode this launch is and
 # how to add the sandbox later, without dressing a supported choice up as an
 # error.
+#
+# The test is deliberately `command -v` and NOT `docker info`: a host with no
+# docker binary has chosen the lower rung, but a host whose daemon merely is not
+# running has not. Dropping the sandbox because Docker Desktop had not finished
+# starting is a downgrade nobody asked for, so a stopped daemon is an error with
+# its own message (see the image check below), not this branch. `setup.sh` makes
+# the same three-way split.
 if ! command -v docker &>/dev/null; then
     echo "[claude] Bare mode (no Docker): claude runs directly on this host, with your"
     echo "         whole filesystem in reach. Permission prompts stay on and are the only"
@@ -610,9 +625,23 @@ _VOL_HASH=$(printf '%s' "$SCRIPT_DIR" | cksum | cut -d' ' -f1)
 KIT_VENV_VOLUME="${KIT_VENV_VOLUME:-kit-venv-${_VOL_SUFFIX}-${_VOL_HASH}}"
 
 # Verify image exists
+#
+# Two very different causes reach this branch and they used to share one
+# message. A stopped daemon fails `docker image inspect` exactly like a missing
+# image does, so the launcher told people to build an image they already had —
+# a diagnosis that sends the reader to a ten-minute build which cannot possibly
+# fix it. Ask `docker info` only once the inspect has already failed, so the
+# happy path still pays a single daemon round-trip.
 if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-    echo "Error: Docker image '$IMAGE_NAME' not found."
-    echo "  Build it first: cd container && ./build.sh"
+    if ! docker info >/dev/null 2>&1; then
+        echo "Error: the Docker daemon is not reachable — 'docker info' failed." >&2
+        echo "  Docker is installed, so this is a stopped daemon, not a missing one." >&2
+        echo "  Start it (Docker Desktop, OrbStack, or 'sudo systemctl start docker')," >&2
+        echo "  or run without the sandbox: ./claude.sh --local" >&2
+    else
+        echo "Error: Docker image '$IMAGE_NAME' not found." >&2
+        echo "  Build it first: cd container && ./build.sh" >&2
+    fi
     exit 1
 fi
 

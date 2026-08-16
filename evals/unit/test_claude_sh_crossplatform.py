@@ -22,19 +22,19 @@ Two contracts, both born from the native-Linux (docker-ce) port:
   and these tests fail if it comes back. Nothing replaces it — with no item
   named, `security` does not run at all, and the launch is silent.
 
-Same technique as `test_claude_sh_env.py` (whose `kit` fixture and stubs this
-file reuses): stub `docker` / `claude` first on `PATH` record the composed argv
-and environment, so no daemon and no image are needed.
+Same technique as `test_claude_sh_env.py` (whose `kit` fixture this file
+reuses): stub `docker` / `claude` first on `PATH` record the composed argv and
+environment, so no daemon and no image are needed. The `uname` stubs both
+modules need live in `_platform_stubs.py` — importing them from here would
+close a cycle, since this file already imports the fixture from there.
 """
 
 import platform
 
 import pytest
 
-from test_claude_sh_env import (  # noqa: F401 — `kit` is a fixture
-    _pretend_macos,
-    kit,
-)
+from _platform_stubs import _pretend_linux, _pretend_macos
+from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
 # The launcher's GitHub-silence rule is about what was *configured*, so the
 # fixture .env (which declares GH_TOKEN) can't be used here: silence is only
@@ -44,13 +44,6 @@ WORKSPACE="{ws}"
 GIT_AUTHOR_NAME="Env File Name"
 GIT_AUTHOR_EMAIL="envfile@example.com"
 """
-
-
-def _pretend_linux(kit):
-    """Pin `uname` to Linux so the non-Darwin branch is taken on any dev host."""
-    stub = kit.stub_dir / "uname"
-    stub.write_text("#!/bin/sh\nprintf 'Linux\\n'\n")
-    stub.chmod(0o755)
 
 
 def _security(kit, argv_log=None, *, found=True, secret="token-from-keychain"):

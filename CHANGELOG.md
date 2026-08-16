@@ -15,6 +15,36 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Fixed
+
+- **A stopped Docker daemon now says so, in both scripts.** `setup.sh` tested
+  `command -v docker` *and* `docker info`; `claude.sh` tested only the binary.
+  On a host where Docker was installed but not running, setup printed
+  "Docker not found or not running — setting up for bare mode", and then
+  `./claude.sh` chose container mode anyway, failed `docker image inspect`, and
+  said `Docker image '<name>' not found. Build it first: cd container &&
+  ./build.sh` — a ten-minute build that could not have fixed it.
+
+  Both scripts now split three ways instead of two, because whether Docker is
+  *installed* is a durable property of the host and whether the daemon is *up*
+  is not:
+
+  - **No docker binary** → bare mode, as before. Unchanged.
+  - **Binary present, daemon down** → `setup.sh` says the daemon is not running
+    and skips the image build without claiming bare mode; `claude.sh` refuses
+    and names the daemon, offering both exits (start Docker, or `--local` to
+    run unsandboxed on purpose). It does **not** fall back to bare mode on its
+    own — losing the sandbox because Docker Desktop was still starting is a
+    downgrade nobody asked for.
+  - **Daemon up, image missing** → the old `build.sh` message, which is correct
+    only here.
+
+  `docker info` is asked only *after* `docker image inspect` has already failed,
+  so a healthy launch still pays a single daemon round-trip. Driver mode
+  (`./claude.sh driver`) separates the same two causes at the door; it has no
+  bare fallback for either. A new CI job (`linux-stopped-daemon-e2e`) stops the
+  runner's daemon and pins both halves end to end.
+
 ### Added
 
 - **The `multiplai-apple` plugin is enabled by default, so `swift-build` keeps

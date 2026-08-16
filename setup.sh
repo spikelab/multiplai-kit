@@ -93,15 +93,31 @@ if ! command -v rg &>/dev/null; then
   echo ""
 fi
 
+# Three states, not two. Whether docker is INSTALLED is a durable property of
+# the host; whether the daemon is UP right now is not, and collapsing them made
+# this script promise bare mode to someone who had simply not started Docker
+# Desktop yet — after which `claude.sh` (which tested only for the binary) went
+# to container mode anyway and died on a missing image. Keep them apart here and
+# in the launcher, and say which one you hit.
+DOCKER_INSTALLED=false
 HAS_DOCKER=false
-if command -v docker &>/dev/null && docker info >/dev/null 2>&1; then
-  HAS_DOCKER=true
+if command -v docker &>/dev/null; then
+  DOCKER_INSTALLED=true
+  docker info >/dev/null 2>&1 && HAS_DOCKER=true
+fi
+
+if $HAS_DOCKER; then
+  _docker_state='available (container mode)'
+elif $DOCKER_INSTALLED; then
+  _docker_state='installed, but the daemon is not running'
+else
+  _docker_state='not installed (bare mode)'
 fi
 
 echo "Setting up multiplai-kit..."
 echo "  Workspace: $WORKSPACE"
 echo "  Name: $GIT_AUTHOR_NAME"
-echo "  Docker: $( $HAS_DOCKER && echo 'available (container mode)' || echo 'not found (bare mode)' )"
+echo "  Docker: $_docker_state"
 echo ""
 
 # Bare mode is a supported rung of the install ladder, not a degraded fallback:
@@ -110,8 +126,19 @@ echo ""
 # which is what makes skip-permissions safe. Say which rung this install is;
 # don't dress a supported configuration up as a failure — and say what the next
 # rung buys, or the reader has no basis for choosing between them.
-if ! $HAS_DOCKER; then
-  echo "Docker not found or not running — setting up for bare mode."
+if $DOCKER_INSTALLED && ! $HAS_DOCKER; then
+  echo "Docker is installed but the daemon is not running — skipping the image build."
+  echo ""
+  echo "  This is a stopped daemon, not a missing one, so setup is NOT configuring"
+  echo "  bare mode: ./claude.sh will still choose container mode on this host and"
+  echo "  will tell you to start Docker rather than launch unsandboxed."
+  echo ""
+  echo "  Start Docker (Docker Desktop, OrbStack, or 'sudo systemctl start docker'),"
+  echo "  then re-run ./setup.sh to fetch container/ and build the image."
+  echo "  To run without a sandbox in the meantime: ./claude.sh --local"
+  echo ""
+elif ! $HAS_DOCKER; then
+  echo "Docker is not installed — setting up for bare mode."
   echo ""
   echo "  Bare mode is a supported way to run the kit: ./claude.sh launches"
   echo "  Claude Code directly on this host, with your whole filesystem in reach."

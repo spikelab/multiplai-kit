@@ -15,6 +15,45 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **Any secret can live in the macOS Keychain: `FOO_KEYCHAIN=<item>` exports
+  `<item>`'s value as `FOO`.** `GH_TOKEN_KEYCHAIN` was hand-wired to one
+  variable; it is now one instance of a rule that applies to every name. Store
+  the item and name it:
+
+  ```bash
+  security add-generic-password -a "$USER" -s "anthropic-key" -w "sk-ant-..." -U
+  # .env or env.<profile>
+  ANTHROPIC_API_KEY_KEYCHAIN="anthropic-key"
+  ```
+
+  and the container receives `ANTHROPIC_API_KEY`. Nothing about existing setups
+  changes: `GH_TOKEN_KEYCHAIN` behaves exactly as before.
+
+  - **An explicitly set `FOO` wins.** `FOO_KEYCHAIN` is consulted only when
+    `FOO` is empty, so `FOO=x ./claude.sh` still overrides for one launch — and
+    `security` never runs for a variable that already has a value. The lookup
+    stays explicit-only: with nothing declared, the Keychain is not touched.
+  - **The resolved value reaches the container.** A variable resolved this way
+    was named by no env file (the file named `FOO_KEYCHAIN`) and is on no
+    keep-list, so the launcher adds it to the forward set explicitly. Without
+    that it would be looked up on the host and dropped at the boundary —
+    `GH_TOKEN` only ever escaped that by being hand-listed.
+  - **`FOO_KEYCHAIN` itself is never forwarded.** It names an item in a Keychain
+    the container cannot reach. Every `*_KEYCHAIN` name is denied dynamically;
+    the hardcoded `GH_TOKEN_KEYCHAIN` denylist entry is gone as redundant.
+  - **One warning, not one per variable.** Over SSH the login keychain is locked
+    and every lookup fails together, so failures are collected into a single
+    message listing each `NAME_KEYCHAIN='item' -> NAME` — never a value. The
+    launch still proceeds; a missing optional secret must not stop a session.
+    The same collection applies to the two unavailability cases (a non-Mac host,
+    and a Mac with `security` off `PATH`), which keep their separate messages.
+  - **App mode still forbids a PAT fallback.** With `GH_TOKEN_APP` in play the
+    resolver skips `GH_TOKEN` alone — a PAT appearing behind an App would swap
+    the session's GitHub identity silently. Every other variable resolves
+    normally in App mode.
+
 ### Fixed
 
 - **A stopped Docker daemon now says so, in both scripts.** `setup.sh` tested

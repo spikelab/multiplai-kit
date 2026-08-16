@@ -141,6 +141,39 @@ item named `gh-token` implicitly; it no longer does. Set
 > that exists. When launching over SSH, use `GH_TOKEN` in `.env` (or the
 > profile) or App mode instead.
 
+### Any secret can live in the Keychain — the `*_KEYCHAIN` convention
+
+`GH_TOKEN_KEYCHAIN` is not special. **`FOO_KEYCHAIN=<item>` means: look `<item>`
+up in the login Keychain and export the result as `FOO`** — for every variable.
+So a per-identity API key can stay out of the profile file entirely:
+
+```bash
+security add-generic-password -a "$USER" -s "anthropic-key-work" -w "sk-ant-..." -U
+```
+
+```bash
+# env.work
+ANTHROPIC_API_KEY_KEYCHAIN="anthropic-key-work"
+```
+
+and the session receives `ANTHROPIC_API_KEY`.
+
+| | |
+|---|---|
+| **Precedence** | An explicitly set `FOO` wins. `FOO_KEYCHAIN` is consulted only when `FOO` is empty, so `FOO=x ./claude.sh` still overrides for one launch |
+| **The lookup** | `security find-generic-password -a "$USER" -s <item> -w`. The item must be stored under your own account |
+| **Forwarding** | `FOO_KEYCHAIN` is never forwarded — it names an item in a Keychain the container cannot reach. The resolved `FOO` is what crosses |
+| **Failure** | One warning listing every variable affected, then the launch proceeds. A missing optional secret must not stop a session |
+
+The single-warning rule matters over SSH: the login keychain is locked there, so
+every lookup fails at once and five secrets would otherwise mean five identical
+walls of text.
+
+`GH_TOKEN` is the one exception, and only in App mode: with `GH_TOKEN_APP` in
+play the launcher will not resolve `GH_TOKEN` from the Keychain, because a PAT
+appearing behind an App would swap the session's GitHub identity without saying
+so. Every other variable resolves normally in App mode.
+
 ### 3. First launch → log into the right Claude account
 
 ```bash

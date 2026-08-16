@@ -527,45 +527,127 @@ if [ "$GH_AUTH_MODE" = app ]; then
     # makes `gh auth login --with-token` refuse outright, so forward none.
     unset GH_TOKEN
     export GH_TOKEN_APP
-else
-    # PAT mode. The Keychain is probed only when GH_TOKEN_KEYCHAIN names an
-    # item — there is no implicit default probe. (The launcher used to try a
-    # default item called `gh-token` even when the variable was never set;
-    # set GH_TOKEN_KEYCHAIN=gh-token to keep that behaviour.)
-    #
-    # Noise policy: a GitHub credential is OPTIONAL, so plain absence — no
-    # GH_TOKEN, no GH_TOKEN_APP, no GH_TOKEN_KEYCHAIN anywhere — launches
-    # silently. A HALF-configured state still warns: a Keychain name that does
-    # not resolve is a misconfiguration worth naming; absence is not.
-    if [ -z "${GH_TOKEN:-}" ] && [ -n "${GH_TOKEN_KEYCHAIN:-}" ]; then
-        # Two failure shapes, two messages. They used to share one branch
-        # (`Darwin` AND `security`), which told a Mac with a trimmed PATH — a
-        # cron launch, an SSH forced command — that Keychain lookups "need
-        # macOS", on macOS. A diagnosis that contradicts the host is worse than
-        # none: it sends the reader looking for the wrong problem.
-        if [ "$(uname)" != "Darwin" ]; then
-            echo "Warning: GH_TOKEN_KEYCHAIN='$GH_TOKEN_KEYCHAIN' is set, but the Keychain exists only on macOS and this host is $(uname). GitHub CLI will not be authenticated."
-            echo "         On this host set GH_TOKEN in .env or env.<profile> instead."
-        elif ! command -v security >/dev/null 2>&1; then
-            echo "Warning: GH_TOKEN_KEYCHAIN='$GH_TOKEN_KEYCHAIN' is set, but 'security' is not on PATH, so the Keychain cannot be read. GitHub CLI will not be authenticated."
-            echo "         This is macOS, so the tool exists — the launch inherited a trimmed PATH (cron and SSH forced commands both do). Put /usr/bin back on PATH, or set GH_TOKEN in .env."
-        else
-            # Exported, not just assigned: forwarding is value-less `-e GH_TOKEN`, which
-            # docker resolves from this process's ENVIRONMENT, so a plain shell variable
-            # would arrive as nothing at all.
-            # `${USER:-…}`, not `$USER`: this runs under `set -u`, and USER is not
-            # guaranteed — a launch from cron, an SSH forced command, or any other
-            # non-login context has an empty environment. Dying with "USER: unbound
-            # variable" on the way to an optional Keychain lookup is a bad trade.
-            GH_TOKEN=$(security find-generic-password -a "${USER:-$(id -un)}" -s "$GH_TOKEN_KEYCHAIN" -w 2>/dev/null || true)
-            export GH_TOKEN
-            if [ -z "${GH_TOKEN:-}" ]; then
-                echo "Warning: Keychain item '$GH_TOKEN_KEYCHAIN' (named by GH_TOKEN_KEYCHAIN) did not resolve — GitHub CLI will not be authenticated."
-                echo "         Keychain lookups also fail over SSH (the login keychain is locked there): use GH_TOKEN in .env, or GH_TOKEN_APP. See docs/PROFILES.md."
+fi
+
+
+# --- Keychain-backed variables: FOO_KEYCHAIN names an item, FOO gets the value
+#
+# One rule for every secret, not a hand-wired case for GitHub. Declare
+#
+#     ANTHROPIC_API_KEY_KEYCHAIN="anthropic-key"
+#
+# and the launcher looks that item up in the login Keychain and exports the
+# result as ANTHROPIC_API_KEY. `GH_TOKEN_KEYCHAIN` is now just the instance of
+# this rule that happens to have shipped first; nothing about it is special
+# except the App-mode exclusion below.
+#
+# Four things this has to get right, and each was a way to get it wrong:
+#
+#  1. **An explicit value wins.** FOO_KEYCHAIN is consulted only when FOO is
+#     empty, which is the rule GH_TOKEN already had and the one that keeps
+#     `FOO=x ./claude.sh` working as a per-launch override.
+#  2. **Explicit-only lookup.** `security` runs only for items a variable
+#     actually names. There is no default item and no probing; with nothing
+#     declared, the Keychain is not touched at all.
+#  3. **Forwarding.** A resolved FOO is in neither `_ENV_FILE_VARS` (the file
+#     declared FOO_KEYCHAIN, not FOO) nor `_ENV_KEEP`, so without the
+#     `_KEYCHAIN_RESOLVED` list below it would be resolved on the host and then
+#     silently dropped at the container boundary — which is exactly what
+#     GH_TOKEN avoided only by being hand-listed in `_ENV_KEEP`.
+#  4. **One warning, not N.** Over SSH the login keychain is locked and every
+#     lookup fails at once, so the failures are collected and reported as a
+#     single message listing the names. Five secrets used to mean five walls of
+#     identical text.
+#
+# Noise policy is unchanged: a credential is OPTIONAL, so plain absence launches
+# silently. A HALF-configured state still warns — a name that resolves to
+# nothing is a misconfiguration worth reporting; absence is not.
+
+# Every FOO_KEYCHAIN that is set, from a file or from the launching shell.
+# `env | cut -d= -f1` is the names-only form (no value ever reaches the
+# transcript). A value containing a newline can put a junk continuation line in
+# that output, so each candidate must also be a shell identifier AND currently
+# resolve through `printenv` — a junk line satisfies neither.
+_KEYCHAIN_DECLS=""
+for _kc in $(env | cut -d= -f1) $_ENV_FILE_VARS; do
+    case "$_kc" in
+        _KEYCHAIN|*[!A-Za-z0-9_]*|[0-9]*) continue ;;
+        *_KEYCHAIN) ;;
+        *) continue ;;
+    esac
+    [ -n "$(printenv "$_kc" 2>/dev/null)" ] || continue
+    case " $_KEYCHAIN_DECLS " in *" $_kc "*) continue ;; esac
+    _KEYCHAIN_DECLS="$_KEYCHAIN_DECLS $_kc"
+done
+
+# Which of them still need a lookup.
+_kc_want=""
+for _kc in $_KEYCHAIN_DECLS; do
+    _kc_target="${_kc%_KEYCHAIN}"
+    # Rule 1: an explicit value wins, and skipping here is also what keeps rule
+    # 2 honest — `security` never runs for a variable that is already set.
+    [ -z "$(printenv "$_kc_target" 2>/dev/null)" ] || continue
+    # App mode forbids a PAT fallback: resolving GH_TOKEN here would swap the
+    # session's GitHub identity without saying so, which is the whole reason
+    # `unset GH_TOKEN` sits in the branch above. Every OTHER variable still
+    # resolves in App mode — this exclusion is about GitHub auth, not about
+    # Keychain lookups.
+    [ "$GH_AUTH_MODE" = app ] && [ "$_kc_target" = GH_TOKEN ] && continue
+    _kc_want="$_kc_want $_kc"
+done
+
+# `NAME_KEYCHAIN='item' -> NAME`, one per line. Prints the ITEM name, never a
+# value: the item name is the thing the reader has to go and fix.
+_kc_render() {
+    for _r in $1; do
+        printf "         %s='%s' -> %s\n" "$_r" "$(printenv "$_r")" "${_r%_KEYCHAIN}"
+    done
+}
+
+if [ -n "$_kc_want" ]; then
+    # Two unavailability shapes, two messages. They used to share one branch
+    # (`Darwin` AND `security`), which told a Mac with a trimmed PATH — a cron
+    # launch, an SSH forced command — that Keychain lookups "need macOS", on
+    # macOS. A diagnosis that contradicts the host is worse than none.
+    if [ "$(uname)" != "Darwin" ]; then
+        echo "Warning: the Keychain exists only on macOS and this host is $(uname), so these cannot resolve:"
+        _kc_render "$_kc_want"
+        echo "         Set the target variables directly in .env or env.<profile> on this host."
+    elif ! command -v security >/dev/null 2>&1; then
+        echo "Warning: 'security' is not on PATH, so the Keychain cannot be read. Unresolved:"
+        _kc_render "$_kc_want"
+        echo "         This is macOS, so the tool exists — the launch inherited a trimmed PATH (cron and SSH forced commands both do). Put /usr/bin back on PATH, or set the values in .env."
+    else
+        _kc_failed=""
+        for _kc in $_kc_want; do
+            _kc_target="${_kc%_KEYCHAIN}"
+            # `${USER:-…}`, not `$USER`: this runs under `set -u`, and USER is
+            # not guaranteed — a launch from cron, an SSH forced command, or any
+            # other non-login context has an empty environment. Dying with
+            # "USER: unbound variable" on the way to an optional lookup is a bad
+            # trade.
+            _kc_value=$(security find-generic-password -a "${USER:-$(id -un)}" -s "$(printenv "$_kc")" -w 2>/dev/null || true)
+            if [ -n "$_kc_value" ]; then
+                # Exported, not merely assigned: forwarding is a value-less
+                # `-e NAME`, which docker resolves from this process's
+                # ENVIRONMENT, so a plain shell variable would arrive as nothing
+                # at all. The value goes in as one quoted word to a builtin —
+                # no process, so nothing reaches `ps`.
+                export "$_kc_target=$_kc_value"
+                _KEYCHAIN_RESOLVED="${_KEYCHAIN_RESOLVED:-} $_kc_target"
+            else
+                _kc_failed="$_kc_failed $_kc"
             fi
+        done
+        unset _kc_value
+        if [ -n "$_kc_failed" ]; then
+            echo "Warning: these Keychain items did not resolve:"
+            _kc_render "$_kc_failed"
+            echo "         Lookups also fail over SSH (the login keychain is locked there): set the values in .env, or use GH_TOKEN_APP for GitHub. See docs/PROFILES.md."
         fi
     fi
 fi
+_KEYCHAIN_RESOLVED="${_KEYCHAIN_RESOLVED:-}"
 
 
 # --- Explicit local mode ---
@@ -905,7 +987,7 @@ _ENV_KEEP="TERM GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTE
 # path; the host path would win on argv order and silently kill agent forwarding.
 _ENV_DENY="WORKSPACE SSH_BUILD_KEY GCP_KEY_FILE CLAUDE_CREDENTIALS_FILE
 GEMINI_CONFIG_DIR IDE_LOCK_DIR IMAGE_NAME CONTAINER_REPO CONTAINER_REF KIT_VENV_VOLUME
-MULTIPLAI_NET GH_TOKEN_KEYCHAIN MULTIPLAI_MOUNT_GEMINI MULTIPLAI_HUB_URL
+MULTIPLAI_NET MULTIPLAI_MOUNT_GEMINI MULTIPLAI_HUB_URL
 MULTIPLAI_HUB_TOKEN MULTIPLAI_DRIVER_TOKEN HOST_HOME CLAUDE_CONFIG_DIR
 CLAUDE_MULTIPLAI_HOME DISABLE_AUTOUPDATER GOOGLE_APPLICATION_CREDENTIALS
 CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
@@ -917,6 +999,13 @@ _flat=""
 for _name in $_ENV_DENY; do _flat="$_flat $_name"; done
 _ENV_DENY="$_flat"
 
+# Every FOO_KEYCHAIN is launcher-only config: it names an item in a Keychain the
+# container cannot reach, so forwarding it sends a pointer to nowhere. The
+# resolved FOO is what the container wants, and it is added to the sweep below.
+# `GH_TOKEN_KEYCHAIN` used to be denied by name in the literal list above; that
+# line is gone because it was one instance of this rule.
+_ENV_DENY="$_ENV_DENY$_KEYCHAIN_DECLS"
+
 # The committer fields fall back to the author fields, and both must be in the
 # ENVIRONMENT (not merely shell variables) for value-less forwarding to find them.
 export GIT_AUTHOR_NAME
@@ -926,7 +1015,12 @@ export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-${GIT_AUTHOR_EMAIL:-}}"
 
 ENV_ARGS=()
 _ENV_SEEN=""
-for _name in $_ENV_FILE_VARS $_ENV_KEEP; do
+# `_KEYCHAIN_RESOLVED` is load-bearing, not belt-and-braces: a variable resolved
+# from the Keychain was never named by an env file (the file named FOO_KEYCHAIN)
+# and is not on the keep-list, so without it the value would be looked up on the
+# host and then dropped at the container boundary. GH_TOKEN only ever escaped
+# that because it is hand-listed in `_ENV_KEEP`.
+for _name in $_ENV_FILE_VARS $_ENV_KEEP $_KEYCHAIN_RESOLVED; do
     case " $_ENV_DENY " in *" $_name "*) continue ;; esac
     case " $_ENV_SEEN " in *" $_name "*) continue ;; esac
     # printenv, not ${!_name}: it reads the same environment docker will read,

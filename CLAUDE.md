@@ -38,7 +38,7 @@ This project has **four distinct env files** (plus their templates). Getting the
 |---|---|---|
 | `.env` | **no** (gitignored) | Base config loaded on every launch. Workspace path, default git identity, GH token, container settings, **and all skill secrets (API keys)**. |
 | `.env.example` | **yes** | Template for `.env`. Mirror every field here (with placeholder values/comments) so new users can `cp .env.example .env`. |
-| `env.<profile>` | **no** (gitignored) | Optional per-profile overlay (e.g. `env.work`, `env.personal`). Usually git identity + `GH_TOKEN_KEYCHAIN`, but any variable is allowed. Loaded by `claude.sh --profile <name>` AFTER `.env`, so overrides the fields it names. |
+| `env.<profile>` | **no** (gitignored) | Optional per-profile overlay (e.g. `env.work`, `env.personal`). Usually git identity + `GH_TOKEN_KEYCHAIN`, but any variable is allowed — including any `FOO_KEYCHAIN`, which resolves a Keychain item into `FOO`. Loaded by `claude.sh --profile <name>` AFTER `.env`, so overrides the fields it names. |
 | `env.example` | **yes** | Template for profile files. Minimal — only the fields a profile is allowed to override. |
 
 **Decision tree when adding a new env var:**
@@ -112,6 +112,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 | `evals/unit/test_claude_sh_env.py` | `claude.sh` env forwarding + GitHub auth-mode selection (stub `docker`) |
 | `evals/unit/test_claude_sh_crossplatform.py` | The `--add-host host.docker.internal:host-gateway` alias on **both** container argv compositions — the interactive `docker run` and the hub driver's, which is a separate call site reached only via the `driver` subcommand — plus GitHub-warning silence when nothing is configured, the two distinct Keychain-unavailable messages (non-Mac vs a Mac with `security` off `PATH`), and the explicit-only Keychain probe — `security` never runs unless `GH_TOKEN_KEYCHAIN` names an item (stub `docker` + stub `security` + stub `uname`) |
 | `evals/unit/test_claude_sh_docker_state.py` | The three-way Docker state `claude.sh` and `setup.sh` must agree on — no binary selects bare mode, a stopped daemon refuses and names the daemon (never a missing image, never a silent drop to bare), a live daemon with no image keeps the `build.sh` message, and `docker info` is asked only after a failure so a healthy launch pays one round-trip. Driver mode separates the same two causes (stub `docker` with failable `info`/`image`, plus a `PATH` with every binary except `docker`) |
+| `evals/unit/test_claude_sh_keychain.py` | The `FOO_KEYCHAIN` convention — that it applies to any name, that an explicit `FOO` wins and suppresses the lookup entirely, that a resolved `FOO` actually crosses into the container while `FOO_KEYCHAIN` never does, that several variables each resolve to their own item, that failures collect into one warning naming items and never values, and that App mode skips `GH_TOKEN` alone (stub `docker` + a per-item stub `security`) |
 | `evals/unit/test_guard_destructive.py` | PreToolUse destructive-command guard |
 | `evals/unit/test_guard_hook_wiring.py` | Whether the guard is reached at all (hook wiring, log-dir creation, fail-closed wrapper) |
 | `evals/unit/test_log_retention.py` | Log rotation/retention helper |

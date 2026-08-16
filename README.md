@@ -133,6 +133,18 @@ The plugin's routing is project-aware. When you start a session and mention a pr
 | `--shell` flag | Container bash shell (for debugging) |
 | Already inside container | Bare mode + `--dangerously-skip-permissions` |
 | No Docker installed | Bare mode (a supported rung, not a failure state): claude runs directly on the host with the whole filesystem in reach, permission prompts the only boundary |
+| Docker installed, daemon stopped | **Error — not bare mode.** Start Docker, or ask for bare mode explicitly with `--local` |
+
+Those last two rows look identical from the outside — `docker` does not answer
+either way — and lead to deliberately different outcomes. Whether Docker is
+*installed* is a durable fact about the machine; whether the daemon is *running*
+is not. A machine with Docker installed has a sandbox, so a stopped daemon is a
+state to fix in ten seconds, and falling back would drop you onto your real
+filesystem with only permission prompts between the agent and it, because you
+forgot to start Docker Desktop. The two errors name which case you are in and
+give different fixes. `setup.sh` draws the same line: with the daemon down it
+skips the image build and says so, rather than reporting that it set you up for
+bare mode.
 
 ```bash
 ./claude.sh                         # container (default)

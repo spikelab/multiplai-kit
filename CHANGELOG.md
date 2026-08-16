@@ -84,6 +84,35 @@ public repo has shipped without in-tree memory hooks from day one (see the
   bare fallback for either. A new CI job (`linux-stopped-daemon-e2e`) stops the
   runner's daemon and pins both halves end to end.
 
+### Documentation
+
+- **The launcher-modes table now has a row for a stopped daemon.** It listed
+  "No Docker installed → bare mode (a supported rung, not a failure state)" and
+  nothing for the case above, so the table promised a fallback that does not
+  happen. Both rows are there now, with the reason they differ: installed-ness
+  is durable, daemon liveness is not.
+
+- **`docs/SKILLS.md` was two packs and several skills out of date.** It had no
+  `multiplai-messaging` and no `multiplai-apple` section at all, while
+  `dotfiles/settings.json` enables both — so the kit shipped skills its own
+  reference never mentioned. It also still listed `code-review` and
+  `security-review`, retired in `multiplai-dev` 0.13.0, and `swift-build` under
+  `multiplai-dev`, which is where it lived before the `multiplai-apple` split.
+  `plan` was missing, and `multiplai-context` was a one-line list of eight
+  namespaced commands against fourteen skills. All eight packs and all 44
+  skills are now listed, with descriptions taken from each skill's own
+  frontmatter.
+
+- **`host-browser` is documented as opt-in in the three places the kit says
+  anything about it** — the skills table, §"Host-bridge requirements", and the
+  `WebFetch`-403 rule in `dotfiles/CLAUDE.md` that sends the agent to it.
+  Container releases after `v0.9.6` deny `agent-browser` unless
+  `~/.local/state/multiplai/host-browser-enabled` exists on the Mac. The
+  `dotfiles/CLAUDE.md` change matters most: it told the agent to reach for the
+  real browser on a 403 and would now walk it into a denial with no instruction
+  for what to do next. It now says to ask the user to create the flag, and not
+  to go hunting for another route.
+
 ### Added
 
 - **The `multiplai-apple` plugin is enabled by default, so `swift-build` keeps

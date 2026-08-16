@@ -45,13 +45,11 @@ Skills are invoked via slash commands in Claude Code: `/skill-name [args]`.
 | Skill | Description |
 |-------|-------------|
 | buildme | Full bootstrap from idea to working code (spec-driven TDD pipeline) |
-| code-review | Thorough code quality review |
-| security-review | Deep security audit |
+| plan | Author a self-contained, executable implementation plan file |
 | deepen | Find module-deepening/refactoring opportunities |
 | codebase-walkthrough | Guided codebase exploration |
 | e2e-test | End-to-end testing |
 | learn-stack | Guided learning for new technologies |
-| swift-build | Swift/iOS/macOS builds via the macOS host bridge |
 | devops-gcp | GCP DevOps workflows |
 | skill-creator | Author new skills |
 | propose-skill | Formalize repeating patterns into skills |
@@ -65,12 +63,47 @@ Skills are invoked via slash commands in Claude Code: `/skill-name [args]`.
 | youtube-transcript | Download YouTube transcripts |
 | screen-demo | Turn screen recordings into polished demo videos |
 | excalidraw | Generate Excalidraw diagrams |
-| host-browser | Drive the real logged-in Chrome on the macOS host |
+| host-browser | Drive the real logged-in Chrome on the macOS host (opt-in — see below) |
+
+### multiplai-messaging — Slack, Gmail, meeting transcripts
+| Skill | Description |
+|-------|-------------|
+| slack | Read, search and post to Slack as yourself — your own `xoxp` user token, no bot |
+| gmail | Search the inbox, read one message, create a draft. It never sends |
+| fireflies | List your Fireflies meetings and pull full transcripts |
+
+Each needs its own credential and nothing else; the setup steps live in the
+skill.
+
+### multiplai-apple — Apple platform builds
+| Skill | Description |
+|-------|-------------|
+| swift-build | Swift/iOS/macOS builds via the macOS host bridge |
+
+An explicit add-on pack: `swift-build` used to live in `multiplai-dev` and was
+split out so a Linux user is not carrying a macOS-only toolchain skill. The kit
+enables it by default because the kit assumes a Mac host.
 
 ### multiplai-context — memory & lifecycle
-Namespaced commands: `/multiplai-context:setup`, `:dream`, `:dream-remember`,
-`:health`, `:memory-health-audit`, `:now`, `:refresh-catalogs`, `:backfill`.
-See the plugin's own README for details.
+| Skill | Description |
+|-------|-------------|
+| setup | Onboarding — 2-question quick setup, or `full` for the whole interview |
+| dream | Generate a processed-learnings proposal from the pending backlog |
+| dream-remember | Review and apply those proposals — the only path that edits memory |
+| memory-bank | Shared memory banks: git repos of memory files a team or household shares |
+| memory-health-audit | Full audit cross-correlating retrieval logs, diary, learnings and memory files |
+| health | Completeness and staleness of memory files, plugin infrastructure, active config |
+| config-audit | Subtractive review of the active config, on a ~60-day cadence |
+| fleet-status | One ranked snapshot of everything in flight — sessions, PRs, CI |
+| costs | API-equivalent cost per chat, skill, subagent, project, model, day |
+| log-doctor | Find failures, anomalies and degradation across the runtime logs |
+| qmd-search | Search the resources knowledge base via qmd (semantic + keyword) |
+| now | Rebuild per-project `now/` status snapshots from recent diary entries |
+| backfill | Reconstruct learnings, diary and `now/` from existing session transcripts |
+| refresh-catalogs | Regenerate the catalog indexes (`--force`, `--dry-run`, `--only`) |
+
+Skills here are invoked namespaced — `/multiplai-context:dream-remember`,
+`/multiplai-context:now`, and so on. See the plugin's own README for details.
 
 ## Host-bridge requirements
 
@@ -78,3 +111,19 @@ See the plugin's own README for details.
 `swift-build`, and `host-browser` shell out to the macOS host over SSH and
 need `SSH_BUILD_USER`/`SSH_BUILD_KEY` configured in `.env` (see
 `.env.example`).
+
+**`host-browser` needs one thing more: an opt-in on the Mac.** It is the only
+bridge tool that reaches your real logged-in Chrome — every cookie, every
+signed-in app — so configuring the bridge does not enable it. In container
+releases after `v0.9.6` the gateway refuses every `agent-browser` verb unless a
+flag file exists:
+
+```bash
+mkdir -p ~/.local/state/multiplai
+touch ~/.local/state/multiplai/host-browser-enabled     # on
+rm ~/.local/state/multiplai/host-browser-enabled        # off
+```
+
+Nothing inside a container can create it, which is the point. A blocked session
+prints the path and both commands. Full reasoning: [multiplai-container
+README](https://github.com/spikelab/multiplai-container#the-host-browser-is-off-by-default).

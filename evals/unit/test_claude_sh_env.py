@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+from _platform_stubs import _pretend_linux, _pretend_macos
+
 KIT_ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = KIT_ROOT / "claude.sh"
 
@@ -551,13 +553,16 @@ def test_unknown_profile_errors_and_lists_real_ones(kit):
 # permissions bug hours later, in someone else's repo.
 #
 # App mode is macOS-only (minting goes over the Mac host bridge), so the cases
-# below put a `uname` stub printing Darwin first on PATH. That stub is NOT
-# confined to this block any more — the native-Linux port added `uname` calls
-# on the PAT/Keychain path too (claude.sh: the App-mode refusal here, and the
-# Keychain-unavailable split between a non-Mac and a Mac with `security` off
-# PATH). Anything it reaches is macOS-only behaviour and reads correctly under
-# a Darwin stub, but do not add a case here assuming `uname` affects nothing
-# else.
+# below pin `uname` — `_pretend_macos` for the cases that must reach macOS-only
+# behaviour, `_pretend_linux` for the two that assert the refusal. Pin it in
+# EVERY case; an unpinned one asserts whatever the developer's laptop is, which
+# is how `test_app_mode_off_darwin_refuses_to_launch` and
+# `test_app_mode_on_a_non_mac_names_the_platform` came to pass on Linux CI while
+# failing on a Mac. The stub is NOT confined to this block — the native-Linux
+# port added `uname` calls on the PAT/Keychain path too (claude.sh: the App-mode
+# refusal here, and the Keychain-unavailable split between a non-Mac and a Mac
+# with `security` off PATH) — so do not add a case here assuming `uname` affects
+# nothing else.
 
 APP_ENV_FILE = """\
 WORKSPACE="{ws}"
@@ -565,12 +570,6 @@ GIT_AUTHOR_NAME="Env File Name"
 GIT_AUTHOR_EMAIL="envfile@example.com"
 GH_TOKEN_APP="acme"
 """
-
-
-def _pretend_macos(kit):
-    stub = kit.stub_dir / "uname"
-    stub.write_text("#!/bin/sh\nprintf 'Darwin\\n'\n")
-    stub.chmod(0o755)
 
 
 def _install_host_minter(kit):
@@ -670,6 +669,7 @@ def test_app_mode_without_the_host_script_refuses_to_launch(kit):
 
 def test_app_mode_off_darwin_refuses_to_launch(kit):
     """Minting needs the macOS host bridge; there is no other route to the key."""
+    _pretend_linux(kit)
     kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
     result = kit.launch("--shell", "-c", "true")
     assert result.status != 0
@@ -780,6 +780,7 @@ def test_app_mode_on_a_non_mac_names_the_platform(kit):
     """The App's private key is in the Mac Keychain; nothing on Linux can mint.
     Bare or containerised, refusing at launch beats a session that cannot
     authenticate."""
+    _pretend_linux(kit)
     _install_host_minter(kit)
     kit.write_env(APP_ENV_FILE.format(ws=kit.workspace))
 

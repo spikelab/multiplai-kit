@@ -180,7 +180,7 @@ Two rules, and they are the whole model:
 
    Empty counts as absent: an empty variable is *not* forwarded, because a variable that is present-but-empty inside the container beats every `${VAR:-fallback}` and `os.environ.get(VAR, default)` downstream. Leaving it out is what lets the default apply.
 
-   The exceptions are variables that only configure the launcher (`IMAGE_NAME`, `CONTAINER_REF`, `KIT_VENV_VOLUME`, `MULTIPLAI_NET`, `GH_TOKEN_KEYCHAIN`, `MULTIPLAI_MOUNT_GEMINI`, `MULTIPLAI_HUB_*`) and ones holding a **host** path that the container mounts elsewhere (`WORKSPACE`, `SSH_BUILD_KEY`, `GCP_KEY_FILE`, `CLAUDE_CREDENTIALS_FILE`, `GEMINI_CONFIG_DIR`). Those still take effect — they just arrive as the container's path, not the host's.
+   The exceptions are variables that only configure the launcher (`IMAGE_NAME`, `CONTAINER_REF`, `KIT_VENV_VOLUME`, `MULTIPLAI_NET`, every `*_KEYCHAIN` name, `MULTIPLAI_MOUNT_GEMINI`, `MULTIPLAI_HUB_*`) and ones holding a **host** path that the container mounts elsewhere (`WORKSPACE`, `SSH_BUILD_KEY`, `GCP_KEY_FILE`, `CLAUDE_CREDENTIALS_FILE`, `GEMINI_CONFIG_DIR`). Those still take effect — they just arrive as the container's path, not the host's.
 
    `GH_TOKEN_APP` is deliberately *not* one of those exceptions: it is forwarded, because the hooks inside the container read it to know which GitHub App profile to mint against. It is a profile **name**, not a secret.
 
@@ -208,7 +208,7 @@ cp env.example env.work
 
 What a profile typically overrides:
 - `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL`
-- `GH_TOKEN_KEYCHAIN` — macOS Keychain key for the GitHub token
+- `GH_TOKEN_KEYCHAIN` — macOS Keychain key for the GitHub token. One instance of the general rule: **`FOO_KEYCHAIN=<item>` looks `<item>` up in the login Keychain and exports the result as `FOO`**, for any variable, so a per-identity secret can live in the Keychain instead of the profile file. An explicitly set `FOO` wins; `FOO_KEYCHAIN` itself is never forwarded (it names an item the container cannot reach). See [`docs/PROFILES.md`](docs/PROFILES.md)
 - `CLAUDE_CREDENTIALS_FILE` — separate Claude OAuth credentials file per profile
 - `GEMINI_CONFIG_DIR` — optional separate Gemini CLI config dir (only mounted when `MULTIPLAI_MOUNT_GEMINI=1`; see [What credentials enter the container](#what-credentials-enter-the-container))
 - `GCP_KEY_FILE` / `CLOUDSDK_CORE_PROJECT` — when a client's cloud credentials should follow their identity rather than apply to every launch

@@ -15,6 +15,40 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Fixed
+
+- **`setup.sh` wrote the plugin's paths to a file Claude Code does not read.**
+  Step 7 put `workspace_dir`, `skills_dir` and `resources_dir` into
+  `dotfiles/settings.local.json`. That is a *project-scope* concept: under
+  `CLAUDE_CONFIG_DIR` nothing reads it, so every fresh install ran with the
+  three options empty while setup printed each path and a reassuring
+  `(written to settings.local.json)`. They now go into the tracked
+  `dotfiles/settings.json` — the only settings file that applies at user scope —
+  and setup **reads them back** before reporting them, because a step that
+  claims success for config it never delivered is the whole bug.
+
+  Two consequences, both deliberate:
+
+  - **A configured checkout now has a dirty worktree.** `settings.json` is
+    tracked and there is no second file that works, so this cost is not
+    avoidable, only chosen. `README.md` names the `git stash push
+    dotfiles/settings.json && git pull --rebase && git stash pop` update path.
+  - **An existing user-scope `settings.local.json` is moved aside** to
+    `settings.local.json.unused`, with its key *names* printed (never values —
+    an `env` block there may hold a secret). Nothing in it was ever applied, so
+    nothing changes by moving it; it is moved rather than merged because
+    folding, say, an `enabledPlugins` block into the live file would silently
+    change effective config. It is renamed rather than deleted because it is
+    the user's file. Leaving it in place is what invites the "local overrides
+    tracked" model, and acting on that model on 2026-08-05 disabled every
+    plugin — the running session did not notice, having already loaded them.
+
+  The `.gitignore` comment claiming the file was "deep-merged over the tracked
+  `settings.json`" is corrected; it never was. The bare-rung CI job now asserts
+  the options are in `settings.json` and that no user-scope
+  `settings.local.json` survives, so the log line can never again outrun the
+  file. Closes #34.
+
 ### Added
 
 - **Any secret can live in the macOS Keychain: `FOO_KEYCHAIN=<item>` exports

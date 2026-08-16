@@ -434,7 +434,17 @@ Memory files are the one thing worth version-controlling. The plugin's `/multipl
 
 ### Plugin Configuration
 
-Set via `settings.json → pluginConfigs["multiplai-context@multiplai"].options` (and/or forwarded `CLAUDE_PLUGIN_OPTION_*` env vars). The options you'll actually touch:
+Set via `settings.json → pluginConfigs["multiplai-context@multiplai"].options` (and/or forwarded `CLAUDE_PLUGIN_OPTION_*` env vars). `setup.sh` writes the three path options there for you, and reads them back before claiming success.
+
+`settings.json` is tracked, so a configured checkout has a permanently dirty
+worktree. That is unavoidable — it is the only settings file Claude Code reads
+at user scope — and it is why updating a runtime is
+`git stash push dotfiles/settings.json && git pull --rebase && git stash pop`,
+or a local `chore(runtime)` commit you rebase each time. Do **not** move these
+options to `settings.local.json`: at user scope nothing reads that file, so the
+config silently stops applying.
+
+The options you'll actually touch:
 
 | Option | Default | Purpose |
 |--------|---------|---------|

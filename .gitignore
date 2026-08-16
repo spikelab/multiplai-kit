@@ -7,9 +7,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 
-# Machine-local settings overlay (written by setup.sh; deep-merged over the
-# tracked settings.json so the tracked file stays clean across `git pull`).
+# Legacy machine-local settings overlay. Claude Code does NOT read this at user
+# scope — setup.sh writes plugin options into the tracked dotfiles/settings.json
+# and moves any leftover copy of this file to .unused (kit #34). Ignored so a
+# pre-existing one, and the .unused rename, never dirty the tree.
 dotfiles/settings.local.json
+dotfiles/settings.local.json.unused
 
 # Claude Code runtime state (created when running)
 dotfiles/.workspace

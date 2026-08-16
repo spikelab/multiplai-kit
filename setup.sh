@@ -2,7 +2,7 @@
 # setup.sh — One-time setup for multiplai-kit
 #
 # Creates workspace directories, installs Python dependencies, configures the
-# kit to point at your workspace (via settings.local.json), installs the
+# kit to point at your workspace (via dotfiles/settings.json), installs the
 # Multiplai plugins, and builds the Docker image if Docker is available.
 # Identity is NOT sed'd into shipped files — it lives in the memory profile.
 
@@ -320,32 +320,61 @@ else
 fi
 
 # --- Step 7: Point the multiplai-context plugin at this workspace ---
-# The shipped settings.json carries empty path placeholders. Rather than
-# rewriting that tracked file (which would leave the tree permanently dirty and
-# make `git pull` updates conflict), write the machine-local paths to
-# settings.local.json — a gitignored overlay. Identity lives in the memory
-# profile (never sed'd in).
+# These paths go in the TRACKED dotfiles/settings.json, because that is the only
+# settings file Claude Code reads at user scope. `settings.local.json` is a
+# project-scope concept: under CLAUDE_CONFIG_DIR nothing reads it, so writing
+# there — which this step used to do — meant a fresh install silently ran with
+# empty workspace_dir/skills_dir/resources_dir while setup printed that it had
+# configured them (kit #34). The same mistake once looked like a feature: moving
+# enabledPlugins into that file on 2026-08-05 disabled every plugin, and the
+# running session did not notice because it had already loaded them.
 #
-# CAUTION: at the user level (CLAUDE_CONFIG_DIR), Claude Code does NOT apply
-# the `env` block from settings.local.json — only settings.json's env lands
-# (verified empirically on CLI 2.1.207, 2026-07-14; settings.local.json is a
-# project-level overlay for env). Anything that must reach the process
-# environment (e.g. DISABLE_AUTO_COMPACT) belongs in the tracked
-# settings.json. Only pluginConfigs paths go here.
+# The cost is a dirty worktree — settings.json is tracked, so a configured
+# runtime carries this drift into every `git pull`. That is a real cost and it
+# is still cheaper than config that does not work; README ▸ "Updating the
+# runtime" covers the stash/rebase. Identity is unaffected: it lives in the
+# memory profile and is never sed'd in.
 STEP=$((STEP + 1))
 echo "[$STEP/$TOTAL_STEPS] Configuring plugin options for this workspace..."
-LOCAL_SETTINGS="$DOTFILES_DIR/settings.local.json"
-[ -f "$LOCAL_SETTINGS" ] || echo '{}' > "$LOCAL_SETTINGS"
+SETTINGS="$DOTFILES_DIR/settings.json"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 jq --arg ws "$WORKSPACE" \
    --arg skills "$DOTFILES_DIR/skills" \
    --arg res "$WORKSPACE/RESOURCES" \
    '.pluginConfigs["multiplai-context@multiplai"].options.workspace_dir = $ws
     | .pluginConfigs["multiplai-context@multiplai"].options.skills_dir = $skills
     | .pluginConfigs["multiplai-context@multiplai"].options.resources_dir = $res' \
-   "$LOCAL_SETTINGS" > "$LOCAL_SETTINGS.tmp" && mv "$LOCAL_SETTINGS.tmp" "$LOCAL_SETTINGS"
-echo "  workspace_dir  = $WORKSPACE   (written to settings.local.json)"
-echo "  skills_dir     = $DOTFILES_DIR/skills"
-echo "  resources_dir  = $WORKSPACE/RESOURCES"
+   "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+
+# Read back what Claude Code will actually see. A step that reports success for
+# config it never delivered is the bug this whole block exists to fix, so the
+# claim is checked rather than asserted.
+_opts='.pluginConfigs["multiplai-context@multiplai"].options'
+for _pair in "workspace_dir=$WORKSPACE" \
+             "skills_dir=$DOTFILES_DIR/skills" \
+             "resources_dir=$WORKSPACE/RESOURCES"; do
+  _key="${_pair%%=*}"; _want="${_pair#*=}"
+  _got=$(jq -r "$_opts.$_key // \"\"" "$SETTINGS")
+  if [ "$_got" != "$_want" ]; then
+    echo "  ERROR: $_key did not land in settings.json (read back: '${_got:-<empty>}')" >&2
+    exit 1
+  fi
+  printf '  %-14s = %s\n' "$_key" "$_want"
+done
+
+# An older setup wrote these options to settings.local.json, where nothing reads
+# them. Leaving the file in place is not harmless: its presence is what invites
+# the "local overrides tracked" model in the first place. Move it aside rather
+# than delete it — it is the user's file — and name its keys, never its values,
+# because an env block there may hold a secret.
+LOCAL_SETTINGS="$DOTFILES_DIR/settings.local.json"
+if [ -f "$LOCAL_SETTINGS" ]; then
+  echo "  Found $LOCAL_SETTINGS, which Claude Code does not read at user scope."
+  echo "  Keys it held (names only): $(jq -r 'keys | join(", ")' "$LOCAL_SETTINGS" 2>/dev/null || echo '<unparseable>')"
+  echo "  Nothing in it was ever applied. Moving it to settings.local.json.unused;"
+  echo "  delete it yourself once you have looked."
+  mv "$LOCAL_SETTINGS" "$LOCAL_SETTINGS.unused"
+fi
 
 # --- Step 8: Install the Multiplai plugins (best effort) ---
 STEP=$((STEP + 1))

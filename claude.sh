@@ -744,7 +744,7 @@ if [ -n "$_OVERLAY_BASE_ID" ]; then
     _CURRENT_BASE_ID=$(docker image inspect -f '{{.Id}}' "$_OVERLAY_BASE_NAME" 2>/dev/null || true)
     if [ -n "$_CURRENT_BASE_ID" ] && [ "$_OVERLAY_BASE_ID" != "$_CURRENT_BASE_ID" ]; then
         echo "[claude] WARNING: overlay image '$IMAGE_NAME' was built on an older '$_OVERLAY_BASE_NAME'."
-        echo "         Rebuild it: container/build-overlay.sh --dir <overlay-dir> --tag $IMAGE_NAME"
+        echo "         Rebuild all images: cd container && ./build.sh   (reads overlays.conf)"
     fi
 fi
 

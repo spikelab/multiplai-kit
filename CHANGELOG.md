@@ -17,14 +17,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Added
 
-- **The launcher warns when an overlay image has gone stale.** Project overlay
-  images (built with `container/build-overlay.sh`, multiplai-container v0.12+)
-  carry the base image's ID as a label; `claude.sh` now compares it against
-  the current base at launch and prints a rebuild hint when a release has
-  rebuilt the base underneath the overlay. Warn-only — the session still
-  launches. Selecting an overlay was already possible (`IMAGE_NAME` in an
-  `env.<profile>` file); it is now documented in `docs/PROFILES.md` and
-  `.env.example`.
+- **Project overlay images, driven by `./setup.sh`.** Register overlays in
+  `overlays.conf` at the kit root (`cp overlays.conf.example overlays.conf`,
+  gitignored) as `name:path` lines pointing at overlay Dockerfiles kept in
+  your projects' repos; `container/build.sh` — which `./setup.sh` runs —
+  builds every entry on top of the base as `claude-multiplai-<name>:local`
+  (multiplai-container v0.12+). Launch with one via `IMAGE_NAME` in an
+  `env.<profile>` file — that already worked and is now documented in
+  `docs/PROFILES.md` and `.env.example`. `claude.sh` additionally warns at
+  launch (warn-only) when the selected overlay was built on an older base
+  image, using the base-ID label the overlay build stamps.
 
 ### Security
 

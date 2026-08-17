@@ -90,10 +90,95 @@ public repo has shipped without in-tree memory hooks from day one (see the
   only then may `CONTAINER_REF` in `setup.sh` be bumped to it — a kit that
   points at a tag predating the profile installs no profile at all. That is
   harmless (the older gateway reads neither file), and setup.sh now says so
-  explicitly instead of skipping in silence. `CONTAINER_REF` is unchanged at
-  `v0.10` here, which does not carry `confine.sb`.
+  explicitly instead of skipping in silence. `CONTAINER_REF` now points at
+  `v0.11`, which is the first tag carrying `confine.sb`.
+
+- **`GETTING-STARTED.md` — a path through the install, in order.** A first-time
+  user previously got a 400-line README organised by subsystem and no route
+  through it. The new guide runs from prerequisites to a working setup to the
+  weekly loop, and covers the three things that most often go wrong on a cold
+  install: that the plugin's Python environment builds in the background and
+  deliberately holds the memory hooks inert until it finishes (up to 15
+  minutes, cleared by running `/multiplai-context:setup`), that the
+  `pluginConfigs` key must be the compound `multiplai-context@multiplai` form
+  because a bare `multiplai` key fails silently, and what actually differs on
+  macOS, Linux and WSL2. The README now points at it and stays the
+  by-subsystem reference.
+
+  It also names four traps that a first-time user hits and cannot diagnose:
+  that `claude plugin install` from a plain shell fails, because the kit
+  registers the marketplace under its own `dotfiles/` and never your
+  `~/.claude` (use `/plugin` inside a session, or prefix
+  `CLAUDE_CONFIG_DIR`); that `git pull` eventually aborts, because `setup.sh`
+  writes your options into the tracked `dotfiles/settings.json` and upstream
+  edits that file every week or two (stash it, pull, pop); that the memory
+  directory is **not** a git repository unless you asked for one in the full
+  interview, so `git revert` is not available for an unwanted memory write
+  until you run `git init` there; and that the `memory_router` setting must be
+  merged into the existing `options` block rather than pasted over it, since
+  replacing it deletes the `workspace_dir` that `setup.sh` wrote and silently
+  relocates your memory.
+
+- **`setup.sh` names all seven skill packs and what each is for**, and closes
+  with the next two commands. It previously listed five — `multiplai-messaging`
+  and `multiplai-apple` existed in the marketplace and were never mentioned, so
+  a new user had no way to learn they were there. The commands it prints are
+  now the `/plugin` form, because the bare `claude plugin install` it used to
+  print does not work from the shell it tells you to run it in.
+
+### Changed
+
+- **The router guidance now carries the measurements, and the recommendation
+  changed.** The README called `llm` "a routing-quality experiment, not
+  steady-state" on the strength of a ~7–10 s/prompt latency figure. That figure
+  is obsolete: disabling extended thinking on the routing call took the median
+  from **18.4 s to 2.9 s**, and that shipped. Meanwhile a backtest of 300 real
+  prompts over 21 days measured `llm` at **F1 48.6 against `token_overlap`'s
+  20.0** — 2.4× better, injecting fewer bytes.
+
+  `token_overlap` remains the default, deliberately: it costs nothing, and a
+  fresh install's memory is mostly templates, so there is little for a better
+  router to be better about. The docs now say when to switch and what it costs
+  — **~$0.035 per prompt** API-equivalent, measured over 1,000+ real router
+  calls, which is ~$21/month at 20 prompts a day and ~$115/month at 110.
+
+- **The `enable_resources` row no longer says "catalog".** As of
+  `multiplai-context` 0.52.0 there is no resources catalog generator — a
+  resources corpus is retrieved through a qmd index you build on the host, and
+  building it is three manual steps a plugin install cannot do. The row now
+  says to leave the option off unless you want to run `setup_qmd.sh`.
 
 ### Fixed
+
+- **"Six themed plugins" in the skills section, contradicting "seven" at the
+  top of the same file.** `README.md` was corrected in one place and not the
+  other, and the stale sentence is the one a reader lands on from the skills
+  section. It now names all seven, flagging `multiplai-apple` as macOS-only.
+
+- **"Each plugin script directory ships … a lockfile resolved at install
+  time."** There is exactly one `uv.lock`, committed at the marketplace root —
+  the marketplace is a single `uv` workspace, and nothing resolves at install
+  time. The replacement says what is actually there.
+
+- **The Docker troubleshooting entry described a fallback that does not
+  happen.** It said setup drops to bare mode when the daemon is stopped.
+  Both scripts refuse to: a stopped daemon is not a missing one, so setup
+  declines to configure bare mode and `claude.sh` exits naming the daemon
+  rather than handing you an unsandboxed session. Both cases are now
+  documented separately, with the right remedy for each.
+
+- **The prerequisites list was wrong in both directions.** It required
+  ripgrep, which setup only warns about, and omitted `curl`, which setup
+  stops without. The Python floor is 3.12, not 3.11.
+
+- **The README told new users their Python dependencies come from PEP 723.**
+  The paragraph directly after Quick Start said plugin scripts declare
+  dependencies via inline PEP 723 metadata and run under `uv run --no-project`.
+  That convention was retired: no shipped plugin script carries a PEP 723
+  block, the marketplace's own `lint_workspace.py` now rejects them, and
+  scripts run under `uv run --project <script-dir>` against a resolved
+  lockfile. It was the first thing a cold reader was told about how the system
+  works, and it was wrong.
 
 - **`setup.sh` wrote the plugin's paths to a file Claude Code does not read.**
   Step 7 put `workspace_dir`, `skills_dir` and `resources_dir` into

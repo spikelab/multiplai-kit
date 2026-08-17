@@ -4,13 +4,15 @@
 
 A distributable Claude Code kit — launcher, container, reference docs, and workspace conventions as a self-contained package. Clone it, run setup, launch via the wrapper script, and get the full system without touching your existing `~/.claude/`.
 
-The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-the-multiplai-context-plugin) plugin (memory, routing, lifecycle) plus six themed skill packs (`multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
+**Installing for the first time? Read [GETTING-STARTED.md](GETTING-STARTED.md) instead of this file.** It walks you from nothing to a working setup and through your first week, in order. This README is organised by subsystem and is the reference you come back to.
+
+The skill library and the memory/context layer ship as **Claude Code plugins from the Multiplai marketplace** (`spikelab/multiplai-cc-mktplace`): the [`multiplai-context`](#the-memory-system-the-multiplai-context-plugin) plugin (memory, routing, lifecycle) plus seven themed skill packs (`multiplai-dev`, `multiplai-research`, `multiplai-writing`, `multiplai-pm`, `multiplai-media`, `multiplai-messaging`, `multiplai-apple`). `setup.sh` installs the marketplace and the context plugin; you pick the skill packs you want.
 
 **Not sure you want the whole kit?** Just want memory on your existing Claude Code? That's one command via the plugin marketplace — no Docker, no clone. [`multiplai`](https://github.com/spikelab/multiplai) is the umbrella repo — it explains what the suite is, which part you actually need, and the adoption ladder from plain Claude Code up to this kit (the full sandboxed environment).
 
 ## Contents
 
-[Prerequisites](#prerequisites) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [The Memory System](#the-memory-system-the-multiplai-context-plugin) · [The Workspace Model](#the-workspace-model) · [Launcher Modes](#launcher-modes) · [Environment Configuration](#environment-configuration) · [Architecture](#architecture) · [What's Included](#whats-included) · [Container Mode](#container-mode) · [How the pieces fit together](#how-the-pieces-fit-together--and-stay-current) · [Customization](#customization) · [Logging](#logging) · [What credentials enter the container](#what-credentials-enter-the-container) · [Data & retention](#data--retention)
+[**Getting started**](GETTING-STARTED.md) · [Prerequisites](#prerequisites) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [The Memory System](#the-memory-system-the-multiplai-context-plugin) · [The Workspace Model](#the-workspace-model) · [Launcher Modes](#launcher-modes) · [Environment Configuration](#environment-configuration) · [Architecture](#architecture) · [What's Included](#whats-included) · [Container Mode](#container-mode) · [How the pieces fit together](#how-the-pieces-fit-together--and-stay-current) · [Customization](#customization) · [Logging](#logging) · [What credentials enter the container](#what-credentials-enter-the-container) · [Data & retention](#data--retention)
 
 ## Prerequisites
 
@@ -47,7 +49,9 @@ cp .env.example .env
 ./claude.sh
 ```
 
-First run prompts for authentication via `/login`. Credentials persist in `~/.claude-container/credentials.json` across container restarts. The plugin's Python scripts declare their own dependencies via PEP 723 inline metadata and run under `uv run --no-project`, so deps are resolved on demand — no manual install or managed-venv step.
+First run prompts for authentication via `/login`. Credentials persist in `~/.claude-container/credentials.json` across container restarts.
+
+You do not install Python dependencies by hand. The marketplace is a single `uv` workspace: each script directory that needs dependencies declares them in its own `pyproject.toml`, and one committed `uv.lock` at the marketplace root fixes the exact versions for all of them. Scripts run under `uv run --project <that directory>`, so `uv` installs what a script needs the first time it runs, from that lock, and reuses it after that.
 
 ## How It Works
 
@@ -297,15 +301,23 @@ Memory routing, diary, learnings extraction, and the autodream gate now live in 
 
 ### Skills (themed marketplace packs)
 
-The skill library ships as six themed plugins from the Multiplai marketplace — `multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging` — install the ones you want. See `docs/SKILLS.md` for the pack index. `dotfiles/skills/` stays available for your own local skills. The `multiplai-context` plugin adds its namespaced commands under `/multiplai-context:*` (below).
+The skill library ships as seven themed plugins from the Multiplai marketplace — `multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging`, `multiplai-apple` (macOS only) — install the ones you want. See `docs/SKILLS.md` for the pack index. `dotfiles/skills/` stays available for your own local skills. The `multiplai-context` plugin adds its namespaced commands under `/multiplai-context:*` (below).
 
 ### Memory, Context & Learning (provided by the plugin)
 
 All of the following is the **`multiplai-context` plugin** — summarized here; see its `README.md` for the authoritative version.
 
 **Per-prompt context routing.** A `UserPromptSubmit` hook routes every prompt against indexed catalogs (memory, and optionally skills/resources) and injects only what's relevant — no memory dump. Two routing strategies:
-- **`token_overlap`** (default) — offline keyword overlap, instant, no model call.
-- **`llm`** — one model call per prompt (default model **Haiku**, `router_model`). Measured ~7–10s/prompt via the Agent SDK (CLI cold-start per call), so it's best treated as a routing-quality experiment, not steady-state. Prefer `token_overlap` for daily use.
+| | `token_overlap` (default) | `llm` |
+|---|---|---|
+| How | Offline keyword overlap | One Haiku call per prompt (`router_model`) |
+| Added latency | None | **~2.9 s** median |
+| Cost | None | **~$0.035/prompt** API-equivalent |
+| Accuracy (F1) | **20.0** | **48.6** |
+
+`llm` is **2.4× more accurate** and injects fewer bytes — both from one backtest of 300 real prompts drawn from 273 chats over 21 days, scored against a hindsight oracle. It is a real steady-state option, not an experiment: extended thinking is disabled on the routing call, which took the median from 18.4 s to 2.9 s and is what makes it viable inside a blocking hook.
+
+The default stays `token_overlap` because it is free and because a new install's memory is mostly templates — there is little for a smarter router to be smarter about yet. **Switch to `llm` once your memory is real and you notice the wrong files being injected.** Cost sizing against your own volume is in [GETTING-STARTED.md → Choosing a memory router](GETTING-STARTED.md#choosing-a-memory-router).
 
 **Re-recommendation cooldown.** After a file is injected, it's suppressed from re-injection for `recommend_cooldown_turns` turns (default 4) — it's already in the conversation. The `PreCompact` hook clears the map after compaction (the content was summarized away), so a longer cooldown can never starve the model.
 
@@ -454,7 +466,7 @@ The options you'll actually touch:
 | `recommend_cooldown_turns` | `4` | Turns to suppress re-injecting a just-injected file (`0` disables) |
 | `catalog_model` | `claude-sonnet-4-6` | Model for LLM catalog generation |
 | `enable_skills` / `skills_dir` | `false` / `~/.claude/skills` | Optionally catalog skills for routing (the kit points `skills_dir` at `dotfiles/skills`) |
-| `enable_resources` / `resources_dir` | `false` / `""` | Optionally catalog a research/reference corpus |
+| `enable_resources` / `resources_dir` | `false` / `""` | Optionally retrieve a research/reference corpus per prompt, through a qmd index you build on the host. Not a one-command feature yet — leave off unless you want to run `setup_qmd.sh`. |
 | `checkpoint_hard_stop_tokens` | `250000` (kit default; `0` upstream) | Stop accepting new prompts above this many context tokens until you hand off. `0` makes the handoff advisory. See [Context: the kit hands off](#context-the-kit-hands-off-it-does-not-compact) |
 | `anthropic_api_key` | _(sensitive)_ | API-key fallback when the Agent SDK is unavailable |
 

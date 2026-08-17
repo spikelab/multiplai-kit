@@ -15,6 +15,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **The launcher warns when an overlay image has gone stale.** Project overlay
+  images (built with `container/build-overlay.sh`, multiplai-container v0.12+)
+  carry the base image's ID as a label; `claude.sh` now compares it against
+  the current base at launch and prints a rebuild hint when a release has
+  rebuilt the base underneath the overlay. Warn-only — the session still
+  launches. Selecting an overlay was already possible (`IMAGE_NAME` in an
+  `env.<profile>` file); it is now documented in `docs/PROFILES.md` and
+  `.env.example`.
+
 ### Security
 
 - **`setup.sh` no longer runs `$WORKSPACE` through `eval`, and now canonicalizes

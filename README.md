@@ -466,7 +466,7 @@ The options you'll actually touch:
 | `recommend_cooldown_turns` | `4` | Turns to suppress re-injecting a just-injected file (`0` disables) |
 | `catalog_model` | `claude-sonnet-4-6` | Model for LLM catalog generation |
 | `enable_skills` / `skills_dir` | `false` / `~/.claude/skills` | Optionally catalog skills for routing (the kit points `skills_dir` at `dotfiles/skills`) |
-| `enable_resources` / `resources_dir` | `false` / `""` | Optionally catalog a research/reference corpus |
+| `enable_resources` / `resources_dir` | `false` / `""` | Optionally retrieve a research/reference corpus per prompt, through a qmd index you build on the host. Not a one-command feature yet — leave off unless you want to run `setup_qmd.sh`. |
 | `checkpoint_hard_stop_tokens` | `250000` (kit default; `0` upstream) | Stop accepting new prompts above this many context tokens until you hand off. `0` makes the handoff advisory. See [Context: the kit hands off](#context-the-kit-hands-off-it-does-not-compact) |
 | `anthropic_api_key` | _(sensitive)_ | API-key fallback when the Agent SDK is unavailable |
 

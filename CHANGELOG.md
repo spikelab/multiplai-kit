@@ -126,6 +126,12 @@ public repo has shipped without in-tree memory hooks from day one (see the
   — **~$0.034 per prompt** API-equivalent, measured over 1,016 real router
   calls, which is ~$20/month at 20 prompts a day and ~$115/month at 110.
 
+- **The `enable_resources` row no longer says "catalog".** As of
+  `multiplai-context` 0.52.0 there is no resources catalog generator — a
+  resources corpus is retrieved through a qmd index you build on the host, and
+  building it is three manual steps a plugin install cannot do. The row now
+  says to leave the option off unless you want to run `setup_qmd.sh`.
+
 ### Fixed
 
 - **The README told new users their Python dependencies come from PEP 723.**

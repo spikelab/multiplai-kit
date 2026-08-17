@@ -23,14 +23,90 @@ fi
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 
-# Expand ~ and $HOME in WORKSPACE, strip trailing slash
-WORKSPACE=$(eval echo "${WORKSPACE:-}")
-WORKSPACE="${WORKSPACE%/}"
+# --- WORKSPACE: normalize, then canonicalize ---------------------------------
+#
+# This used to be one line — `WORKSPACE=$(eval echo "$WORKSPACE")` — which does
+# not expand a path so much as re-parse it as shell source. Most metacharacters
+# failed loudly there, but two did not: `#` opened a comment, so `/tmp/Work #2`
+# became `/tmp/Work`, and `;` truncated the value *and* executed the tail. The
+# wrong value then propagates everywhere — `mkdir -p` scaffolds the wrong
+# directory, `dotfiles/.workspace` and `settings.json` name it, and on a Mac it
+# is what gets declared to the host bridge and handed to `sandbox-exec -D
+# WORKSPACE=`, i.e. the write jail ends up around a *parent* of the directory
+# the operator configured.
+#
+# So the value is treated as data: expand a leading `~` ourselves (the only
+# expansion a path in `.env` actually needs — `.env` is sourced, so a
+# double-quoted `$HOME` has already expanded by the time we see it) and refuse
+# anything that would still need a shell to interpret.
+normalize_workspace() {
+  case "$WORKSPACE" in
+    '~')   WORKSPACE="$HOME" ;;
+    '~/'*) WORKSPACE="$HOME/${WORKSPACE#'~/'}" ;;
+  esac
 
-if [ -z "${WORKSPACE:-}" ]; then
+  # Strip trailing slashes — but never turn "/" into "". Doubled *interior*
+  # slashes and `..` are left to canonicalize_workspace below, which is the
+  # only thing that can resolve them correctly.
+  while [ "${#WORKSPACE}" -gt 1 ] && [ "${WORKSPACE%/}" != "$WORKSPACE" ]; do
+    WORKSPACE="${WORKSPACE%/}"
+  done
+
+  case "$WORKSPACE" in
+    *'$'*)
+      echo "Error: WORKSPACE still contains an unexpanded variable: $WORKSPACE"
+      echo "  .env is sourced, so let the shell expand it there:"
+      echo "      WORKSPACE=\"\$HOME/knowhere\"   — not '\$HOME/knowhere'"
+      echo "  A leading ~ works too. setup.sh no longer evals this value."
+      exit 1
+      ;;
+  esac
+
+  case "$WORKSPACE" in
+    *[\`\;\&\|\<\>\(\)\{\}\[\]\*\?\!\\\'\"\~\#]*|*[[:cntrl:]]*)
+      echo "Error: WORKSPACE contains a shell metacharacter: $WORKSPACE"
+      echo "  Spaces and non-ASCII are fine. These are not:"
+      echo "      \` ; & | < > ( ) { } [ ] * ? ! \\ ' \" ~ #   (or a control character)"
+      echo "  Nothing here interprets them any more, but the same string is"
+      echo "  handed to the host sandbox profile and to every tool downstream,"
+      echo "  and one missing quote anywhere would. Rename or move the"
+      echo "  directory, then set WORKSPACE in .env."
+      exit 1
+      ;;
+  esac
+}
+
+# Resolve symlinks, `..` and doubled slashes to the path the kernel uses.
+#
+# The declared workspace reaches `sandbox-exec -D WORKSPACE=` and lands in an
+# SBPL `(subpath …)`, which is matched against *canonical* paths. A workspace
+# reached through a symlinked parent (`/tmp` → `/private/tmp`, an external
+# volume, a symlinked `~/Documents`) therefore matches nothing and every write
+# inside the real workspace is denied — the profile fails closed, so this costs
+# availability rather than containment, but it breaks every bridge build.
+# `..` and `//` do the same thing for the same reason.
+#
+# A no-op until the directory exists: `cd -P` needs something to enter, and
+# Step 1 is what creates it. Called on both sides of that.
+canonicalize_workspace() {
+  local resolved=""
+  [ -d "$WORKSPACE" ] || return 0
+  resolved=$(cd -P "$WORKSPACE" 2>/dev/null && pwd -P) || resolved=""
+  if [ -z "$resolved" ]; then
+    echo "Error: WORKSPACE exists but cannot be entered: $WORKSPACE"
+    echo "  Check the permissions on it and on every parent directory."
+    exit 1
+  fi
+  WORKSPACE="$resolved"
+}
+
+WORKSPACE="${WORKSPACE:-}"
+if [ -z "$WORKSPACE" ]; then
   echo "Error: WORKSPACE not set in .env"
   exit 1
 fi
+normalize_workspace
+canonicalize_workspace
 
 # Catch the shipped placeholder before mkdir fails with a raw permission error.
 case "$WORKSPACE" in
@@ -162,6 +238,12 @@ echo "[$STEP/$TOTAL_STEPS] Creating workspace directories..."
 # measurement, a published artifact. INBOX/ is scratch and is gitignored, so
 # anything that must survive has to leave it.
 mkdir -p "$WORKSPACE"/{INBOX,PROJECTS,RESOURCES,ARTIFACTS,.multiplai/{memory,diary,learnings,now,data}}
+# Second call: on a first install the directory did not exist above, so this is
+# the first point at which `..`, `//` and symlinked parents can be resolved.
+# Everything that records the path — dotfiles/.workspace, settings.json, the
+# host-bridge declaration — is downstream of here.
+canonicalize_workspace
+
 
 # --- Step 2: Copy memory templates ---
 STEP=$((STEP + 1))

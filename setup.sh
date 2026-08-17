@@ -464,12 +464,16 @@ if command -v claude &>/dev/null; then
   if CLAUDE_CONFIG_DIR="$DOTFILES_DIR" claude plugin marketplace add spikelab/multiplai-cc-mktplace 2>/dev/null \
      && CLAUDE_CONFIG_DIR="$DOTFILES_DIR" claude plugin install multiplai-context@multiplai 2>/dev/null; then
     echo "  Installed multiplai-context from the marketplace."
-    echo "  Optional skill packs (install the ones you want):"
-    echo "    claude plugin install multiplai-pm@multiplai"
-    echo "    claude plugin install multiplai-writing@multiplai"
-    echo "    claude plugin install multiplai-research@multiplai"
-    echo "    claude plugin install multiplai-dev@multiplai"
-    echo "    claude plugin install multiplai-media@multiplai"
+    echo "  Optional skill packs — start with none, add one when a task needs it:"
+    echo "    claude plugin install multiplai-dev@multiplai        # buildme, skill authoring, review"
+    echo "    claude plugin install multiplai-research@multiplai   # deep research, insight extraction"
+    echo "    claude plugin install multiplai-writing@multiplai    # writing in your own voice"
+    echo "    claude plugin install multiplai-pm@multiplai         # product/PM work"
+    echo "    claude plugin install multiplai-media@multiplai      # transcription, YouTube, browser"
+    echo "    claude plugin install multiplai-messaging@multiplai  # Slack, email"
+    echo "    claude plugin install multiplai-apple@multiplai      # Swift / Xcode / iOS"
+    echo "  Next: launch with ./claude.sh, then run /multiplai-context:setup"
+    echo "  Full walkthrough: GETTING-STARTED.md"
   else
     echo "  Could not install from the marketplace (offline, or claude not logged in)."
     echo "  Install later from inside Claude Code:"

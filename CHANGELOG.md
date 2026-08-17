@@ -90,10 +90,52 @@ public repo has shipped without in-tree memory hooks from day one (see the
   only then may `CONTAINER_REF` in `setup.sh` be bumped to it — a kit that
   points at a tag predating the profile installs no profile at all. That is
   harmless (the older gateway reads neither file), and setup.sh now says so
-  explicitly instead of skipping in silence. `CONTAINER_REF` is unchanged at
-  `v0.10` here, which does not carry `confine.sb`.
+  explicitly instead of skipping in silence. `CONTAINER_REF` now points at
+  `v0.11`, which is the first tag carrying `confine.sb`.
+
+- **`GETTING-STARTED.md` — a path through the install, in order.** A first-time
+  user previously got a 400-line README organised by subsystem and no route
+  through it. The new guide runs from prerequisites to a working setup to the
+  weekly loop, and covers the three things that most often go wrong on a cold
+  install: that the plugin's Python environment builds in the background and
+  deliberately holds the memory hooks inert until it finishes (up to 15
+  minutes, cleared by running `/multiplai-context:setup`), that the
+  `pluginConfigs` key must be the compound `multiplai-context@multiplai` form
+  because a bare `multiplai` key fails silently, and what actually differs on
+  macOS, Linux and WSL2. The README now points at it and stays the
+  by-subsystem reference.
+
+- **`setup.sh` names all seven skill packs and what each is for**, and closes
+  with the next two commands. It previously listed five — `multiplai-messaging`
+  and `multiplai-apple` existed in the marketplace and were never mentioned, so
+  a new user had no way to learn they were there.
+
+### Changed
+
+- **The router guidance now carries the measurements, and the recommendation
+  changed.** The README called `llm` "a routing-quality experiment, not
+  steady-state" on the strength of a ~7–10 s/prompt latency figure. That figure
+  is obsolete: disabling extended thinking on the routing call took the median
+  from **18.4 s to 2.9 s**, and that shipped. Meanwhile a backtest of 300 real
+  prompts over 21 days measured `llm` at **F1 48.6 against `token_overlap`'s
+  20.0** — 2.4× better, injecting fewer bytes.
+
+  `token_overlap` remains the default, deliberately: it costs nothing, and a
+  fresh install's memory is mostly templates, so there is little for a better
+  router to be better about. The docs now say when to switch and what it costs
+  — **~$0.034 per prompt** API-equivalent, measured over 1,016 real router
+  calls, which is ~$20/month at 20 prompts a day and ~$115/month at 110.
 
 ### Fixed
+
+- **The README told new users their Python dependencies come from PEP 723.**
+  The paragraph directly after Quick Start said plugin scripts declare
+  dependencies via inline PEP 723 metadata and run under `uv run --no-project`.
+  That convention was retired: no shipped plugin script carries a PEP 723
+  block, the marketplace's own `lint_workspace.py` now rejects them, and
+  scripts run under `uv run --project <script-dir>` against a resolved
+  lockfile. It was the first thing a cold reader was told about how the system
+  works, and it was wrong.
 
 - **`setup.sh` wrote the plugin's paths to a file Claude Code does not read.**
   Step 7 put `workspace_dir`, `skills_dir` and `resources_dir` into

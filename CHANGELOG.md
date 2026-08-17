@@ -148,7 +148,26 @@ public repo has shipped without in-tree memory hooks from day one (see the
   building it is three manual steps a plugin install cannot do. The row now
   says to leave the option off unless you want to run `setup_qmd.sh`.
 
+### Added
+
+- **A `## Platforms` section in the README**, directly after Prerequisites —
+  the point at which a reader decides whether their machine is supported. Six
+  rows covering the only things that actually differ: container runtime, the
+  host bridge, the bridge write-jail, GitHub auth, Keychain lookup, and local
+  transcription. Two of those were previously undiscoverable except by hitting
+  the error: `GH_TOKEN_APP` is macOS-only and `claude.sh` exits if a Linux host
+  sets it (the App's private key lives in the Keychain), and `FOO_KEYCHAIN`
+  resolves nothing off a Mac. The README had no platform section at all, so the
+  "not Docker Desktop for Linux" warning existed only in `GETTING-STARTED.md`
+  and a Linux reader who came to the README with a specific question never met
+  it.
+
 ### Fixed
+
+- **The README's prerequisites were wrong in the same three ways the guide's
+  were.** Required listed ripgrep, which `setup.sh` only warns about, and
+  omitted `curl`, which it stops without. The Python floor is 3.12, not 3.11.
+  ripgrep moves to Recommended with a note that setup carries on without it.
 
 - **"Six themed plugins" in the skills section, contradicting "seven" at the
   top of the same file.** `README.md` was corrected in one place and not the

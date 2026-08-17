@@ -12,24 +12,48 @@ The skill library and the memory/context layer ship as **Claude Code plugins fro
 
 ## Contents
 
-[**Getting started**](GETTING-STARTED.md) · [Prerequisites](#prerequisites) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [The Memory System](#the-memory-system-the-multiplai-context-plugin) · [The Workspace Model](#the-workspace-model) · [Launcher Modes](#launcher-modes) · [Environment Configuration](#environment-configuration) · [Architecture](#architecture) · [What's Included](#whats-included) · [Container Mode](#container-mode) · [How the pieces fit together](#how-the-pieces-fit-together--and-stay-current) · [Customization](#customization) · [Logging](#logging) · [What credentials enter the container](#what-credentials-enter-the-container) · [Data & retention](#data--retention)
+[**Getting started**](GETTING-STARTED.md) · [Prerequisites](#prerequisites) · [Platforms](#platforms) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [The Memory System](#the-memory-system-the-multiplai-context-plugin) · [The Workspace Model](#the-workspace-model) · [Launcher Modes](#launcher-modes) · [Environment Configuration](#environment-configuration) · [Architecture](#architecture) · [What's Included](#whats-included) · [Container Mode](#container-mode) · [How the pieces fit together](#how-the-pieces-fit-together--and-stay-current) · [Customization](#customization) · [Logging](#logging) · [What credentials enter the container](#what-credentials-enter-the-container) · [Data & retention](#data--retention)
 
 ## Prerequisites
 
-**Required:**
+**Required** — `setup.sh` stops without these:
 - Claude Code CLI (`npm install -g @anthropic-ai/claude-code`)
 - Claude Max plan or API key (the plugin's LLM calls use the Agent SDK, with an API-key fallback)
-- Python 3.11+ and uv (or pip)
+- Python 3.12+ and uv (uv fetches its own interpreter if yours is older)
 - git
 - jq
-- ripgrep (`rg`)
+- curl
 
 **Recommended:**
 - Docker / OrbStack (container mode is the default — without it, Claude runs unsandboxed on your host)
+- ripgrep (`rg`) — setup warns and carries on without it
 - ffmpeg (for youtube-transcript audio fallback and the transcribe skill)
 
 **Optional (macOS only):**
-- mlx-whisper (for local audio transcription via Metal GPU)
+- mlx-whisper (for local audio transcription via Metal GPU) — `setup.sh` attempts this automatically
+
+## Platforms
+
+macOS and Linux. Everything that matters — the memory loop — is identical on
+both; what differs is the host-side extras, all of which are macOS-only
+because they wrap macOS-only tools.
+
+| | macOS | Linux |
+|---|---|---|
+| **Container runtime** | OrbStack preferred — containers resolve as `<name>.orb.local` from the host, no port publishing | Docker engine or Podman. **Not Docker Desktop for Linux** — its VM indirection breaks the loopback bridging some features assume |
+| **Host bridge** | Opt-in. Lets a session run an allowlisted set of host tools: Xcode builds, browser automation, local transcription | None. Nothing on a Linux host needs reaching out for |
+| **Bridge write-jail** | `setup.sh` declares your workspace to the host and installs `confine.sb`, so bridge commands cannot write outside it | N/A — no bridge to confine |
+| **GitHub auth** | GitHub App (`GH_TOKEN_APP`) or a PAT | **PAT only.** `claude.sh` exits with an explanation if `GH_TOKEN_APP` is set — the App's private key lives in the macOS Keychain |
+| **Credential lookup** | `FOO_KEYCHAIN` resolves any variable from the Keychain | Not available. Set the variables directly in `.env` or `env.<profile>`; the launcher warns once and continues |
+| **Local transcription** | `mlx-whisper` installed at setup (Metal) | Skipped |
+
+Windows via WSL2 runs the Linux path from inside the distribution — clone,
+configure and launch there, not from PowerShell. It has had no real-world
+testing yet, so treat anything you hit as worth reporting rather than as your
+mistake.
+
+Per-platform detail, and what to do when a step fails, is in
+[GETTING-STARTED.md](GETTING-STARTED.md#what-runs-where).
 
 ## Quick Start
 

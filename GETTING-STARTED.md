@@ -10,7 +10,8 @@ This file assumes you have decided to try it.
 **Contents:** [Before you start](#before-you-start) · [Install](#install) ·
 [Your first session](#your-first-session) · [The loop](#the-loop-work-dream-review) ·
 [Choosing a memory router](#choosing-a-memory-router) ·
-[What runs where](#what-runs-where) · [When something goes wrong](#when-something-goes-wrong)
+[What runs where](#what-runs-where) · [When something goes wrong](#when-something-goes-wrong) ·
+[Where things live](#where-things-live) · [Keeping current](#keeping-current)
 
 ---
 
@@ -22,8 +23,9 @@ This file assumes you have decided to try it.
 |---|---|
 | **Claude Code CLI** | `npm install -g @anthropic-ai/claude-code` |
 | **A Claude Max plan** *(or an API key)* | Multiplai makes its own Claude calls — routing, diary, learnings. On Max these come out of your rate limit; with an API key they are billed. |
-| **Python 3.11+ and [uv](https://docs.astral.sh/uv)** | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| **git, jq, ripgrep** | Your package manager has all three. |
+| **Python 3.12+ and [uv](https://docs.astral.sh/uv)** | `curl -LsSf https://astral.sh/uv/install.sh \| sh`. uv fetches its own interpreter if yours is older. |
+| **git, jq, curl** | Setup stops without them. |
+| **ripgrep** *(optional)* | Setup warns and carries on. |
 
 ### You want
 
@@ -59,7 +61,7 @@ cp .env.example .env
 Open `.env` and set three things:
 
 ```sh
-WORKSPACE=/absolute/path/to/your/workspace   # no ~, no relative paths
+WORKSPACE=/absolute/path/to/your/workspace   # absolute, or a leading ~
 GIT_AUTHOR_NAME="Your Name"
 GIT_AUTHOR_EMAIL=you@example.com
 ```
@@ -77,27 +79,43 @@ installs the Multiplai plugins from the marketplace. It also fetches the
 container image if Docker is running.
 
 **`setup.sh` is safe to re-run.** It skips what already exists. Run it again
-after every `git pull`.
+after every pull — and see [Keeping current](#keeping-current) for why the pull
+itself needs one extra step.
 
 ### Install the skill packs you want
 
 `setup.sh` installs `multiplai-context` — the memory engine, which is the part
 that matters. The skill packs are optional and none of them are needed for the
-memory loop to work. Install from inside Claude Code with `/plugin`, or from
-the shell:
+memory loop to work.
+
+**Install them from inside a session**, with `/plugin`:
+
+```
+/plugin install multiplai-dev@multiplai        # buildme TDD pipeline, skill authoring, planning
+/plugin install multiplai-research@multiplai   # deep research, insight extraction, interviewing
+/plugin install multiplai-writing@multiplai    # writing with your own voice
+/plugin install multiplai-pm@multiplai         # product/PM work
+/plugin install multiplai-media@multiplai      # transcription and YouTube; browser automation is macOS-only
+/plugin install multiplai-messaging@multiplai  # Slack, email
+/plugin install multiplai-apple@multiplai      # Swift / Xcode / iOS — macOS only
+```
+
+**Not from a plain shell — at least, not without a prefix.** The kit
+deliberately does not touch your `~/.claude`: it sets `CLAUDE_CONFIG_DIR` to
+its own `dotfiles/` directory, and that is where the marketplace is
+registered. A bare `claude plugin install multiplai-dev@multiplai` in your
+own shell fails with *"Plugin not found in marketplace"*, and its suggested
+remedy (`marketplace update`) is the wrong one. If you want the shell form:
 
 ```bash
-claude plugin install multiplai-dev@multiplai        # buildme TDD pipeline, skill authoring, code review
-claude plugin install multiplai-research@multiplai   # deep research, insight extraction, interviewing
-claude plugin install multiplai-writing@multiplai    # writing with your own voice
-claude plugin install multiplai-pm@multiplai         # product/PM work
-claude plugin install multiplai-media@multiplai      # transcription, YouTube, browser automation
-claude plugin install multiplai-messaging@multiplai  # Slack, email
-claude plugin install multiplai-apple@multiplai      # Swift / Xcode / iOS
+CLAUDE_CONFIG_DIR=/path/to/multiplai-kit/dotfiles \
+  claude plugin install multiplai-dev@multiplai
 ```
 
 Start with none of them. Add one when you hit a task it covers — every pack you
-install is more skill descriptions competing for the model's attention.
+install is more skill descriptions competing for the model's attention. (The
+kit ships all seven marked enabled, so they appear in `/plugin` immediately;
+enabled is not installed, and an uninstalled pack costs you nothing.)
 
 ---
 
@@ -177,8 +195,19 @@ Two things it will never write without you saying so:
 - **Anything targeting a `CLAUDE.md`.** Refused in code, in every mode.
 
 Everything it does apply lands in a **receipt** under
-`.multiplai/dreams/applied/`, and your memory directory is a git repository —
-the receipt ends with the exact `git revert` that undoes the batch.
+`.multiplai/dreams/applied/`, naming every file it touched.
+
+**Make your memory directory a git repository before you rely on undo.**
+Neither `setup.sh` nor the quick setup does this for you — it is an opt-in
+offer in the *full* interview (`/multiplai-context:setup full`). Without it
+the receipt tells you what changed but you have no way back. One command,
+worth running today:
+
+```bash
+git -C <workspace>/.multiplai/memory init && \
+  git -C <workspace>/.multiplai/memory add -A && \
+  git -C <workspace>/.multiplai/memory commit -m "baseline"
+```
 
 **Keep the backlog small.** A proposal of 200+ items is not reviewable in one
 sitting, and an unreviewed proposal is the failure mode this system has to
@@ -203,14 +232,14 @@ injects fewer bytes while doing it.
 
 ### What `llm` actually costs
 
-Measured, not estimated — from one heavy user's own cost ledger, 1,016 router
-calls between 2026-08-07 and 2026-08-17 on `claude-haiku-4-5`:
+Measured, not estimated — from one heavy user's own cost ledger, over 1,000
+router calls between 2026-08-07 and 2026-08-17 on `claude-haiku-4-5`:
 
 | | |
 |---|---|
-| Per prompt | **$0.034** mean, $0.024 median |
-| Heavy use (~110 prompts/day) | **~$3.80/day**, roughly **$115/month** |
-| Light use (~20 prompts/day) | **~$0.70/day**, roughly **$20/month** |
+| Per prompt | **$0.035** mean, $0.025 median |
+| Heavy use (~110 prompts/day) | **~$3.85/day**, roughly **$115/month** |
+| Light use (~20 prompts/day) | **~$0.70/day**, roughly **$21/month** |
 
 Read those as **API-equivalent** figures. On a Max plan these calls consume
 your rate limit rather than billing you; the dollar amounts tell you the
@@ -230,17 +259,35 @@ router to be smarter about.
 being injected, or the right ones missing. That is the symptom it fixes, and
 by then you will have the usage numbers to price it against your own volume.
 
-To switch, set this in `$CLAUDE_CONFIG_DIR/settings.json`:
+To switch, **add one line** to the existing `options` block in
+`$CLAUDE_CONFIG_DIR/settings.json` — which for a kit install is
+`multiplai-kit/dotfiles/settings.json`:
+
+```json
+"memory_router": "llm"
+```
+
+so that the block reads something like:
 
 ```json
 {
   "pluginConfigs": {
     "multiplai-context@multiplai": {
-      "options": { "memory_router": "llm" }
+      "options": {
+        "workspace_dir": "/your/workspace",
+        "skills_dir": "",
+        "resources_dir": "",
+        "memory_router": "llm"
+      }
     }
   }
 }
 ```
+
+**Merge, do not replace.** `setup.sh` writes `workspace_dir` into that same
+`options` object, and pasting a document that contains only `memory_router`
+deletes it. Nothing errors — your memory silently relocates to the default
+directory and the files you have been building stop being read.
 
 The key must be the compound `multiplai-context@multiplai` form. A bare
 `multiplai` key **fails silently** — Claude Code ignores it and every option
@@ -259,6 +306,15 @@ and a couple of conveniences depend on OrbStack's loopback routing.
 macOS also gets an opt-in bridge that lets a session run a small allowlist of
 tools on the host — Xcode builds, browser automation, local transcription.
 Everything else works without it.
+
+**The bridge is write-jailed to the workspace you nominated.** `setup.sh`
+records that path on the host and installs a sandbox profile alongside it, so
+a bridge command cannot write outside it. The container never supplies the
+boundary — a limit set by the thing being confined is not a limit. Two
+consequences worth knowing: the jail restricts *writes* only, so anything
+running under it can still read host files including credentials; and the
+declaration is per machine, so if you run two kits the last `./setup.sh` wins
+and the earlier workspace stops being writable from the bridge.
 
 ### Linux
 
@@ -291,9 +347,12 @@ Run `/multiplai-context:setup` (it warms the environment as its first step). If
 that fails, `uv` is likely missing or not on PATH.
 
 **A memory file was updated and it should not have been.**
-Your memory directory is a git repo. `git -C <workspace>/.multiplai/memory log`
-shows every change; the receipt in `.multiplai/dreams/applied/` names the
-commit and the `git revert` to undo it.
+The receipt in `.multiplai/dreams/applied/` names every file the batch
+touched. If you made the memory directory a git repository (see
+[the dream-remember step](#3-multiplai-contextdream-remember-is-where-you-hold-the-pen)),
+`git -C <workspace>/.multiplai/memory log` shows each change and `git revert`
+undoes it. If you did not, the receipt is all you have — which is the reason
+to do it now rather than after the first bad write.
 
 **The wrong memory files keep getting injected.**
 Expected on `token_overlap` once your memory grows — see
@@ -309,8 +368,15 @@ inside Claude Code:
 ```
 
 **Claude is running without a sandbox and you did not expect that.**
-`setup.sh` falls back to bare mode when Docker is missing or its daemon is
-stopped, and says so. Start Docker and re-run `./setup.sh`.
+`setup.sh` falls back to bare mode when Docker is **not installed**, and says
+so. Install Docker or OrbStack and re-run `./setup.sh`.
+
+**`./claude.sh` refuses to launch and names the Docker daemon.**
+Different case, deliberately. A stopped daemon is not a missing one, so
+neither script guesses: setup declines to configure bare mode and the launcher
+exits rather than dropping you into an unsandboxed session you did not ask
+for. Start Docker, or run `./claude.sh --local` if you genuinely want this one
+session outside the container.
 
 **Health check.** `/multiplai-context:health` reports what is wired up and what
 is not. `/multiplai-context:log-doctor` reads the logs when a hook is
@@ -324,10 +390,12 @@ Inside the workspace you nominated:
 
 ```
 .multiplai/
-  memory/      your memory files — you edit these, and they are git-tracked
+  memory/      your memory files — the ones you edit
   diary/       per-day narrative, written for you
   learnings/   captured insights waiting to be consolidated
+  now/         per-project status snapshots, injected at session start
   dreams/      proposals awaiting your review, and applied/ receipts
+               (created by the first dream run, not by setup)
   data/        catalogs, logs, runtime state
 ```
 
@@ -341,6 +409,24 @@ Inside the workspace you nominated:
 cd multiplai-kit
 git pull && ./setup.sh
 ```
+
+**That plain `git pull` will eventually refuse**, and it is not your mistake.
+`dotfiles/settings.json` is tracked, and `setup.sh` writes your plugin options
+into it on every run — so a configured checkout always has one modified file.
+The moment an upstream commit touches that same file, git aborts with *"Your
+local changes would be overwritten by merge"*. Upstream touches it every week
+or two. The way through:
+
+```bash
+git stash push dotfiles/settings.json
+git pull --rebase origin main
+git stash pop
+./setup.sh
+```
+
+If `git stash pop` reports a conflict, keep your own values for the options
+`setup.sh` writes (`workspace_dir`, `skills_dir`, `resources_dir`) and take
+upstream's for everything else.
 
 `setup.sh` re-checks-out the pinned container version, so a pull that bumps the
 container is picked up here and nowhere else. Plugins update separately through

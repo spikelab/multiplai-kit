@@ -51,7 +51,7 @@ cp .env.example .env
 
 First run prompts for authentication via `/login`. Credentials persist in `~/.claude-container/credentials.json` across container restarts.
 
-You do not install Python dependencies by hand. Each plugin script directory ships its own `pyproject.toml` and a lockfile resolved at install time, and the scripts run under `uv run --project <that directory>` — so `uv` installs what a script needs the first time it runs, from a pinned set, and reuses it after that.
+You do not install Python dependencies by hand. The marketplace is a single `uv` workspace: each script directory that needs dependencies declares them in its own `pyproject.toml`, and one committed `uv.lock` at the marketplace root fixes the exact versions for all of them. Scripts run under `uv run --project <that directory>`, so `uv` installs what a script needs the first time it runs, from that lock, and reuses it after that.
 
 ## How It Works
 
@@ -301,7 +301,7 @@ Memory routing, diary, learnings extraction, and the autodream gate now live in 
 
 ### Skills (themed marketplace packs)
 
-The skill library ships as six themed plugins from the Multiplai marketplace — `multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging` — install the ones you want. See `docs/SKILLS.md` for the pack index. `dotfiles/skills/` stays available for your own local skills. The `multiplai-context` plugin adds its namespaced commands under `/multiplai-context:*` (below).
+The skill library ships as seven themed plugins from the Multiplai marketplace — `multiplai-pm`, `multiplai-writing`, `multiplai-research`, `multiplai-dev`, `multiplai-media`, `multiplai-messaging`, `multiplai-apple` (macOS only) — install the ones you want. See `docs/SKILLS.md` for the pack index. `dotfiles/skills/` stays available for your own local skills. The `multiplai-context` plugin adds its namespaced commands under `/multiplai-context:*` (below).
 
 ### Memory, Context & Learning (provided by the plugin)
 
@@ -312,7 +312,7 @@ All of the following is the **`multiplai-context` plugin** — summarized here; 
 |---|---|---|
 | How | Offline keyword overlap | One Haiku call per prompt (`router_model`) |
 | Added latency | None | **~2.9 s** median |
-| Cost | None | **~$0.034/prompt** API-equivalent |
+| Cost | None | **~$0.035/prompt** API-equivalent |
 | Accuracy (F1) | **20.0** | **48.6** |
 
 `llm` is **2.4× more accurate** and injects fewer bytes — both from one backtest of 300 real prompts drawn from 273 chats over 21 days, scored against a hindsight oracle. It is a real steady-state option, not an experiment: extended thinking is disabled on the routing call, which took the median from 18.4 s to 2.9 s and is what makes it viable inside a blocking hook.

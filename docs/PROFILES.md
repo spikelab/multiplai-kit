@@ -92,6 +92,8 @@ retried at most once a minute), not a silent switch to a different identity.
 A profile may set `IMAGE_NAME` to launch its sessions in a project **overlay
 image** — the base image plus project-specific tooling, from a Dockerfile kept
 in that project's repo (see the multiplai-container README, "Overlay images").
+Overlay builds need multiplai-container **v0.12+** (check `CONTAINER_REF` in
+`setup.sh`); on an older pin, `overlays.conf` is ignored.
 
 Register the overlay once in `overlays.conf` at the kit root
 (`cp overlays.conf.example overlays.conf`):

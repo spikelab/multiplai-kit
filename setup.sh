@@ -244,7 +244,6 @@ mkdir -p "$WORKSPACE"/{INBOX,PROJECTS,RESOURCES,ARTIFACTS,.multiplai/{memory,dia
 # host-bridge declaration — is downstream of here.
 canonicalize_workspace
 
-
 # --- Step 2: Copy memory templates ---
 STEP=$((STEP + 1))
 echo "[$STEP/$TOTAL_STEPS] Setting up memory files..."
@@ -637,35 +636,83 @@ if $HAS_DOCKER; then
     install_host_tool multiplai-gh-token
     install_host_tool multiplai-docker.py
     install_host_state confine.sb "the host sandbox profile"
-
-    # Declare the workspace to the host SSH bridge (mktplace#15).
-    #
-    # The gateway confines path-taking commands to this directory. It cannot
-    # take the value from the container — a boundary supplied by the side being
-    # confined is not a boundary — so it reads this file, which only the host
-    # can write. setup.sh is the right writer: it already knows $WORKSPACE and
-    # already installs the gateway that reads it.
-    #
-    # Written unconditionally rather than only-if-absent: $WORKSPACE is the
-    # value this run was configured with, so a workspace that moved should move
-    # the declaration with it. Written even when the container checkout is not
-    # verified, because a stale gateway with a correct workspace still behaves,
-    # while a correct gateway with no workspace denies every build.
-    if [ -n "${WORKSPACE:-}" ] && [ -d "$WORKSPACE" ]; then
-      # mkdir inside the branch that writes, not above the `if`: a redirection
-      # into a missing directory fails without stopping the script, which would
-      # print "Declared workspace" over a file that does not exist.
-      mkdir -p "$HOME/.local/state/multiplai"
-      printf '%s\n' "$WORKSPACE" > "$HOME/.local/state/multiplai/workspace"
-      chmod 644 "$HOME/.local/state/multiplai/workspace"
-      echo "  Declared workspace to the host bridge → $WORKSPACE"
-    else
-      echo "  WARNING: \$WORKSPACE is unset or not a directory — the host bridge"
-      echo "           will refuse path-taking commands (swift, xcodebuild, xcrun,"
-      echo "           mlx-whisper, qmd) until ~/.local/state/multiplai/workspace"
-      echo "           names an existing absolute path."
-    fi
   fi
+fi
+
+# --- Declare the workspace to the host SSH bridge (mktplace#15) --------------
+#
+# The gateway confines path-taking commands to one directory. It cannot take
+# that directory from the container — a boundary supplied by the side being
+# confined is not a boundary — so it reads a file only the host can write.
+# setup.sh is the right writer: it already knows $WORKSPACE and already
+# installs the gateway that reads it.
+#
+# Deliberately OUTSIDE the `if $HAS_DOCKER` block above. That flag comes from
+# `docker info` and says whether the daemon is up *right now*; the declaration
+# is durable config. Under the old placement, editing WORKSPACE in .env and
+# re-running ./setup.sh with Docker Desktop stopped printed "Setup complete!"
+# and left the old path in place — after which the gateway denied every
+# path-taking command with the remedy "Re-run ./setup.sh on the Mac to rewrite
+# it", which is exactly the command that had just failed to rewrite it.
+#
+# Written unconditionally rather than only-if-absent: $WORKSPACE is the value
+# this run was configured with, so a workspace that moved moves its declaration
+# with it. Written even when the container checkout is not verified, because a
+# stale gateway with a correct workspace still behaves, while a correct gateway
+# with no workspace denies every build.
+#
+# There is no else-arm and no guard on $WORKSPACE. Reaching here means the
+# script already passed the `-z` check at the top and `mkdir -p "$WORKSPACE"`
+# in Step 1 under `set -euo pipefail`, so non-empty and existing are both
+# guaranteed. The guard that used to be here could not be false, and its
+# WARNING could not print — which made it read as a fallback that does not
+# exist.
+declare_workspace_to_host_bridge() {
+  local dir="$HOME/.local/state/multiplai"
+  local decl="$dir/workspace"
+  local tmp existing
+
+  # One declaration serves every kit checkout on this machine, so two kits
+  # (a runtime and a dev clone, or two runtimes) race for it and the last
+  # ./setup.sh wins. Nothing here can fix that — the gateway is the reader and
+  # it looks in one place — but silently retargeting another checkout's
+  # sessions is worth a paragraph on the terminal.
+  existing=""
+  if [ -f "$decl" ]; then
+    existing=$(head -n 1 "$decl" 2>/dev/null || echo "")
+  fi
+  if [ -n "$existing" ] && [ "$existing" != "$WORKSPACE" ]; then
+    echo "  NOTE: the host bridge was declared for a different workspace."
+    echo "          was: $existing"
+    echo "          now: $WORKSPACE"
+    echo "        This declaration is per-machine, not per-checkout, so sessions"
+    echo "        launched from the other kit will now have their bridge commands"
+    echo "        confined to this workspace. Re-run that kit's ./setup.sh to"
+    echo "        point it back."
+  fi
+
+  # mkdir inside the writer, not above it: a redirection into a missing
+  # directory fails without stopping the script, which would print "Declared
+  # workspace" over a file that does not exist.
+  mkdir -p "$dir"
+
+  # Write-and-rename, not truncate-in-place. `printf … > decl` leaves a
+  # zero-length file for as long as the write takes, and a bridge command that
+  # reads it in that window gets an empty first line (the gateway fails closed,
+  # so a transient hard deny rather than a widened jail — still wrong). chmod
+  # goes on the temp file, before it is reachable under the real name; doing it
+  # after the fact leaves a window at 0666 & ~umask.
+  tmp="$decl.tmp.$$"
+  printf '%s\n' "$WORKSPACE" > "$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$decl"
+  echo "  Declared workspace to the host bridge → $WORKSPACE"
+}
+
+# macOS only: nothing on a Linux host reads this file — sessions there run
+# without the bridge — so the sane else-path is to write nothing, not to warn.
+if [ "$(uname -s)" = "Darwin" ]; then
+  declare_workspace_to_host_bridge
 fi
 
 echo ""

@@ -82,8 +82,8 @@ You do not install Python dependencies by hand. The marketplace is a single `uv`
 Sets `CLAUDE_CONFIG_DIR` to the included `dotfiles/` directory before launching Claude Code. This makes Claude Code use the kit's settings, skills, reference docs, and config instead of `~/.claude/`. Your existing Claude Code config is completely untouched.
 
 The kit is responsible for:
-- **Launcher** (`claude.sh`) — container/local/shell modes, git-identity profiles, GCP overlays.
-- **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely.
+- **Launcher** (`claude.sh`) — container/local/shell modes, per-identity profiles (git, GitHub auth, GCP keys, image selection).
+- **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely. [Overlay images](#custom-environments-overlay-images) build any project- or task-specific environment on top of it.
 - **Reference docs** (20+ reference docs in `dotfiles/reference/dev/`, including the README index) — prescriptive engineering standards. Stack-specific ones load mechanically: the `multiplai-context` hook detects a project's stack from its manifests and points Claude at the matching docs, and buildme inlines them into spec generation. See `dotfiles/reference/dev/README.md` for the mechanisms and the renaming contract.
 - **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
 - **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
@@ -257,6 +257,38 @@ Any variable is allowed in a profile; those are just the ones that usually diffe
 
 Without `--profile`, only `.env` is loaded. For a full walkthrough — Keychain setup, separate Claude login, a worked example — see [`docs/PROFILES.md`](docs/PROFILES.md).
 
+### Custom environments (overlay images)
+
+Because sessions run in Docker images, "give Claude a different environment"
+is just "launch a different image". An **overlay image** is the base container
+plus whatever a project or task needs — a database server, a cloud CLI, a
+locale, build headers — defined by a small Dockerfile kept in that project's
+own repo and versioned with the code that needs it.
+
+Register overlays once in `overlays.conf` at the kit root
+(`cp overlays.conf.example overlays.conf`):
+
+```
+# name:path — built as claude-multiplai-<name>:local
+myproject:PROJECTS/myproject/claude-overlay
+```
+
+`./setup.sh` then rebuilds the base **and** every registered overlay on every
+run — unchanged entries are Docker-cache no-ops, so this costs seconds. Select
+per launch via a profile:
+
+```bash
+# env.myproject
+IMAGE_NAME="claude-multiplai-myproject:local"
+
+./claude.sh --profile myproject
+```
+
+The launcher warns at launch if an overlay was left behind on an older base
+(e.g. its build failed during setup). The overlay Dockerfile contract and
+worked examples are in the
+[multiplai-container README](https://github.com/spikelab/multiplai-container#overlay-images--build-any-environment-for-claude-code).
+
 ### How Skills Access Secrets
 
 Skills that need secrets (e.g. `deep-research` uses `TAVILY_API_KEY`, `EXA_API_KEY`; optionally `BRAVE_API_KEY`, `SERPER_API_KEY`) load them from `.env` automatically via `python-dotenv`. No per-skill config files. Add the key to `.env` (and document it in `.env.example`) and the skill picks it up on next launch. Shell-exported env vars take precedence over `.env` values:
@@ -280,7 +312,8 @@ multiplai-kit/                          # = the "runtime" / kit repo
 ├── multiplai.conf         # Kit config (model/effort ceilings, per-skill overrides) — project root, NOT in dotfiles/
 ├── requirements.txt       # Kit venv deps
 ├── .env.example           # Base config template (becomes .env — workspace, secrets)
-├── env.example            # Profile template (becomes env.<name> — git identity overlay)
+├── env.example            # Profile template (becomes env.<name> — per-identity overrides)
+├── overlays.conf.example  # Overlay image registry template (becomes overlays.conf — name:path per line)
 │
 ├── dotfiles/              # = CLAUDE_CONFIG_DIR (Claude Code reads everything from here)
 │   ├── CLAUDE.md          # Global instructions (personalized by setup.sh)
@@ -555,6 +588,11 @@ cd container && ./build.sh && cd ..
 # Shell access (for debugging)
 ./claude.sh --shell
 ```
+
+The image the launcher starts is not fixed: [overlay
+images](#custom-environments-overlay-images) let each project or task have its
+own environment on top of the base, selected per launch with `IMAGE_NAME` in a
+profile.
 
 ## How the pieces fit together — and stay current
 

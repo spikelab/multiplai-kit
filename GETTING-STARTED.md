@@ -9,6 +9,7 @@ This file assumes you have decided to try it.
 
 **Contents:** [Before you start](#before-you-start) · [Install](#install) ·
 [Your first session](#your-first-session) · [The loop](#the-loop-work-dream-review) ·
+[Custom environments](#custom-environments-per-project-overlay-images) ·
 [Choosing a memory router](#choosing-a-memory-router) ·
 [What runs where](#what-runs-where) · [When something goes wrong](#when-something-goes-wrong) ·
 [Where things live](#where-things-live) · [Keeping current](#keeping-current)
@@ -212,6 +213,28 @@ git -C <workspace>/.multiplai/memory init && \
 **Keep the backlog small.** A proposal of 200+ items is not reviewable in one
 sitting, and an unreviewed proposal is the failure mode this system has to
 avoid. Running dream weekly on 30 items is far better than monthly on 200.
+
+---
+
+## Custom environments per project (overlay images)
+
+Sessions run in a Docker image, and that cuts both ways: the image is the
+sandbox, and it is also **an environment you control completely**. When a
+project needs more than the generic base — a MySQL server for its test suite,
+gcloud, a locale its code sets at import — put a small Dockerfile in that
+project's repo and register it:
+
+```bash
+# overlays.conf at the kit root (cp overlays.conf.example overlays.conf)
+myproject:PROJECTS/myproject/claude-overlay
+```
+
+`./setup.sh` now rebuilds the base *and* the overlay together (unchanged
+builds are cache no-ops), and a profile with
+`IMAGE_NAME="claude-multiplai-myproject:local"` launches sessions in it. One
+kit, any number of purpose-built environments, switched per launch. The
+Dockerfile contract is in the
+[multiplai-container README](https://github.com/spikelab/multiplai-container#overlay-images--build-any-environment-for-claude-code).
 
 ---
 

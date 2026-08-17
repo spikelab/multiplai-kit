@@ -562,7 +562,10 @@ it from in-flight `main` changes. The delivery chain, end to end:
 3. You `git pull` the kit → your pin advances.
 4. You `./setup.sh` → `container/` is re-checked-out to the new tag, the image
    rebuilds, and `~/.local/bin/container-build-gateway.sh` (the host SSH
-   gateway the bridge invokes) is reinstalled from it.
+   gateway the bridge invokes) is reinstalled from it, along with the
+   `~/.local/state/multiplai/confine.sb` sandbox profile it applies. A tag that
+   predates the profile installs no profile; setup.sh says so rather than
+   skipping in silence.
 
 > **Never hand-edit `container/`.** It's a pinned, detached-HEAD checkout that
 > `setup.sh` re-aligns to `CONTAINER_REF` — a manual edit is transient (reverted
@@ -609,7 +612,7 @@ you can decide what to hand over before you hand it over rather than after.
 | Claude credentials | mount → `.credentials.json` | **always** | Your Claude subscription. Required — this is the product. |
 | `GH_TOKEN` | `-e` from `.env` or macOS Keychain | when set | Whatever the token is scoped to. Use a **fine-grained** token limited to the repos you work on; a classic `repo` token exposes every repo your account can reach. Better still on macOS with the host bridge: `GH_TOKEN_APP=<app>` mints a fresh ~1-hour **GitHub App installation token** per session and renews it in place — the App's private key never enters the container, and no long-lived token exists to leak. The two are mutually exclusive; declaring both in config is a launch error. |
 | SSH agent socket | mount → `/ssh-agent.sock` | when `SSH_AUTH_SOCK` set | Every key in your agent, usable for the container's lifetime (keys aren't copied, but signing requests are honoured). `ssh-add -D` before an autonomous run if that matters. |
-| SSH build key | mount `:ro` | when `SSH_BUILD_KEY` set | The host bridge account. Deny-by-default on the host side (`container-build-gateway.sh`). |
+| SSH build key | mount `:ro` | when `SSH_BUILD_KEY` set | The host bridge account. Deny-by-default on the host side (`container-build-gateway.sh`): argv is checked against a fixed allowlist, and path-taking commands additionally run under a `sandbox-exec` profile confined to the workspace `setup.sh` declared in `~/.local/state/multiplai/workspace`. That profile denies **writes** outside the workspace; it does not restrict reads, network, or process execution, so a bridge command can still read anything on the Mac your account can. |
 | Search API keys | `-e` from `.env` | when set | Metered spend on Tavily/Exa/Brave/Serper. |
 | `SLACK_TOKEN` | `-e` | when set | Posting as you in your workspace. |
 | `GMAIL_*` trio | `-e` | when set | Reading and sending as your account. |

@@ -23,14 +23,90 @@ fi
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 
-# Expand ~ and $HOME in WORKSPACE, strip trailing slash
-WORKSPACE=$(eval echo "${WORKSPACE:-}")
-WORKSPACE="${WORKSPACE%/}"
+# --- WORKSPACE: normalize, then canonicalize ---------------------------------
+#
+# This used to be one line — `WORKSPACE=$(eval echo "$WORKSPACE")` — which does
+# not expand a path so much as re-parse it as shell source. Most metacharacters
+# failed loudly there, but two did not: `#` opened a comment, so `/tmp/Work #2`
+# became `/tmp/Work`, and `;` truncated the value *and* executed the tail. The
+# wrong value then propagates everywhere — `mkdir -p` scaffolds the wrong
+# directory, `dotfiles/.workspace` and `settings.json` name it, and on a Mac it
+# is what gets declared to the host bridge and handed to `sandbox-exec -D
+# WORKSPACE=`, i.e. the write jail ends up around a *parent* of the directory
+# the operator configured.
+#
+# So the value is treated as data: expand a leading `~` ourselves (the only
+# expansion a path in `.env` actually needs — `.env` is sourced, so a
+# double-quoted `$HOME` has already expanded by the time we see it) and refuse
+# anything that would still need a shell to interpret.
+normalize_workspace() {
+  case "$WORKSPACE" in
+    '~')   WORKSPACE="$HOME" ;;
+    '~/'*) WORKSPACE="$HOME/${WORKSPACE#'~/'}" ;;
+  esac
 
-if [ -z "${WORKSPACE:-}" ]; then
+  # Strip trailing slashes — but never turn "/" into "". Doubled *interior*
+  # slashes and `..` are left to canonicalize_workspace below, which is the
+  # only thing that can resolve them correctly.
+  while [ "${#WORKSPACE}" -gt 1 ] && [ "${WORKSPACE%/}" != "$WORKSPACE" ]; do
+    WORKSPACE="${WORKSPACE%/}"
+  done
+
+  case "$WORKSPACE" in
+    *'$'*)
+      echo "Error: WORKSPACE still contains an unexpanded variable: $WORKSPACE"
+      echo "  .env is sourced, so let the shell expand it there:"
+      echo "      WORKSPACE=\"\$HOME/knowhere\"   — not '\$HOME/knowhere'"
+      echo "  A leading ~ works too. setup.sh no longer evals this value."
+      exit 1
+      ;;
+  esac
+
+  case "$WORKSPACE" in
+    *[\`\;\&\|\<\>\(\)\{\}\[\]\*\?\!\\\'\"\~\#]*|*[[:cntrl:]]*)
+      echo "Error: WORKSPACE contains a shell metacharacter: $WORKSPACE"
+      echo "  Spaces and non-ASCII are fine. These are not:"
+      echo "      \` ; & | < > ( ) { } [ ] * ? ! \\ ' \" ~ #   (or a control character)"
+      echo "  Nothing here interprets them any more, but the same string is"
+      echo "  handed to the host sandbox profile and to every tool downstream,"
+      echo "  and one missing quote anywhere would. Rename or move the"
+      echo "  directory, then set WORKSPACE in .env."
+      exit 1
+      ;;
+  esac
+}
+
+# Resolve symlinks, `..` and doubled slashes to the path the kernel uses.
+#
+# The declared workspace reaches `sandbox-exec -D WORKSPACE=` and lands in an
+# SBPL `(subpath …)`, which is matched against *canonical* paths. A workspace
+# reached through a symlinked parent (`/tmp` → `/private/tmp`, an external
+# volume, a symlinked `~/Documents`) therefore matches nothing and every write
+# inside the real workspace is denied — the profile fails closed, so this costs
+# availability rather than containment, but it breaks every bridge build.
+# `..` and `//` do the same thing for the same reason.
+#
+# A no-op until the directory exists: `cd -P` needs something to enter, and
+# Step 1 is what creates it. Called on both sides of that.
+canonicalize_workspace() {
+  local resolved=""
+  [ -d "$WORKSPACE" ] || return 0
+  resolved=$(cd -P "$WORKSPACE" 2>/dev/null && pwd -P) || resolved=""
+  if [ -z "$resolved" ]; then
+    echo "Error: WORKSPACE exists but cannot be entered: $WORKSPACE"
+    echo "  Check the permissions on it and on every parent directory."
+    exit 1
+  fi
+  WORKSPACE="$resolved"
+}
+
+WORKSPACE="${WORKSPACE:-}"
+if [ -z "$WORKSPACE" ]; then
   echo "Error: WORKSPACE not set in .env"
   exit 1
 fi
+normalize_workspace
+canonicalize_workspace
 
 # Catch the shipped placeholder before mkdir fails with a raw permission error.
 case "$WORKSPACE" in
@@ -162,6 +238,11 @@ echo "[$STEP/$TOTAL_STEPS] Creating workspace directories..."
 # measurement, a published artifact. INBOX/ is scratch and is gitignored, so
 # anything that must survive has to leave it.
 mkdir -p "$WORKSPACE"/{INBOX,PROJECTS,RESOURCES,ARTIFACTS,.multiplai/{memory,diary,learnings,now,data}}
+# Second call: on a first install the directory did not exist above, so this is
+# the first point at which `..`, `//` and symlinked parents can be resolved.
+# Everything that records the path — dotfiles/.workspace, settings.json, the
+# host-bridge declaration — is downstream of here.
+canonicalize_workspace
 
 # --- Step 2: Copy memory templates ---
 STEP=$((STEP + 1))
@@ -507,15 +588,131 @@ if $HAS_DOCKER; then
       echo "           tooling; fix the issue above and re-run ./setup.sh."
     fi
   }
-  # macOS only, and deliberately so: these three are the Mac host-bridge
-  # tooling (Xcode builds, Keychain-backed App tokens, host Compose stacks).
+  # The sandbox profile is not a tool: it is data the gateway reads, and it
+  # belongs beside the other host-owned bridge state rather than on $PATH. Same
+  # verification gate as install_host_tool, for the same reason — a gateway that
+  # references a profile and a profile from a different generation are exactly
+  # the version skew that gate exists to prevent.
+  #
+  # Absence is reported, not skipped. `CONTAINER_REF` pins a tag; a tag that
+  # predates a piece of state simply does not carry it, and a silent `return 0`
+  # let setup print "Setup complete!" over a host layer that was never
+  # installed. Say so — and when the checkout IS verified at the pin and the
+  # file is gone from it, remove the copy left by an earlier release rather
+  # than leaving an orphan the gateway might still find. The removal is gated
+  # on CONTAINER_AT_PIN because "container/ failed to fetch" and "this release
+  # dropped the file" are indistinguishable from the filesystem alone.
+  install_host_state() {  # $1 = filename under container/, $2 = what it is
+    local src="$SCRIPT_DIR/container/$1"
+    local dst="$HOME/.local/state/multiplai/$1"
+    if [ ! -f "$src" ]; then
+      if [ "$CONTAINER_AT_PIN" = true ] && [ -f "$dst" ]; then
+        rm -f "$dst"
+        echo "  Removed ~/.local/state/multiplai/$1 — $CONTAINER_REF no longer ships it."
+      elif [ ! -f "$dst" ]; then
+        echo "  Note: $CONTAINER_REF does not ship container/$1, so $2 is NOT installed."
+        echo "        It arrives with a later container tag; this run is otherwise complete."
+      fi
+      return 0
+    fi
+    if [ "$CONTAINER_AT_PIN" = true ] && [ "$BUILD_OK" = true ]; then
+      mkdir -p "$HOME/.local/state/multiplai"
+      if ! cmp -s "$src" "$dst" 2>/dev/null; then
+        cp "$src" "$dst"
+        chmod 644 "$dst"
+        echo "  Installed host state → ~/.local/state/multiplai/$1 ($CONTAINER_REF)"
+      fi
+    elif ! cmp -s "$src" "$dst" 2>/dev/null; then
+      echo "  WARNING: NOT installing ~/.local/state/multiplai/$1 — container/ is not"
+      echo "           verified at $CONTAINER_REF or the image build failed."
+    fi
+  }
+  # macOS only, and deliberately so: these are the Mac host-bridge tooling
+  # (Xcode builds, Keychain-backed App tokens, host Compose stacks).
   # On a Linux host nothing consumes them — sessions run without the bridge —
   # so the sane else-path is to install nothing, not to warn.
   if [ "$(uname -s)" = "Darwin" ]; then
     install_host_tool container-build-gateway.sh
     install_host_tool multiplai-gh-token
     install_host_tool multiplai-docker.py
+    install_host_state confine.sb "the host sandbox profile"
   fi
+fi
+
+# --- Declare the workspace to the host SSH bridge (mktplace#15) --------------
+#
+# The gateway confines path-taking commands to one directory. It cannot take
+# that directory from the container — a boundary supplied by the side being
+# confined is not a boundary — so it reads a file only the host can write.
+# setup.sh is the right writer: it already knows $WORKSPACE and already
+# installs the gateway that reads it.
+#
+# Deliberately OUTSIDE the `if $HAS_DOCKER` block above. That flag comes from
+# `docker info` and says whether the daemon is up *right now*; the declaration
+# is durable config. Under the old placement, editing WORKSPACE in .env and
+# re-running ./setup.sh with Docker Desktop stopped printed "Setup complete!"
+# and left the old path in place — after which the gateway denied every
+# path-taking command with the remedy "Re-run ./setup.sh on the Mac to rewrite
+# it", which is exactly the command that had just failed to rewrite it.
+#
+# Written unconditionally rather than only-if-absent: $WORKSPACE is the value
+# this run was configured with, so a workspace that moved moves its declaration
+# with it. Written even when the container checkout is not verified, because a
+# stale gateway with a correct workspace still behaves, while a correct gateway
+# with no workspace denies every build.
+#
+# There is no else-arm and no guard on $WORKSPACE. Reaching here means the
+# script already passed the `-z` check at the top and `mkdir -p "$WORKSPACE"`
+# in Step 1 under `set -euo pipefail`, so non-empty and existing are both
+# guaranteed. The guard that used to be here could not be false, and its
+# WARNING could not print — which made it read as a fallback that does not
+# exist.
+declare_workspace_to_host_bridge() {
+  local dir="$HOME/.local/state/multiplai"
+  local decl="$dir/workspace"
+  local tmp existing
+
+  # One declaration serves every kit checkout on this machine, so two kits
+  # (a runtime and a dev clone, or two runtimes) race for it and the last
+  # ./setup.sh wins. Nothing here can fix that — the gateway is the reader and
+  # it looks in one place — but silently retargeting another checkout's
+  # sessions is worth a paragraph on the terminal.
+  existing=""
+  if [ -f "$decl" ]; then
+    existing=$(head -n 1 "$decl" 2>/dev/null || echo "")
+  fi
+  if [ -n "$existing" ] && [ "$existing" != "$WORKSPACE" ]; then
+    echo "  NOTE: the host bridge was declared for a different workspace."
+    echo "          was: $existing"
+    echo "          now: $WORKSPACE"
+    echo "        This declaration is per-machine, not per-checkout, so sessions"
+    echo "        launched from the other kit will now have their bridge commands"
+    echo "        confined to this workspace. Re-run that kit's ./setup.sh to"
+    echo "        point it back."
+  fi
+
+  # mkdir inside the writer, not above it: a redirection into a missing
+  # directory fails without stopping the script, which would print "Declared
+  # workspace" over a file that does not exist.
+  mkdir -p "$dir"
+
+  # Write-and-rename, not truncate-in-place. `printf … > decl` leaves a
+  # zero-length file for as long as the write takes, and a bridge command that
+  # reads it in that window gets an empty first line (the gateway fails closed,
+  # so a transient hard deny rather than a widened jail — still wrong). chmod
+  # goes on the temp file, before it is reachable under the real name; doing it
+  # after the fact leaves a window at 0666 & ~umask.
+  tmp="$decl.tmp.$$"
+  printf '%s\n' "$WORKSPACE" > "$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$decl"
+  echo "  Declared workspace to the host bridge → $WORKSPACE"
+}
+
+# macOS only: nothing on a Linux host reads this file — sessions there run
+# without the bridge — so the sane else-path is to write nothing, not to warn.
+if [ "$(uname -s)" = "Darwin" ]; then
+  declare_workspace_to_host_bridge
 fi
 
 echo ""

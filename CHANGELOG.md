@@ -15,6 +15,84 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Security
+
+- **`setup.sh` no longer runs `$WORKSPACE` through `eval`, and now canonicalizes
+  it.** The line was `WORKSPACE=$(eval echo "$WORKSPACE")`, which does not
+  expand a path so much as re-parse it as shell source. Most metacharacters
+  failed loudly (`(` → syntax error, `&` → 127), but two did not:
+
+  - `#` opened a comment. `WORKSPACE="/tmp/Work #2"` became `/tmp/Work`, exit 0,
+    no warning. `mkdir -p` then scaffolded that directory, `-d` passed on it,
+    and it is what got written to `dotfiles/.workspace`, into
+    `settings.json`, and — on a Mac — declared to the host bridge. Every
+    consumer was pointed at the *parent* of the configured workspace.
+  - `;` did the same **and executed the tail**: `WORKSPACE="/tmp/a;touch
+    /tmp/PWNED"` created the file.
+
+  A path is data now. A leading `~` / `~/` is expanded directly, and a value
+  still carrying `` ` ; & | < > ( ) { } [ ] * ? ! \ ' " ~ # `` or a control
+  character is refused by name instead of being interpreted. Spaces and
+  non-ASCII are fine — a single space was the one thing `eval` passed through
+  intact, and doubled spaces (which it collapsed) now work too.
+
+  Two paths that used to "work" now stop setup with an explanation:
+  single-quoted `WORKSPACE='$HOME/knowhere'` in `.env` (use double quotes, or
+  `~`), and any workspace whose name contains one of the characters above.
+  Nothing that parses today breaks: every rejected character except `#` and `;`
+  already aborted `eval` with a bash parse error.
+
+  Separately, the value is now canonicalized with `cd -P … && pwd -P` once the
+  workspace exists, so `//`, a trailing slash, a `..` component and a symlinked
+  parent (`/tmp` → `/private/tmp`, an external volume, a symlinked
+  `~/Documents`) all resolve to the path the kernel reports. The declared
+  workspace reaches an SBPL `(subpath …)`, which is matched against canonical
+  paths only — an uncanonicalized value matched nothing and denied every write
+  inside the user's own workspace. That direction is fail-closed, so it cost
+  availability rather than containment, but it broke every bridge build.
+
+### Added
+
+- **`setup.sh` declares your workspace to the macOS host bridge.** It writes
+  the absolute workspace path to `~/.local/state/multiplai/workspace` (mode
+  644, published by rename so a reader never sees a half-written file) and
+  installs the `confine.sb` sandbox profile to
+  `~/.local/state/multiplai/confine.sb` when the pinned container release ships
+  one. The gateway confines path-taking bridge commands (`swift`,
+  `xcodebuild`, `xcrun`, `mlx-whisper`, `qmd`) to that directory; it cannot
+  take the value from the container, because a boundary supplied by the side
+  being confined is not a boundary, so the host writes it and the container
+  never can. macOS only — nothing on a Linux host reads either file.
+
+  **What the profile does and does not do.** It denies *writes* outside the
+  declared workspace. It does **not** confine reads: the profile allows
+  `file-read*` everywhere, along with network and process execution. Anything
+  running under the jail can still read host credentials. Treat it as
+  protection against a destructive mistake escaping the workspace, not as a
+  boundary around your secrets.
+
+  Two operational notes:
+
+  - The declaration is written on **every** `./setup.sh`, including when the
+    Docker daemon is stopped. It is durable config, not a property of a running
+    daemon, and gating it on `docker info` meant a workspace you had just moved
+    silently kept its old declaration.
+  - It is **per-machine, not per-checkout**: `~/.local/state/multiplai/workspace`
+    is one file, so with two kits installed (a runtime plus a dev clone, say)
+    the last `./setup.sh` owns it, and the other kit's sessions get bridge
+    commands confined to a workspace they are not in. setup.sh now prints the
+    old and new paths when it retargets, so the takeover is at least visible.
+    A per-checkout declaration needs the gateway (in `multiplai-container`) to
+    know which workspace asked, and belongs in that repo.
+
+  **Release ordering.** `confine.sb` and the gateway that reads these files
+  ship from `multiplai-container`. The container tag must be cut **first**, and
+  only then may `CONTAINER_REF` in `setup.sh` be bumped to it — a kit that
+  points at a tag predating the profile installs no profile at all. That is
+  harmless (the older gateway reads neither file), and setup.sh now says so
+  explicitly instead of skipping in silence. `CONTAINER_REF` is unchanged at
+  `v0.10` here, which does not carry `confine.sb`.
+
 ### Fixed
 
 - **`setup.sh` wrote the plugin's paths to a file Claude Code does not read.**

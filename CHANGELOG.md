@@ -15,6 +15,19 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **Project overlay images, driven by `./setup.sh`.** Register overlays in
+  `overlays.conf` at the kit root (`cp overlays.conf.example overlays.conf`,
+  gitignored) as `name:path` lines pointing at overlay Dockerfiles kept in
+  your projects' repos; `container/build.sh` — which `./setup.sh` runs —
+  builds every entry on top of the base as `claude-multiplai-<name>:local`
+  (multiplai-container v0.12+). Launch with one via `IMAGE_NAME` in an
+  `env.<profile>` file — that already worked and is now documented in
+  `docs/PROFILES.md` and `.env.example`. `claude.sh` additionally warns at
+  launch (warn-only) when the selected overlay was built on an older base
+  image, using the base-ID label the overlay build stamps.
+
 ### Security
 
 - **`setup.sh` no longer runs `$WORKSPACE` through `eval`, and now canonicalizes

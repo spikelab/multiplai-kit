@@ -1,6 +1,7 @@
 .env
 env.*
 !env.example
+overlays.conf
 .DS_Store
 __pycache__/
 *.pyc

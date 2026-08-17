@@ -1,0 +1,16 @@
+# Overlay image registry — cp overlays.conf.example overlays.conf, then edit.
+#
+# One entry per line, `name:path`. Each names a directory holding an overlay
+# Dockerfile (project-specific tooling built ON TOP of the base image — see the
+# multiplai-container README, "Overlay images", for the Dockerfile contract).
+# The path is absolute, ~-prefixed, or relative to WORKSPACE.
+#
+# container/build.sh — which ./setup.sh runs — builds every entry after the
+# base image, tagged `claude-multiplai-<name>:local` (multiplai-container
+# v0.12+; older pins ignore this file). Unchanged entries are cache no-ops; a
+# changed base or overlay Dockerfile rebuilds automatically.
+#
+# Launch with an overlay by setting IMAGE_NAME in a profile (docs/PROFILES.md):
+#   env.myproject:  IMAGE_NAME="claude-multiplai-myproject:local"
+#
+# myproject:PROJECTS/myproject/claude-overlay

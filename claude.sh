@@ -727,6 +727,29 @@ if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     exit 1
 fi
 
+# Overlay staleness check. Images built by container/build-overlay.sh carry
+# the base image's name and ID as labels; when a release has since rebuilt the
+# base, the ID no longer matches and the overlay is running on the old base.
+# Warn and continue — the overlay still works, it is just behind. Base images
+# have no such labels, so this is a no-op for them; the `if` guard keeps a
+# label-less image from printing Go's "<no value>", and reading both labels in
+# one inspect keeps this a single extra daemon round-trip. Both labels must be
+# present: comparing the recorded base ID against a *guessed* base name would
+# turn label-schema drift into a spurious or missed warning, so a
+# half-labelled image is skipped instead of defaulted.
+_OVERLAY_LABELS=$(docker image inspect \
+    -f '{{if .Config.Labels}}{{index .Config.Labels "multiplai.base-image-id"}}|{{index .Config.Labels "multiplai.base-image-name"}}{{end}}' \
+    "$IMAGE_NAME" 2>/dev/null || true)
+_OVERLAY_BASE_ID="${_OVERLAY_LABELS%%|*}"
+_OVERLAY_BASE_NAME="${_OVERLAY_LABELS#*|}"
+if [ -n "$_OVERLAY_BASE_ID" ] && [ -n "$_OVERLAY_BASE_NAME" ]; then
+    _CURRENT_BASE_ID=$(docker image inspect -f '{{.Id}}' "$_OVERLAY_BASE_NAME" 2>/dev/null || true)
+    if [ -n "$_CURRENT_BASE_ID" ] && [ "$_OVERLAY_BASE_ID" != "$_CURRENT_BASE_ID" ]; then
+        echo "[claude] WARNING: overlay image '$IMAGE_NAME' was built on an older '$_OVERLAY_BASE_NAME'."
+        echo "         Rebuild all images: cd container && ./build.sh   (reads overlays.conf)"
+    fi
+fi
+
 # --- Network egress profile ---
 #
 # MULTIPLAI_NET selects how much of the internet the container can reach.

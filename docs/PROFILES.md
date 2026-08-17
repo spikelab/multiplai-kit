@@ -87,6 +87,39 @@ retried at most once a minute), not a silent switch to a different identity.
 
 ---
 
+## Profiles can select a different image
+
+A profile may set `IMAGE_NAME` to launch its sessions in a project **overlay
+image** — the base image plus project-specific tooling, from a Dockerfile kept
+in that project's repo (see the multiplai-container README, "Overlay images").
+Overlay builds need multiplai-container **v0.12+** (check `CONTAINER_REF` in
+`setup.sh`); on an older pin, `overlays.conf` is ignored.
+
+Register the overlay once in `overlays.conf` at the kit root
+(`cp overlays.conf.example overlays.conf`):
+
+```
+myproject:PROJECTS/myproject/claude-overlay
+```
+
+`./setup.sh` (via `container/build.sh`) then rebuilds the base **and** every
+registered overlay — tagged `claude-multiplai-<name>:local` — on every run;
+unchanged entries are Docker-cache no-ops. Point the profile at the tag:
+
+```bash
+# env.myproject
+IMAGE_NAME="claude-multiplai-myproject:local"
+```
+
+The launcher applies its `claude-multiplai:local` default only after sourcing
+profiles, so the profile value wins. `IMAGE_NAME` configures the launcher only
+and is never forwarded into the container. At launch the launcher compares the
+overlay's recorded base-image ID against the current base and warns when the
+overlay has been left behind on an older base — re-running
+`cd container && ./build.sh` (or `./setup.sh`) catches it up.
+
+---
+
 ## Step-by-step: create a new profile
 
 Example below uses `work`. Substitute your own name/email/token.

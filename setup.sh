@@ -594,10 +594,28 @@ if $HAS_DOCKER; then
   # verification gate as install_host_tool, for the same reason — a gateway that
   # references a profile and a profile from a different generation are exactly
   # the version skew that gate exists to prevent.
-  install_host_state() {  # $1 = filename under container/
+  #
+  # Absence is reported, not skipped. `CONTAINER_REF` pins a tag; a tag that
+  # predates a piece of state simply does not carry it, and a silent `return 0`
+  # let setup print "Setup complete!" over a host layer that was never
+  # installed. Say so — and when the checkout IS verified at the pin and the
+  # file is gone from it, remove the copy left by an earlier release rather
+  # than leaving an orphan the gateway might still find. The removal is gated
+  # on CONTAINER_AT_PIN because "container/ failed to fetch" and "this release
+  # dropped the file" are indistinguishable from the filesystem alone.
+  install_host_state() {  # $1 = filename under container/, $2 = what it is
     local src="$SCRIPT_DIR/container/$1"
     local dst="$HOME/.local/state/multiplai/$1"
-    [ -f "$src" ] || return 0
+    if [ ! -f "$src" ]; then
+      if [ "$CONTAINER_AT_PIN" = true ] && [ -f "$dst" ]; then
+        rm -f "$dst"
+        echo "  Removed ~/.local/state/multiplai/$1 — $CONTAINER_REF no longer ships it."
+      elif [ ! -f "$dst" ]; then
+        echo "  Note: $CONTAINER_REF does not ship container/$1, so $2 is NOT installed."
+        echo "        It arrives with a later container tag; this run is otherwise complete."
+      fi
+      return 0
+    fi
     if [ "$CONTAINER_AT_PIN" = true ] && [ "$BUILD_OK" = true ]; then
       mkdir -p "$HOME/.local/state/multiplai"
       if ! cmp -s "$src" "$dst" 2>/dev/null; then
@@ -618,7 +636,7 @@ if $HAS_DOCKER; then
     install_host_tool container-build-gateway.sh
     install_host_tool multiplai-gh-token
     install_host_tool multiplai-docker.py
-    install_host_state confine.sb
+    install_host_state confine.sb "the host sandbox profile"
 
     # Declare the workspace to the host SSH bridge (mktplace#15).
     #

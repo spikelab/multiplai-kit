@@ -16,11 +16,12 @@ import json
 import re
 import subprocess
 import time
-from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "dotfiles" / "scripts" / "statusline.sh"
+from conftest import KIT_ROOT
+
+SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "statusline.sh"
 
 ANSI = re.compile(r"\033\[[0-9;]*m")
 

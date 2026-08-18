@@ -50,11 +50,10 @@ import struct
 import subprocess
 import termios
 import time
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-watch"
 
 # Records the arguments it was handed, then exits — one redraw, no loop, because
@@ -543,7 +542,7 @@ class TestOnARealTerminal:
         assert b"\033[?25h" in tail, "the cursor was left hidden"
 
 
-def test_it_never_resolves_plugin_code(watch):
+def test_it_never_resolves_plugin_code():
     """The host boundary `test_fleet_render.py` asserts for the renderer.
 
     The plugin's manifest and cache are container-writable, so a host process

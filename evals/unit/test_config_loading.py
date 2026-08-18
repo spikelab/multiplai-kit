@@ -10,9 +10,9 @@ exports MULTIPLAI_{DEBUG,MODEL,EFFORT,LOG_LEVEL} to the invoked Python process.
 import subprocess
 from pathlib import Path
 
-RUN_HOOK_PYTHON = (
-    Path(__file__).resolve().parents[2] / "dotfiles" / "hooks" / "run-hook-python"
-)
+from conftest import KIT_ROOT
+
+RUN_HOOK_PYTHON = KIT_ROOT / "dotfiles" / "hooks" / "run-hook-python"
 
 
 def _run(home: Path, conf: str | None, var: str) -> str:

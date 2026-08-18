@@ -58,7 +58,7 @@ import pytest
 
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 LAUNCHER_SOURCE = KIT_ROOT / "claude.sh"
 
 # Distinguishes the session's `docker run` from the drain's by the --name the

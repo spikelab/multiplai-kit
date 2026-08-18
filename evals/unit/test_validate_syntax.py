@@ -21,11 +21,10 @@ skipped.
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 HOOK = KIT_ROOT / "dotfiles" / "hooks" / "validate-syntax.sh"
 
 

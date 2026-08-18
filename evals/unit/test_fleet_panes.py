@@ -57,11 +57,10 @@ import os
 import shutil
 import subprocess
 import time
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-panes.sh"
 
 # Answers the two questions the script asks, and records them. `list-panes`

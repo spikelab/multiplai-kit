@@ -30,13 +30,12 @@ import os
 import shutil
 import subprocess
 import textwrap
-from pathlib import Path
 
 import pytest
 
 from _platform_stubs import _pretend_linux, _pretend_macos
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 LAUNCHER = KIT_ROOT / "claude.sh"
 
 # Two contracts live in here — `image` exits 0, and a `run` carrying

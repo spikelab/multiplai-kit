@@ -9,8 +9,11 @@ context / learning system now lives in the `multiplai-context` plugin
 import sys
 from pathlib import Path
 
-EVALS_DIR = Path(__file__).parent
-HOOKS_DIR = EVALS_DIR.parent / "dotfiles" / "hooks"
+EVALS_DIR = Path(__file__).resolve().parent
+# One definition of the repo root for the whole suite — test modules import it
+# (`from conftest import KIT_ROOT`) instead of each computing their own.
+KIT_ROOT = EVALS_DIR.parent
+HOOKS_DIR = KIT_ROOT / "dotfiles" / "hooks"
 
 # Add hooks dir to sys.path so tests can import live hook modules (model_resolver).
 if str(HOOKS_DIR) not in sys.path:

@@ -124,8 +124,14 @@ self_session=""
 self_found=""
 
 add_entry() {
+    # Sanitize here, not in the read loop: window/session only matter once they
+    # are written as JSON string values, and the overwhelming majority of panes
+    # are shell panes filtered out before ever reaching this point — sanitizing
+    # them all cost two tr forks per pane on the server.
+    _w=$(printf '%s' "$3" | tr -d '"\\[:cntrl:]')
+    _s=$(printf '%s' "$4" | tr -d '"\\[:cntrl:]')
     entries="${entries:+$entries,
-}    \"$1\": {\"pane\": \"$2\", \"server\": \"$server\", \"window\": \"$3\", \"session\": \"$4\", \"at\": \"$now\"}"
+}    \"$1\": {\"pane\": \"$2\", \"server\": \"$server\", \"window\": \"$_w\", \"session\": \"$_s\", \"at\": \"$now\"}"
     seen="$seen
 $1"
 }
@@ -147,9 +153,6 @@ while IFS='|' read -r pane cc auto window session; do
     # label falls back to the container name, a wrong one puts `zsh` on the
     # board with the same confidence as a real handle.
     case "$auto" in 0|off) ;; *) window="" ;; esac
-
-    window=$(printf '%s' "$window" | tr -d '"\\[:cntrl:]')
-    session=$(printf '%s' "$session" | tr -d '"\\[:cntrl:]')
 
     # Before the `@cc` test, not after, and that ordering is the whole point:
     # this is the record the fallback below uses, and it is needed in precisely

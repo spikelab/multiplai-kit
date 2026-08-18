@@ -10,8 +10,9 @@
 
 set -euo pipefail
 
-# Parse query from JSON stdin
-query=$(cat | grep -o '"query"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"query"[[:space:]]*:[[:space:]]*"//;s/"$//')
+# Parse query from JSON stdin. One process, not a cat|grep|sed pipeline —
+# this runs on every keystroke of the @ picker.
+query=$(sed -nE 's/.*"query"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p')
 
 [ -z "$query" ] && exit 0
 
@@ -22,7 +23,7 @@ ignore_file="$(dirname "$0")/file-suggestion-ignore"
 # grep with zero hits exits 1, which under `set -e` would otherwise abort the
 # whole script and surface as a picker error instead of an empty result.
 rg --files --no-ignore-vcs \
-  ${ignore_file:+--ignore-file "$ignore_file"} \
+  --ignore-file "$ignore_file" \
   "$dir" 2>/dev/null \
   | { grep -iF "$query" || true; } \
   | head -15

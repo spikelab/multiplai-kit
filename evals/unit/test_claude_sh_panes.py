@@ -37,13 +37,12 @@ has no other field carrying which identity a session is running as. Pinned in
 import json
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 PANES_SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-panes.sh"
 
 # Two jobs. It records every call so the stamp can be asserted on, and it

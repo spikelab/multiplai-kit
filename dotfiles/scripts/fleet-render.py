@@ -400,7 +400,7 @@ def _section(name, value, stamp, now):
     if isinstance(value, list):
         count = len(value)
     elif isinstance(value, dict):
-        count = len(value.get("prs", value)) if "prs" in value else len(value)
+        count = len(value["prs"]) if "prs" in value else len(value)
     else:
         return f"{name} {clean(value, 12)}"
     # A carried section states its own age, because "3 open" from an hour ago
@@ -481,9 +481,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     doc = load(args.data_dir)
-    body = "\n".join(
-        render(doc, args.lines, args.width, windows=live_windows(args.data_dir))
-    ) + "\n"
+    # live_windows reads the pane map and every viewed-marker file — skip that
+    # I/O when the board renders empty anyway (render returns [] for a doc it
+    # cannot read), since this runs on every tick of the fleet board.
+    windows = live_windows(args.data_dir) if isinstance(doc, dict) else None
+    body = "\n".join(render(doc, args.lines, args.width, windows=windows)) + "\n"
     if not args.out:
         sys.stdout.write(body)
         return 0

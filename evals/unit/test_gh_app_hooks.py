@@ -47,11 +47,10 @@ import os
 import shutil
 import signal
 import subprocess
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 HOOKS_DIR = KIT_ROOT / "dotfiles" / "hooks"
 AUTH_HOOK = HOOKS_DIR / "gh-app-auth.sh"
 REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"

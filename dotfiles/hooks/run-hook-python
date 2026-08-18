@@ -19,7 +19,9 @@ VENV_PYTHON="$MULTIPLAI_HOME/.venv/bin/python"
 # guard that meant every Bash call in the session ran with the
 # destructive-command guard inert. Creating the directory here — and taking the
 # redirect on ourselves — removes the ordering dependency entirely.
-mkdir -p "$LOGS_DIR" 2>/dev/null || true
+# The existence test is a builtin, so the common every-call path pays no fork;
+# the mkdir self-heals a fresh clone/worktree on the first call only.
+[ -d "$LOGS_DIR" ] || mkdir -p "$LOGS_DIR" 2>/dev/null || true
 if [ -w "$LOGS_DIR" ]; then
   exec 2>>"$LOGS_DIR/hook-errors.log"
 fi
@@ -75,7 +77,7 @@ _debug() {
 }
 
 # Try workspace venv python first
-if [ -n "$VENV_PYTHON" ] && [ -x "$VENV_PYTHON" ]; then
+if [ -x "$VENV_PYTHON" ]; then
   _debug "Using venv python: $VENV_PYTHON → $*"
   exec "$VENV_PYTHON" "$@"
 fi

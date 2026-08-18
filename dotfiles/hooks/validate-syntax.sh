@@ -26,7 +26,14 @@ INPUT=$(cat)
 
 # Extract the file path from the hook input.
 # Write/Edit carry tool_input.file_path; NotebookEdit carries notebook_path.
-FILE_PATH=$(echo "$INPUT" | "$PY" -c "
+# jq when available (always, in the container image): this hook fires on every
+# Write/Edit, and most edits are files the case below never validates — a full
+# Python startup just to extract the path was the hook's dominant cost. The
+# Python fallback covers a bare Mac, where macOS ships no jq.
+if command -v jq >/dev/null 2>&1; then
+    FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input | (.file_path // .filePath // .notebook_path // "")' 2>/dev/null) || FILE_PATH=""
+else
+    FILE_PATH=$(echo "$INPUT" | "$PY" -c "
 import sys, json
 try:
     data = json.load(sys.stdin)
@@ -35,6 +42,7 @@ try:
 except:
     print('')
 " 2>/dev/null)
+fi
 
 if [ -z "$FILE_PATH" ] || [ ! -f "$FILE_PATH" ]; then
     exit 0
@@ -53,52 +61,48 @@ emit_error() {
     exit 2
 }
 
-# Each format is parsed exactly once: the probe prints the diagnosis to stdout
-# and exits non-zero on failure. The `|| true` is load-bearing under `set -e` —
-# without it, a probe exiting non-zero kills the ERROR=$(...) assignment before
-# emit_error runs, which is precisely the silently-inert failure this hook was
-# rewritten to fix. The bare `except Exception` matters for the same reason: a
-# non-UTF-8 file raises UnicodeDecodeError, not JSONDecodeError, and used to
-# exit 1 with no message at all.
+# Map the extension to a format; anything else needs no Python at all.
 case "$EXT" in
-    json|ipynb)
-        ERROR=$("$PY" -c '
-import json, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as fh:
-        json.load(fh)
-except json.JSONDecodeError as e:
-    print(f"JSON syntax error in {sys.argv[1]}: {e}")
-    sys.exit(1)
-except Exception as e:
-    print(f"Could not validate {sys.argv[1]} as JSON: {e}")
-    sys.exit(1)
-' "$FILE_PATH" 2>&1) || true
-        if [ -n "$ERROR" ]; then
-            emit_error "$ERROR"
-        fi
-        ;;
-    yaml|yml)
-        # Validate YAML syntax (if pyyaml available)
-        if "$PY" -c "import yaml" 2>/dev/null; then
-            ERROR=$("$PY" -c '
-import sys, yaml
-try:
-    with open(sys.argv[1], encoding="utf-8") as fh:
-        yaml.safe_load(fh)
-except yaml.YAMLError as e:
-    print(f"YAML syntax error in {sys.argv[1]}: {e}")
-    sys.exit(1)
-except Exception as e:
-    print(f"Could not validate {sys.argv[1]} as YAML: {e}")
-    sys.exit(1)
-' "$FILE_PATH" 2>&1) || true
-            if [ -n "$ERROR" ]; then
-                emit_error "$ERROR"
-            fi
-        fi
-        ;;
+    json|ipynb) FMT=JSON ;;
+    yaml|yml)   FMT=YAML ;;
+    *)          exit 0 ;;
 esac
+
+# The format is parsed exactly once, by one probe shared between JSON and YAML:
+# it prints the diagnosis to stdout and exits non-zero on failure. A missing
+# pyyaml exits 0 silently (SystemExit is not an Exception), preserving the old
+# skip-if-unavailable behavior without a second interpreter startup for the
+# probe. The `|| true` is load-bearing under `set -e` — without it, a probe
+# exiting non-zero kills the ERROR=$(...) assignment before emit_error runs,
+# which is precisely the silently-inert failure this hook was rewritten to fix.
+# The bare `except Exception` matters for the same reason: a non-UTF-8 file
+# raises UnicodeDecodeError, not JSONDecodeError, and used to exit 1 with no
+# message at all.
+ERROR=$("$PY" -c '
+import sys
+fmt, path = sys.argv[1], sys.argv[2]
+if fmt == "JSON":
+    import json
+    parse, syntax_err = json.load, json.JSONDecodeError
+else:
+    try:
+        import yaml
+    except ImportError:
+        sys.exit(0)  # pyyaml unavailable — skip validation
+    parse, syntax_err = yaml.safe_load, yaml.YAMLError
+try:
+    with open(path, encoding="utf-8") as fh:
+        parse(fh)
+except syntax_err as e:
+    print(f"{fmt} syntax error in {path}: {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"Could not validate {path} as {fmt}: {e}")
+    sys.exit(1)
+' "$FMT" "$FILE_PATH" 2>&1) || true
+if [ -n "$ERROR" ]; then
+    emit_error "$ERROR"
+fi
 
 # Success — no output needed
 exit 0

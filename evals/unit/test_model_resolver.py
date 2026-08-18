@@ -1,7 +1,5 @@
 """Tests for model_resolver.py — the model ceiling logic."""
 
-import os
-import pytest
 from model_resolver import resolve_model, _tier, resolve_effort, _effort_tier
 
 

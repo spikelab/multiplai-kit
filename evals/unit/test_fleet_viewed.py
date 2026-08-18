@@ -32,11 +32,10 @@ join happens at render time in the `multiplai-context` plugin.
 import os
 import subprocess
 import time
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from conftest import KIT_ROOT
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-viewed.sh"
 
 # Answers the one query the script makes: window name and socket path, in a

@@ -75,16 +75,10 @@ trap cleanup EXIT
 
 # The mint must be bounded on EVERY platform — `ConnectTimeout` bounds only the
 # TCP connect, not a bridge that accepts and then stalls, and the bare-Mac route
-# had no bound at all. Same idiom as the hooks that call this script: GNU
-# `timeout` in the container, a perl alarm on a bare Mac (no coreutils there;
-# alarm(2) survives exec(2), so the fallback is a real bound, not decoration).
-bounded() {  # bounded <seconds> <command...>
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "$@"
-    else
-        perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$@"
-    fi
-}
+# had no bound at all. `bounded` (GNU timeout / perl alarm) is shared with
+# gh-store-token; source it from this script's own directory — gh-tok is always
+# invoked by full path, and its callers do not always set CLAUDE_CONFIG_DIR.
+. "${0%/*}/gh-bounded"
 
 # Two routes to the same host script. Bare on the Mac, `multiplai-gh-token` is
 # right here on PATH (setup.sh installs it to ~/.local/bin) — call it directly;

@@ -22,22 +22,16 @@
 # that works fine without it.
 
 # --- where the data lives -----------------------------------------------------
-# Same resolution order as `statusline.sh`: the environment first, then the
-# marker file the kit writes at setup. A tmux hook inherits the environment of
-# the tmux *server*, which was started long before any of this, so the file
-# fallback is the path that actually fires in practice.
-#
-# The `$CLAUDE_CONFIG_DIR` form cannot fire here: this runs on the **host**,
-# from a tmux hook, and that variable is set by the launcher for the container.
-# `setup.sh` writes the marker beside this script (`dotfiles/.workspace`), so
-# the `$0`-relative read is the one that works with an empty environment.
-ws="${WORKSPACE:-}"
-if [ -z "$ws" ] && [ -r "${CLAUDE_CONFIG_DIR:-}/.workspace" ]; then
-    read -r ws < "$CLAUDE_CONFIG_DIR/.workspace"
-fi
-if [ -z "$ws" ] && [ -r "$(dirname "$0")/../.workspace" ]; then
-    read -r ws < "$(dirname "$0")/../.workspace"
-fi
+# The resolution chain is shared with `fleet-panes.sh` —
+# lib/resolve-workspace.sh sets `ws`. Here only the `$0`-relative rung can
+# fire in practice: this runs on the **host**, from a tmux hook that inherits
+# the tmux *server's* pre-launcher environment, and `$CLAUDE_CONFIG_DIR` is
+# set by the launcher for the container. `setup.sh` writes the marker beside
+# these scripts (`dotfiles/.workspace`). The readability guard keeps the
+# no-output contract even on a partial install.
+_ws_lib="$(dirname "$0")/lib/resolve-workspace.sh"
+[ -r "$_ws_lib" ] || exit 0
+. "$_ws_lib"
 [ -n "$ws" ] || exit 0
 
 viewed_dir="$ws/.multiplai/data/tmux/viewed"

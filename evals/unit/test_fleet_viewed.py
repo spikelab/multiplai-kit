@@ -37,6 +37,7 @@ import pytest
 
 from conftest import KIT_ROOT
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-viewed.sh"
+WS_LIB = KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh"
 
 # Answers the one query the script makes: window name and socket path, in a
 # single `display-message`. TMUX_FAIL_STUB is "tmux is on PATH but refuses",
@@ -216,10 +217,14 @@ def test_the_marker_beside_the_script_resolves_the_workspace(tmp_path):
     """
     dotfiles = tmp_path / "dotfiles"
     scripts = dotfiles / "scripts"
-    scripts.mkdir(parents=True)
+    (scripts / "lib").mkdir(parents=True)
     script = scripts / "fleet-viewed.sh"
     script.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
     script.chmod(0o755)
+    # The workspace-resolution lib travels beside the script, like the
+    # `.workspace` marker it reads.
+    lib = scripts / "lib" / "resolve-workspace.sh"
+    lib.write_text(WS_LIB.read_text(encoding="utf-8"), encoding="utf-8")
 
     ws = tmp_path / "ws"
     ws.mkdir()

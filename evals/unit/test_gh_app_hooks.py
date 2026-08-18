@@ -58,6 +58,7 @@ REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"
 # pre-write and the bounded store live here, once.
 STORE_HELPER = HOOKS_DIR / "gh-store-token"
 GH_TOK = HOOKS_DIR / "gh-tok"
+BOUNDED_LIB = HOOKS_DIR / "gh-bounded"
 
 SKEW = 120  # both hooks re-mint this many seconds before the real expiry
 
@@ -122,8 +123,8 @@ class Session:
             d.mkdir(parents=True, exist_ok=True)
 
         # The hooks under test, verbatim from the kit — plus the shared
-        # mint/store helper they source.
-        for src in (AUTH_HOOK, REFRESH_HOOK, STORE_HELPER):
+        # mint/store helper they source, and the bound helper *it* sources.
+        for src in (AUTH_HOOK, REFRESH_HOOK, STORE_HELPER, BOUNDED_LIB):
             dst = self.hooks / src.name
             dst.write_text(src.read_text())
             dst.chmod(0o755)
@@ -578,7 +579,9 @@ def test_the_store_call_is_bounded(hook):
             break
     else:
         pytest.fail("no `gh auth login` call found")
-    assert "command -v timeout" in body and "alarm" in body, (
+    assert "hooks/gh-bounded" in body, "the store helper must source gh-bounded"
+    lib = BOUNDED_LIB.read_text()
+    assert "command -v timeout" in lib and "alarm" in lib, (
         "bounded() must try GNU timeout and fall back to a perl alarm"
     )
 
@@ -629,21 +632,21 @@ def test_failed_mint_does_not_hang_without_gnu_timeout(session, hook):
     assert session.gh_invocations == []
 
 
-def _bounded_fn(hook):
-    lines = hook.read_text().splitlines()
+def _bounded_fn():
+    # The one definition both callers source (gh-store-token and gh-tok).
+    lines = BOUNDED_LIB.read_text().splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith("bounded()"))
     end = next(i for i, ln in enumerate(lines) if i > start and ln.rstrip() == "}")
     return "\n".join(lines[start : end + 1])
 
 
-@pytest.mark.parametrize("hook", [STORE_HELPER, GH_TOK])
 @pytest.mark.parametrize("with_gnu_timeout", [True, False])
-def test_bounded_actually_bounds(session, hook, with_gnu_timeout):
+def test_bounded_actually_bounds(session, with_gnu_timeout):
     """Both branches of `bounded` must genuinely kill a stuck command —
     otherwise the fallback is decoration and a Mac regains the hang. (The perl
     alarm(2) survives exec(2), which is what makes the fallback a real bound.)"""
     probe = session.root / "probe.sh"
-    probe.write_text(f"{_bounded_fn(hook)}\nbounded 1 sleep 30\n")
+    probe.write_text(f"{_bounded_fn()}\nbounded 1 sleep 30\n")
     path = (
         os.environ.get("PATH", "/usr/bin:/bin")
         if with_gnu_timeout
@@ -830,6 +833,8 @@ def test_gh_tok_bounds_both_mint_routes():
     assert len(mints) == 2, "expected exactly the local and the bridge route"
     for stmt in mints:
         assert "bounded " in stmt, f"unbounded mint route: {stmt}"
-    assert "command -v timeout" in body and "alarm" in body, (
+    assert "gh-bounded" in body, "gh-tok must source the shared gh-bounded helper"
+    lib = BOUNDED_LIB.read_text()
+    assert "command -v timeout" in lib and "alarm" in lib, (
         "bounded() must try GNU timeout and fall back to a perl alarm"
     )

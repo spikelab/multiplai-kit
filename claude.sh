@@ -274,9 +274,16 @@ WORKSPACE="${WORKSPACE%/}"
 : "${WORKSPACE:?WORKSPACE must be set in .env}"
 : "${GIT_AUTHOR_NAME:?GIT_AUTHOR_NAME must be set in .env}"
 
+# Are we already inside a container? One probe for the two call sites (the
+# driver-mode refusal and the bare-with-full-permissions fallback) — they must
+# never drift apart.
+in_container() {
+    [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/null
+}
+
 # --- Driver mode validations (container-only; the hub owns this container) ---
 if [ "$DRIVER_MODE" -eq 1 ]; then
-    if [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
+    if in_container; then
         echo "Error: driver mode launches a container — run it on the host." >&2
         exit 1
     fi
@@ -656,7 +663,7 @@ if [[ "$MODE" == "local" ]]; then
 fi
 
 # --- Already inside a container? Run bare with full permissions ---
-if [ -f /.dockerenv ] || grep -qsm1 'docker\|containerd' /proc/1/cgroup 2>/dev/null; then
+if in_container; then
     exec_bare skip-permissions
 fi
 

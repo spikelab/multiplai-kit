@@ -209,8 +209,8 @@ def kit(tmp_path):
 def test_patch_touches_only_container_detection():
     """Guards the fixture itself: every line it rewrites must be a container check.
 
-    There are two such checks — one refusing driver mode from inside a container,
-    one choosing the bare-mode fallback — and both should read "not
+    The probe lives once, in `in_container()`, with two callers — the
+    driver-mode refusal and the bare-mode fallback — and it should read "not
     containerized" here. If a future edit puts `/.dockerenv` somewhere with
     different intent, this fails before the rest of the suite starts testing a
     launcher that differs from the shipped one in a way nobody chose.

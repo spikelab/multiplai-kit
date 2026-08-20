@@ -114,6 +114,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 | `evals/unit/test_claude_sh_docker_state.py` | The three-way Docker state `claude.sh` and `setup.sh` must agree on — no binary selects bare mode, a stopped daemon refuses and names the daemon (never a missing image, never a silent drop to bare), a live daemon with no image keeps the `build.sh` message, and `docker info` is asked only after a failure so a healthy launch pays one round-trip. Driver mode separates the same two causes (stub `docker` with failable `info`/`image`, plus a `PATH` with every binary except `docker`) |
 | `evals/unit/test_claude_sh_keychain.py` | The `FOO_KEYCHAIN` convention — that it applies to any name, that an explicit `FOO` wins and suppresses the lookup entirely, that a resolved `FOO` actually crosses into the container while `FOO_KEYCHAIN` never does, that several variables each resolve to their own item, that failures collect into one warning naming items and never values, and that App mode skips `GH_TOKEN` alone (stub `docker` + a per-item stub `security`) |
 | `evals/unit/test_setup_workspace_declaration.py` | `setup.sh`'s workspace path handling and the host-bridge declaration it writes on a Mac — tilde expansion, refusal of shell metacharacters (the value used to go through `eval`, where `#` and `;` silently truncated it), canonicalization for the SBPL `(subpath …)` the gateway builds, the mode-644 write-then-rename, and `install_host_state`'s behaviour when the pinned container tag does not ship `confine.sb`. The Darwin-only functions are extracted from the real script and run; the two early-exit cases drive the real `./setup.sh` against a throwaway `.env` |
+| `evals/unit/test_claude_sh_pi.py` | `--pi` mode — that the container command really is the pi bootstrap and not `claude`, that `~/.pi` is mounted from the host (without it a `--rm` container silently eats the profile's credentials and installed packages on exit), that each `--pi-profile` gets its own state dir while sharing one `~/.pi-cli` install, that `--profile` (git identity) and `--pi-profile` (model config) stay independent, that `./pi.sh` resolves to the same launch as `claude.sh --pi`, and the refusals — `--local`, `--shell`, driver mode, claude-only flags, an unvalidated profile name, and no Docker (stub `docker`) |
 | `evals/unit/test_guard_destructive.py` | PreToolUse destructive-command guard |
 | `evals/unit/test_guard_hook_wiring.py` | Whether the guard is reached at all (hook wiring, log-dir creation, fail-closed wrapper) |
 | `evals/unit/test_log_retention.py` | Log rotation/retention helper |
@@ -250,7 +251,10 @@ Run the kit's unit tests after any change to live kit code:
 | `evals/conftest.py` | Test infra — `sys.path` wiring + LLM bypass for the kit unit tests |
 | `container/` | Container tooling — fetched at setup from spikelab/multiplai-container |
 | `setup.sh` | First-time setup with prerequisite validation |
-| `claude.sh` | Launcher (container/local/shell modes) |
+| `claude.sh` | Launcher (container/local/shell/pi modes) |
+| `pi.sh` | Three-line wrapper for `claude.sh --pi` — the pi coding agent in the same container |
+| `scripts/pi-bootstrap.sh` | Runs *inside* the container as `--pi`'s command: installs pinned pi into `~/.pi-cli`, seeds the profile, installs its packages, execs pi |
+| `dotfiles/pi-profiles/<name>/` | In-git template for a pi profile — `agent/models.json`, `agent/settings.json`, `packages.txt`, `required-env.txt`. Copied into the live `~/.pi` only where a file is absent |
 
 ## Reference-doc count
 

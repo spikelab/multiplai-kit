@@ -15,6 +15,36 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **`./pi.sh` runs the pi coding agent in the container, on named model
+  profiles.** It wraps `claude.sh --pi` rather than forking it, so the sandbox,
+  workspace and kit mounts, git identity, GH token, env forwarding and SSH host
+  bridge are the same code — nothing to drift. pi is not baked into the image:
+  the bootstrap installs a pinned version into a user npm prefix at `~/.pi-cli`
+  on first launch and caches it across containers, so pi can be bumped without
+  a container release.
+
+  A profile is the whole `~/.pi` directory — `models.json`, credentials,
+  installed packages, session history — mounted from
+  `~/.claude-container/pi/<name>/`, because pi resolves its config from
+  `homedir()/.pi/agent` with no env-var override. Profiles are therefore fully
+  isolated rather than layered. `dotfiles/pi-profiles/<name>/` holds the
+  in-git template, copied into the live directory only where a file is absent,
+  so `/settings`, `pi install` and `pi auth` keep working normally.
+
+  Ships one profile, `deepseek`, carrying the compat fields DeepSeek V4 needs
+  for thinking-mode tool calls (`thinkingFormat: "deepseek"`,
+  `requiresReasoningContentOnAssistantMessages`, `supportsDeveloperRole: false`,
+  `maxTokensField: "max_tokens"`) and a `thinkingLevelMap` restricted to the
+  off/high/max levels DeepSeek actually exposes. It also installs
+  `@rohaquinlop/pi-deepseek-cache`, which stops pi's own system prompt and
+  compaction from invalidating DeepSeek's prefix cache — the difference between
+  cache-hit and cache-miss input pricing is roughly 30×, so it dominates the
+  cost of a session. `--pi` refuses to run without Docker: pi ships no
+  permission system, so the container is the only boundary there is.
+  See `docs/pi.md`.
+
 ### Fixed
 
 - **The statusline no longer goes blank when one field of the payload has an

@@ -482,9 +482,13 @@ def main(argv=None):
 
     doc = load(args.data_dir)
     # live_windows reads the pane map and every viewed-marker file — skip that
-    # I/O when the board renders empty anyway (render returns [] for a doc it
-    # cannot read), since this runs on every tick of the fleet board.
-    windows = live_windows(args.data_dir) if isinstance(doc, dict) else None
+    # I/O when the board renders empty anyway, since this runs on every tick of
+    # the fleet board. `render` returns [] for BOTH an unreadable doc and a
+    # non-positive line budget (which fleet-watch can produce from a degenerate
+    # terminal size), so the guard has to name both or it still pays for a
+    # result that is discarded.
+    renders_something = isinstance(doc, dict) and args.lines > 0
+    windows = live_windows(args.data_dir) if renders_something else None
     body = "\n".join(render(doc, args.lines, args.width, windows=windows)) + "\n"
     if not args.out:
         sys.stdout.write(body)

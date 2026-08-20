@@ -15,6 +15,38 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Fixed
+
+- **The statusline no longer goes blank when one field of the payload has an
+  unexpected shape.** Extracting all nine fields in one `jq` pass made the
+  program all-or-nothing: `// ""` covers a null but not a type error, so a
+  payload whose `rate_limits` is a string rather than an object (the shape that
+  appears before the session's first API response) aborted jq and emptied every
+  field — model, directory and context% included, and the empty directory then
+  took the git branch with it. Each field is wrapped `(...)?` now, so a bad
+  subtree costs only itself. The record is also NUL-terminated and read with
+  `-d ''`: a newline in any value used to silently empty every field after it.
+
+- **The fleet scripts, `fleet-watch` and the statusline now share one workspace
+  resolver instead of three.** `lib/resolve-workspace.sh` existed but two
+  scripts kept their own two-rung subsets of the same chain, each dropping a
+  different rung — so the consolidation was nominal and any change to
+  resolution order still had to land in three places. All four callers read
+  `$WORKSPACE` themselves and source the library only when it is empty, which
+  also means a partial install can no longer cost them an answer the
+  environment already gave. `fleet-watch` gains the
+  `$CLAUDE_CONFIG_DIR/.workspace` rung it was missing. The library locates the
+  `dotfiles/.workspace` marker from its OWN path rather than the caller's, so a
+  future caller at a different depth cannot silently resolve nothing.
+
+- **The `@` file picker takes the first `query` in its payload, not the last.**
+  The single-`sed` parse used a leading `.*`, which is greedy, so a nested or
+  embedded `"query"` would have been searched for instead. (The three-process
+  form before it had the mirror-image bug: it emitted every match joined by
+  newlines, a pattern that then matched no file at all.) An unparseable payload
+  still exits 0 with no suggestions rather than failing the picker.
+
+
 ### Added
 
 - **Project overlay images, driven by `./setup.sh`.** Register overlays in

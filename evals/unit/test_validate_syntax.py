@@ -24,7 +24,7 @@ import sys
 
 import pytest
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 HOOK = KIT_ROOT / "dotfiles" / "hooks" / "validate-syntax.sh"
 
 

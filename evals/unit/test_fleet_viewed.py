@@ -35,7 +35,7 @@ import time
 
 import pytest
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-viewed.sh"
 WS_LIB = KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh"
 

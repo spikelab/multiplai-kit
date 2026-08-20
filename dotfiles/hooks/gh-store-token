@@ -32,7 +32,22 @@ esac
 # The store call must be bounded on EVERY platform. `bounded` (GNU timeout,
 # falling back to a perl alarm on a bare Mac) is shared with gh-tok — see
 # gh-bounded for why the fallback is a real bound.
-. "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-bounded"
+#
+# Checked before sourcing, because both callers run `set -uo pipefail` WITHOUT
+# `-e`: a failed `.` returns non-zero and execution continues regardless. The
+# mint below would then reach `bounded` as a command-not-found, the store would
+# never happen, and — because the backoff marker is only cleared on success —
+# every session would run unauthenticated with one failure line per minute.
+_gh_bounded="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-bounded"
+if [ ! -r "$_gh_bounded" ]; then
+    printf '%s %s: cannot read %s; not minting\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_GH_STORE_TAG" "$_gh_bounded" \
+        >>"$LOG" 2>/dev/null || true
+    unset _gh_bounded
+    return 0 2>/dev/null || exit 0
+fi
+. "$_gh_bounded"
+unset _gh_bounded
 
 # Backoff FIRST, cleared on success — never written only on the failure branch.
 # The hook entries in settings.json carry "timeout": 30; a slow bridge plus a

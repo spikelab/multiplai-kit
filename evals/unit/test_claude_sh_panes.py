@@ -42,7 +42,7 @@ import pytest
 
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 PANES_SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-panes.sh"
 WS_LIB = KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh"
 

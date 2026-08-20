@@ -10,9 +10,15 @@
 
 set -euo pipefail
 
-# Parse query from JSON stdin. One process, not a cat|grep|sed pipeline —
-# this runs on every keystroke of the @ picker.
-query=$(sed -nE 's/.*"query"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p')
+# Parse query from JSON stdin. This runs on every keystroke of the @ picker,
+# so it stays a short pipeline rather than a jq fork — but `grep -m1` does the
+# selecting, not sed. sed has no non-greedy match: a leading `.*` takes the
+# LAST `"query"` in the payload, so a nested or embedded one would silently
+# search for the wrong term. (The three-process form this replaces had the
+# mirror-image bug — it emitted EVERY match, joining them with newlines into a
+# pattern that then matched no file at all.)
+query=$(grep -oE '"query"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | sed -nE '1s/.*:[[:space:]]*"([^"]*)"$/\1/p' || true)
 
 [ -z "$query" ] && exit 0
 

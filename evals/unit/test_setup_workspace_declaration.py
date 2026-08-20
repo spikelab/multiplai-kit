@@ -46,7 +46,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 SETUP_SH = KIT_ROOT / "setup.sh"
 
 # Matching on source text is deliberate: a rewrite should make these tests fail

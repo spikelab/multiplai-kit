@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "statusline.sh"
 
@@ -118,6 +118,31 @@ def test_missing_rate_limits_drops_the_segments_cleanly():
     out = run(payload(rate_limits=None))
     assert "5h" not in out
     assert "7d" not in out
+
+
+def test_a_wrongly_typed_subtree_only_costs_its_own_fields():
+    """One jq pass extracts all nine fields, so an error anywhere in the
+    program aborts all nine. `//` covers null but not a type error: with
+    `rate_limits` a string rather than an object, `.rate_limits.five_hour`
+    raises, jq exits non-zero and prints nothing, and the statusline loses
+    model, directory and context% along with the usage segments — an empty
+    directory then breaks the `git -C` probe too. Each field is wrapped `(...)?`
+    so a bad subtree costs only itself."""
+    out = run(payload(rate_limits="unavailable"))
+    assert "Opus 5 1M" in out
+    assert "8%" in out
+    assert "5h" not in out
+    assert "7d" not in out
+
+
+def test_a_newline_inside_a_value_does_not_truncate_the_record():
+    """The nine fields arrive as one delimited record. A plain `read` stops at
+    the first newline, so a newline in any value would silently empty every
+    field after it — here, everything downstream of the output style. The
+    record is NUL-terminated and read with `-d ''` instead."""
+    out = run(payload(output_style={"name": "custom\nstyle"}))
+    assert "5h 72%" in out
+    assert "7d 52%" in out
     assert not out.rstrip().endswith("|")
 
 

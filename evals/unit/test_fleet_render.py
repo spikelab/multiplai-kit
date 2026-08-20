@@ -37,7 +37,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 RENDERER = KIT_ROOT / "dotfiles" / "scripts" / "fleet-render.py"
 
 NOW = datetime(2026, 8, 7, 12, 0, 0, tzinfo=timezone.utc)

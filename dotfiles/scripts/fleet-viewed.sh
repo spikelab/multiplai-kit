@@ -29,9 +29,12 @@
 # set by the launcher for the container. `setup.sh` writes the marker beside
 # these scripts (`dotfiles/.workspace`). The readability guard keeps the
 # no-output contract even on a partial install.
-_ws_lib="$(dirname "$0")/lib/resolve-workspace.sh"
-[ -r "$_ws_lib" ] || exit 0
-. "$_ws_lib"
+ws="${WORKSPACE:-}"
+if [ -z "$ws" ]; then
+    _ws_lib="$(dirname "$0")/lib/resolve-workspace.sh"
+    [ -r "$_ws_lib" ] && . "$_ws_lib"
+    unset _ws_lib
+fi
 [ -n "$ws" ] || exit 0
 
 viewed_dir="$ws/.multiplai/data/tmux/viewed"

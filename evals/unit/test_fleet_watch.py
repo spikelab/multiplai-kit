@@ -53,7 +53,7 @@ import time
 
 import pytest
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-watch"
 
 # Records the arguments it was handed, then exits — one redraw, no loop, because
@@ -83,9 +83,9 @@ class Watch:
     """A copy of the script with a stub renderer beside it.
 
     Copied rather than run in place because the marker it reads is
-    `../.workspace` *relative to the script* — the whole point of the fallback
-    is that it travels with the install, so a test that pointed at the real
-    checkout would be testing this machine instead.
+    `../.workspace` *relative to the installed tree* — the whole point of the
+    fallback is that it travels with the install, so a test that pointed at the
+    real checkout would be testing this machine instead.
     """
 
     def __init__(self, tmp_path):
@@ -93,6 +93,15 @@ class Watch:
         self.scripts.mkdir(parents=True)
         shutil.copy(SCRIPT, self.scripts / "fleet-watch")
         os.chmod(self.scripts / "fleet-watch", 0o755)
+
+        # The workspace-resolution chain is one shared library, sourced by this
+        # script, fleet-panes.sh, fleet-viewed.sh and the statusline. It has to
+        # travel with the copy: the marker rung is located from the LIBRARY's
+        # own path, so leaving it behind would silently test the real checkout.
+        lib = self.scripts / "lib"
+        lib.mkdir()
+        shutil.copy(KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh",
+                    lib / "resolve-workspace.sh")
 
         render = self.scripts / "fleet-render.py"
         render.write_text(RENDER_STUB)
@@ -110,7 +119,14 @@ class Watch:
 
     def run(self, *args, env=None, cols=200, lines=50):
         environ = dict(os.environ)
+        # Both rungs ahead of the marker are scrubbed, not just the first.
+        # `$CLAUDE_CONFIG_DIR` is set inside a Claude container and points at a
+        # real install, so leaving it in place let the ambient environment
+        # answer — the marker test passed while proving nothing about the
+        # marker. A test a real environment variable can silently satisfy is
+        # not a test.
         environ.pop("WORKSPACE", None)
+        environ.pop("CLAUDE_CONFIG_DIR", None)
         environ["RENDER_LOG"] = str(self.log)
         environ["PANES_LOG"] = str(self.panes_log)
         environ["COLUMNS"] = str(cols)
@@ -133,7 +149,14 @@ class Watch:
 
     def _environ(self, env=None, cols=200, lines=50):
         environ = dict(os.environ)
+        # Both rungs ahead of the marker are scrubbed, not just the first.
+        # `$CLAUDE_CONFIG_DIR` is set inside a Claude container and points at a
+        # real install, so leaving it in place let the ambient environment
+        # answer — the marker test passed while proving nothing about the
+        # marker. A test a real environment variable can silently satisfy is
+        # not a test.
         environ.pop("WORKSPACE", None)
+        environ.pop("CLAUDE_CONFIG_DIR", None)
         environ["RENDER_LOG"] = str(self.log)
         environ["PANES_LOG"] = str(self.panes_log)
         environ["COLUMNS"] = str(cols)
@@ -196,6 +219,23 @@ def test_the_environment_resolves_the_workspace(watch, tmp_path):
     (ws / ".multiplai" / "data").mkdir(parents=True)
 
     result = watch.run(env={"WORKSPACE": str(ws)})
+
+    assert result.returncode == 0, result.stderr
+    assert watch.renders()[0][0] == str(ws / ".multiplai" / "data")
+
+
+def test_the_config_dir_marker_also_resolves_the_workspace(watch, tmp_path):
+    """fleet-watch reads the same chain as the fleet scripts and the statusline,
+    so it now honours `$CLAUDE_CONFIG_DIR/.workspace` as well as the marker
+    beside the install. It kept a two-rung subset of that chain before, which is
+    what made "one shared resolver" untrue."""
+    ws = tmp_path / "ws"
+    (ws / ".multiplai" / "data").mkdir(parents=True)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / ".workspace").write_text(f"{ws}\n")
+
+    result = watch.run(env={"CLAUDE_CONFIG_DIR": str(config_dir)})
 
     assert result.returncode == 0, result.stderr
     assert watch.renders()[0][0] == str(ws / ".multiplai" / "data")

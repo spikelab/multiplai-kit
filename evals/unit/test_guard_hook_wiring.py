@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import KIT_ROOT
+from _kitpaths import KIT_ROOT
 SETTINGS = KIT_ROOT / "dotfiles" / "settings.json"
 HOOKS = KIT_ROOT / "dotfiles" / "hooks"
 WRAPPER = HOOKS / "guard-destructive.sh"

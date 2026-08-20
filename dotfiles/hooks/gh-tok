@@ -76,9 +76,20 @@ trap cleanup EXIT
 # The mint must be bounded on EVERY platform — `ConnectTimeout` bounds only the
 # TCP connect, not a bridge that accepts and then stalls, and the bare-Mac route
 # had no bound at all. `bounded` (GNU timeout / perl alarm) is shared with
-# gh-store-token; source it from this script's own directory — gh-tok is always
-# invoked by full path, and its callers do not always set CLAUDE_CONFIG_DIR.
-. "${0%/*}/gh-bounded"
+# gh-store-token, and lives next to this script; its callers do not always set
+# CLAUDE_CONFIG_DIR, so the script's own location is the primary route.
+#
+# BASH_SOURCE rather than $0 (they differ when this file is sourced), and the
+# no-slash case is handled rather than assumed away: `${x%/*}` leaves a bare
+# name UNCHANGED, so an invocation whose argv[0] carries no directory would
+# build "gh-tok/gh-bounded" and, under `set -e`, exit here with nothing said.
+case "${BASH_SOURCE[0]}" in
+    */*) _gh_bounded="${BASH_SOURCE[0]%/*}/gh-bounded" ;;
+    *)   _gh_bounded="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-bounded" ;;
+esac
+[ -r "$_gh_bounded" ] || die "cannot read $_gh_bounded (the shared bound helper)"
+. "$_gh_bounded"
+unset _gh_bounded
 
 # Two routes to the same host script. Bare on the Mac, `multiplai-gh-token` is
 # right here on PATH (setup.sh installs it to ~/.local/bin) — call it directly;

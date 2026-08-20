@@ -68,9 +68,12 @@ self="${1:-}"
 # launcher always has `$WORKSPACE`; a board started from a plain terminal has
 # no variable and needs a marker file. The readability guard keeps the
 # no-output contract even on a partial install.
-_ws_lib="$(dirname "$0")/lib/resolve-workspace.sh"
-[ -r "$_ws_lib" ] || exit 0
-. "$_ws_lib"
+ws="${WORKSPACE:-}"
+if [ -z "$ws" ]; then
+    _ws_lib="$(dirname "$0")/lib/resolve-workspace.sh"
+    [ -r "$_ws_lib" ] && . "$_ws_lib"
+    unset _ws_lib
+fi
 [ -n "$ws" ] || exit 0
 
 data_dir="$ws/.multiplai/data"

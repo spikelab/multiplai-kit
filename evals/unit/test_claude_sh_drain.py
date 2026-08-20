@@ -52,13 +52,12 @@ import json
 import re
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
+from _kitpaths import KIT_ROOT
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
-from conftest import KIT_ROOT
 LAUNCHER_SOURCE = KIT_ROOT / "claude.sh"
 
 # Distinguishes the session's `docker run` from the drain's by the --name the

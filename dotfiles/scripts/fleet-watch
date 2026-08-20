@@ -47,11 +47,16 @@ if [ ! -r "$renderer" ]; then
     exit 1
 fi
 
-# The environment first, then the marker `setup.sh` writes one directory above
-# the scripts — a terminal has neither `$WORKSPACE` nor `$CLAUDE_CONFIG_DIR`.
+# Same resolution chain as the fleet scripts and the statusline
+# (lib/resolve-workspace.sh sets `ws`), rather than the subset this used to
+# keep. A terminal has neither `$WORKSPACE` nor `$CLAUDE_CONFIG_DIR`, so the
+# marker rungs in the library are what answer here. Unlike the other callers
+# an unresolved workspace is fatal, and says so.
 ws="${WORKSPACE:-}"
-if [ -z "$ws" ] && [ -r "$scripts/../.workspace" ]; then
-    read -r ws < "$scripts/../.workspace"
+if [ -z "$ws" ]; then
+    _ws_lib="$scripts/lib/resolve-workspace.sh"
+    [ -r "$_ws_lib" ] && . "$_ws_lib"
+    unset _ws_lib
 fi
 if [ -z "$ws" ]; then
     echo "fleet-watch: cannot resolve the workspace — run setup.sh, or set WORKSPACE" >&2

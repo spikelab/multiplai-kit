@@ -173,21 +173,15 @@ def cleanup_old_logs(log_dir: Path | None = None, retention_days: int | None = N
     cutoff_ts = (datetime.now(timezone.utc).timestamp()
                  - retention_days * 86400)
 
-    # Standard format: name-YYYY-MM-DD.log
-    for log_path in glob_mod.glob(str(log_dir / "*-????-??-??.log")):
-        try:
-            if Path(log_path).stat().st_mtime < cutoff_ts:
-                Path(log_path).unlink()
-        except OSError:
-            continue
-
-    # Legacy TimedRotatingFileHandler format: name.log.YYYY-MM-DD
-    for log_path in glob_mod.glob(str(log_dir / "*.log.????-??-??")):
-        try:
-            if Path(log_path).stat().st_mtime < cutoff_ts:
-                Path(log_path).unlink()
-        except OSError:
-            continue
+    # Standard format (name-YYYY-MM-DD.log) and legacy
+    # TimedRotatingFileHandler format (name.log.YYYY-MM-DD).
+    for pattern in ("*-????-??-??.log", "*.log.????-??-??"):
+        for log_path in glob_mod.glob(str(log_dir / pattern)):
+            try:
+                if Path(log_path).stat().st_mtime < cutoff_ts:
+                    Path(log_path).unlink()
+            except OSError:
+                continue
 
 
 def setup_logging(

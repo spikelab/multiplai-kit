@@ -63,16 +63,16 @@
 self="${1:-}"
 
 # --- where the data lives -----------------------------------------------------
-# Same resolution order as `fleet-viewed.sh` and `statusline.sh`: the
-# environment first, then the marker `setup.sh` writes beside the scripts. The
+# The resolution chain (environment first, then the markers `setup.sh` writes)
+# is shared with `fleet-viewed.sh`: lib/resolve-workspace.sh sets `ws`. The
 # launcher always has `$WORKSPACE`; a board started from a plain terminal has
-# neither variable and needs the file.
+# no variable and needs a marker file. The readability guard keeps the
+# no-output contract even on a partial install.
 ws="${WORKSPACE:-}"
-if [ -z "$ws" ] && [ -r "${CLAUDE_CONFIG_DIR:-}/.workspace" ]; then
-    read -r ws < "$CLAUDE_CONFIG_DIR/.workspace"
-fi
-if [ -z "$ws" ] && [ -r "$(dirname "$0")/../.workspace" ]; then
-    read -r ws < "$(dirname "$0")/../.workspace"
+if [ -z "$ws" ]; then
+    _ws_lib="$(dirname "$0")/lib/resolve-workspace.sh"
+    [ -r "$_ws_lib" ] && . "$_ws_lib"
+    unset _ws_lib
 fi
 [ -n "$ws" ] || exit 0
 
@@ -124,8 +124,14 @@ self_session=""
 self_found=""
 
 add_entry() {
+    # Sanitize here, not in the read loop: window/session only matter once they
+    # are written as JSON string values, and the overwhelming majority of panes
+    # are shell panes filtered out before ever reaching this point — sanitizing
+    # them all cost two tr forks per pane on the server.
+    _w=$(printf '%s' "$3" | tr -d '"\\[:cntrl:]')
+    _s=$(printf '%s' "$4" | tr -d '"\\[:cntrl:]')
     entries="${entries:+$entries,
-}    \"$1\": {\"pane\": \"$2\", \"server\": \"$server\", \"window\": \"$3\", \"session\": \"$4\", \"at\": \"$now\"}"
+}    \"$1\": {\"pane\": \"$2\", \"server\": \"$server\", \"window\": \"$_w\", \"session\": \"$_s\", \"at\": \"$now\"}"
     seen="$seen
 $1"
 }
@@ -147,9 +153,6 @@ while IFS='|' read -r pane cc auto window session; do
     # label falls back to the container name, a wrong one puts `zsh` on the
     # board with the same confidence as a real handle.
     case "$auto" in 0|off) ;; *) window="" ;; esac
-
-    window=$(printf '%s' "$window" | tr -d '"\\[:cntrl:]')
-    session=$(printf '%s' "$session" | tr -d '"\\[:cntrl:]')
 
     # Before the `@cc` test, not after, and that ordering is the whole point:
     # this is the record the fallback below uses, and it is needed in precisely

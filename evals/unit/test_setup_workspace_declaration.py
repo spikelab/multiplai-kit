@@ -46,7 +46,7 @@ from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from _kitpaths import KIT_ROOT
 SETUP_SH = KIT_ROOT / "setup.sh"
 
 # Matching on source text is deliberate: a rewrite should make these tests fail
@@ -416,7 +416,7 @@ def test_the_write_leaves_no_temporary_file_behind(tmp_path):
     assert sorted(p.name for p in state.iterdir()) == ["workspace"]
 
 
-def test_the_declaration_is_published_by_rename(tmp_path):
+def test_the_declaration_is_published_by_rename():
     """Complements the two mode tests above rather than standing in for them:
     no black-box assertion can observe the truncation window, so the mechanism
     is pinned directly — and the chmod must land on the temp file, before the

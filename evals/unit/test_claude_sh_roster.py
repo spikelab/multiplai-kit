@@ -36,13 +36,12 @@ Losing the roster costs accuracy in a status view. It must never cost a session.
 
 import json
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from _kitpaths import KIT_ROOT
 
 # Serves `docker ps` from a counter-indexed script so the pre-run and post-exit
 # observations can be told apart — the point of the second write is that it sees
@@ -211,7 +210,7 @@ def test_a_failing_daemon_leaves_no_partial_file(rosterkit):
     assert list(rosterkit.data_dir.glob(".live_containers.json.*")) == []
 
 
-def test_the_write_is_atomic(rosterkit):
+def test_the_write_is_atomic():
     """A reader in another container must never see a half-written file, so the
     roster is built in a scratch file and renamed into place."""
     src = (KIT_ROOT / "claude.sh").read_text()

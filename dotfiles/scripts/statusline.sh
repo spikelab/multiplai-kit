@@ -27,18 +27,39 @@ YELLOW=$'\033[33m'
 CYAN=$'\033[36m'
 SEP="${DIM}|${RST}"
 
-# Extract fields via jq
-model=$(echo "$input" | jq -r '.model.display_name // "?"')
-cwd=$(echo "$input" | jq -r '.workspace.current_dir // "?"')
-style=$(echo "$input" | jq -r '.output_style.name // empty')
-used=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-effort=$(echo "$input" | jq -r '.effort.level // empty')
-# Plan usage limits. Claude.ai subscribers only, and absent until the session's
-# first API response — every consumer below has to tolerate an empty value.
-h5_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-h5_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
-d7_pct=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-d7_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+# Extract all fields in one jq pass — this runs on every statusline refresh, so
+# one fork instead of ten. Three details, each load-bearing:
+#
+#   * Every path is wrapped `(...)? // ""`. `//` alone only covers null; it does
+#     NOT cover a type error, and one badly-shaped subtree aborts the whole
+#     program. A payload whose `.rate_limits` is the string "unavailable" —
+#     which is the shape that appears before the session's first API response —
+#     made jq exit 5 and print nothing, blanking all nine fields including
+#     model and cwd (and an empty cwd then breaks the `git -C` below). `?`
+#     confines the failure to the field that failed.
+#   * The delimiter is the unit separator (\x1f), not a tab: tab is IFS
+#     whitespace, so `read` would collapse adjacent delimiters and shift every
+#     field after an empty one.
+#   * The record is NUL-terminated and read with `-d ''` from a process
+#     substitution. Plain `read` stops at the first newline, so a newline
+#     anywhere in a value (an output-style name, a path) would silently empty
+#     every field after it. Command substitution cannot carry the NUL, hence
+#     `< <(...)`.
+#
+# Plan usage limits are claude.ai subscribers only, and absent until the
+# session's first API response — every consumer below tolerates an empty value.
+IFS=$'\x1f' read -r -d '' model cwd style used effort h5_pct h5_reset d7_pct d7_reset \
+  < <(printf '%s' "$input" | jq -j '[
+  ((.model.display_name)? // "?"),
+  ((.workspace.current_dir)? // "?"),
+  ((.output_style.name)? // ""),
+  ((.context_window.used_percentage)? // ""),
+  ((.effort.level)? // ""),
+  ((.rate_limits.five_hour.used_percentage)? // ""),
+  ((.rate_limits.five_hour.resets_at)? // ""),
+  ((.rate_limits.seven_day.used_percentage)? // ""),
+  ((.rate_limits.seven_day.resets_at)? // "")
+] | map(tostring) | join("\u001f") + "\u0000"')
 
 # Shorten the model name: "Opus 5 (1M context)" -> "Opus 5 1M". Width is the real
 # budget here — anything past the terminal's last column is silently truncated,
@@ -52,9 +73,15 @@ model="${model/ (/ }"; model="${model/)/}"
 # NB: the replacement is quoted because bash tilde-expands a bare `~` there,
 # which silently turns "~" straight back into "$HOME".
 short_cwd="$cwd"
+# Same resolution chain as the fleet scripts (lib/resolve-workspace.sh sets
+# `ws`), rather than the subset this used to keep. `$WORKSPACE` is read here so
+# a missing library costs nothing the environment already answered, and an
+# unresolved workspace is not an error — it just leaves the path uncollapsed.
 ws="${WORKSPACE:-}"
-if [ -z "$ws" ] && [ -r "${CLAUDE_CONFIG_DIR:-}/.workspace" ]; then
-  read -r ws < "$CLAUDE_CONFIG_DIR/.workspace"
+if [ -z "$ws" ]; then
+  _ws_lib="$(dirname "$0")/lib/resolve-workspace.sh"
+  [ -r "$_ws_lib" ] && . "$_ws_lib"
+  unset _ws_lib
 fi
 [ -n "$ws" ] && short_cwd="${short_cwd/#$ws/'~'}"
 short_cwd="${short_cwd/#$HOME/'~'}"
@@ -64,10 +91,10 @@ if [ "${#short_cwd}" -gt 28 ]; then
   short_cwd=".../${parent##*/}/${short_cwd##*/}"
 fi
 
-# Git info
+# Git info. `branch --show-current` itself fails outside a repo (exit 128), so
+# no separate rev-parse probe is needed; success with empty output is detached.
 git_info=""
-if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
-  branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null)
+if branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null); then
   [ -z "$branch" ] && branch="detached"
   dirty=""
   if ! git -C "$cwd" --no-optional-locks diff --quiet 2>/dev/null || \
@@ -87,7 +114,7 @@ pct_color() {
 
 # "1h36m" / "12m" until the given epoch second
 until_hm() {
-  local secs=$(( $1 - $(date +%s) ))
+  local secs=$(( $1 - ${EPOCHSECONDS:-$(date +%s)} ))
   [ "$secs" -lt 0 ] && secs=0
   local h=$(( secs / 3600 )) m=$(( (secs % 3600) / 60 ))
   if [ "$h" -gt 0 ]; then echo "${h}h${m}m"; else echo "${m}m"; fi

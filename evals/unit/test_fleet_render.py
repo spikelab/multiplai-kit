@@ -34,11 +34,10 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from _kitpaths import KIT_ROOT
 RENDERER = KIT_ROOT / "dotfiles" / "scripts" / "fleet-render.py"
 
 NOW = datetime(2026, 8, 7, 12, 0, 0, tzinfo=timezone.utc)

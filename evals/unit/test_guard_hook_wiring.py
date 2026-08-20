@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from _kitpaths import KIT_ROOT
 SETTINGS = KIT_ROOT / "dotfiles" / "settings.json"
 HOOKS = KIT_ROOT / "dotfiles" / "hooks"
 WRAPPER = HOOKS / "guard-destructive.sh"

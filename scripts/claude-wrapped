@@ -52,7 +52,11 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     eval "$_PRE_ENV"
     unset _PRE_ENV
 fi
-WORKSPACE=$(eval echo "${WORKSPACE:-}")
+# Expand a leading ~ and strip a trailing slash — same idiom as claude.sh. No
+# `eval` — this is user config, and eval would execute whatever a stray
+# backtick in it says.
+WORKSPACE="${WORKSPACE:-}"
+WORKSPACE="${WORKSPACE/#\~/$HOME}"
 WORKSPACE="${WORKSPACE%/}"
 
 SESSIONS_DIR="$WORKSPACE/.multiplai/data/sessions"

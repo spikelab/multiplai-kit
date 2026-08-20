@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# gh-bounded — the shared time-bound helper of the GitHub App hooks.
+#
+# SOURCED by gh-store-token (the store call) and gh-tok (both mint routes),
+# never executed on its own. The two used to carry byte-identical copies of
+# this function — the same drift gh-store-token was created to prevent, one
+# level down. A fix to the perl idiom must land exactly once.
+#
+# The call must be bounded on EVERY platform. GNU `timeout` exists in the
+# container (Linux); macOS ships no coreutils, and an unguarded `timeout 20 gh`
+# there is exit 127 — a perfectly good mint turned into a failed store. The
+# fallback is a perl alarm: alarm(2) survives exec(2), so it is a real bound,
+# not decoration (macOS always ships perl).
+#
+# Must stay bash-3.2-safe and coreutils-free, like everything the App hooks
+# run — evals/unit/test_gh_app_hooks.py pins both branches actually killing a
+# stuck command.
+bounded() {  # bounded <seconds> <command...>
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$@"
+    else
+        perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$@"
+    fi
+}

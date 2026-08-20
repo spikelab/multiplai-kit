@@ -57,12 +57,12 @@ import os
 import shutil
 import subprocess
 import time
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from _kitpaths import KIT_ROOT
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-panes.sh"
+WS_LIB = KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh"
 
 # Answers the two questions the script asks, and records them. `list-panes`
 # returns whatever the test staged, one record per line, in the field order the
@@ -103,8 +103,11 @@ class Panes:
 
     def __init__(self, tmp_path):
         self.scripts = tmp_path / "dotfiles" / "scripts"
-        self.scripts.mkdir(parents=True)
+        (self.scripts / "lib").mkdir(parents=True)
         shutil.copy(SCRIPT, self.scripts / "fleet-panes.sh")
+        # The workspace-resolution lib travels beside the script, like the
+        # `.workspace` marker it reads.
+        shutil.copy(WS_LIB, self.scripts / "lib" / "resolve-workspace.sh")
         self.marker = tmp_path / "dotfiles" / ".workspace"
 
         self.stub_dir = tmp_path / "bin"

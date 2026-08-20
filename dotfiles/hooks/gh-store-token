@@ -29,18 +29,25 @@ case "$GH_TOKEN_APP" in
         ;;
 esac
 
-# The store call must be bounded on EVERY platform. GNU `timeout` exists in the
-# container (Linux); macOS ships no coreutils, and an unguarded `timeout 20 gh`
-# there is exit 127 — a perfectly good mint turned into a failed store. The
-# fallback is a perl alarm: alarm(2) survives exec(2), so it is a real bound,
-# not decoration (macOS always ships perl).
-bounded() {  # bounded <seconds> <command...>
-    if command -v timeout >/dev/null 2>&1; then
-        timeout "$@"
-    else
-        perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$@"
-    fi
-}
+# The store call must be bounded on EVERY platform. `bounded` (GNU timeout,
+# falling back to a perl alarm on a bare Mac) is shared with gh-tok — see
+# gh-bounded for why the fallback is a real bound.
+#
+# Checked before sourcing, because both callers run `set -uo pipefail` WITHOUT
+# `-e`: a failed `.` returns non-zero and execution continues regardless. The
+# mint below would then reach `bounded` as a command-not-found, the store would
+# never happen, and — because the backoff marker is only cleared on success —
+# every session would run unauthenticated with one failure line per minute.
+_gh_bounded="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-bounded"
+if [ ! -r "$_gh_bounded" ]; then
+    printf '%s %s: cannot read %s; not minting\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_GH_STORE_TAG" "$_gh_bounded" \
+        >>"$LOG" 2>/dev/null || true
+    unset _gh_bounded
+    return 0 2>/dev/null || exit 0
+fi
+. "$_gh_bounded"
+unset _gh_bounded
 
 # Backoff FIRST, cleared on success — never written only on the failure branch.
 # The hook entries in settings.json carry "timeout": 30; a slow bridge plus a

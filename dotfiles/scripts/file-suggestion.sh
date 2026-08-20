@@ -10,8 +10,15 @@
 
 set -euo pipefail
 
-# Parse query from JSON stdin
-query=$(cat | grep -o '"query"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"query"[[:space:]]*:[[:space:]]*"//;s/"$//')
+# Parse query from JSON stdin. This runs on every keystroke of the @ picker,
+# so it stays a short pipeline rather than a jq fork — but `grep -m1` does the
+# selecting, not sed. sed has no non-greedy match: a leading `.*` takes the
+# LAST `"query"` in the payload, so a nested or embedded one would silently
+# search for the wrong term. (The three-process form this replaces had the
+# mirror-image bug — it emitted EVERY match, joining them with newlines into a
+# pattern that then matched no file at all.)
+query=$(grep -oE '"query"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | sed -nE '1s/.*:[[:space:]]*"([^"]*)"$/\1/p' || true)
 
 [ -z "$query" ] && exit 0
 
@@ -22,7 +29,7 @@ ignore_file="$(dirname "$0")/file-suggestion-ignore"
 # grep with zero hits exits 1, which under `set -e` would otherwise abort the
 # whole script and surface as a picker error instead of an empty result.
 rg --files --no-ignore-vcs \
-  ${ignore_file:+--ignore-file "$ignore_file"} \
+  --ignore-file "$ignore_file" \
   "$dir" 2>/dev/null \
   | { grep -iF "$query" || true; } \
   | head -15

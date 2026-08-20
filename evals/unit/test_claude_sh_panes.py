@@ -37,14 +37,14 @@ has no other field carrying which identity a session is running as. Pinned in
 import json
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from _kitpaths import KIT_ROOT
 PANES_SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-panes.sh"
+WS_LIB = KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh"
 
 # Two jobs. It records every call so the stamp can be asserted on, and it
 # answers `list-panes -a` with a canned fleet so the real `fleet-panes.sh` —
@@ -146,8 +146,9 @@ def panekit(kit, tmp_path):  # noqa: F811
     (kit.stub_dir / "docker").write_text(PANE_DOCKER_STUB)
     (kit.stub_dir / "docker").chmod(0o755)
     scripts = kit.root / "dotfiles" / "scripts"
-    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "lib").mkdir(parents=True, exist_ok=True)
     shutil.copy(PANES_SCRIPT, scripts / "fleet-panes.sh")
+    shutil.copy(WS_LIB, scripts / "lib" / "resolve-workspace.sh")
     kit.tmux_log = tmp_path / "tmux.log"
     kit.tmux_log.write_text("")
     kit.data_dir = kit.workspace / ".multiplai" / "data"
@@ -370,8 +371,9 @@ def test_no_data_dir_means_no_map_and_no_complaint(kit, tmp_path):  # noqa: F811
     (kit.stub_dir / "tmux").write_text(PANE_TMUX_STUB)
     (kit.stub_dir / "tmux").chmod(0o755)
     scripts = kit.root / "dotfiles" / "scripts"
-    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "lib").mkdir(parents=True, exist_ok=True)
     shutil.copy(PANES_SCRIPT, scripts / "fleet-panes.sh")
+    shutil.copy(WS_LIB, scripts / "lib" / "resolve-workspace.sh")
     launch = kit.launch("--shell", "-c", "true",
                         TMUX_LOG=str(tmp_path / "t.log"),
                         TMUX="/tmp/tmux-501/default,1234,0", TMUX_PANE="%12")

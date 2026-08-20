@@ -47,11 +47,10 @@ import os
 import shutil
 import signal
 import subprocess
-from pathlib import Path
 
 import pytest
 
-KIT_ROOT = Path(__file__).resolve().parents[2]
+from _kitpaths import KIT_ROOT
 HOOKS_DIR = KIT_ROOT / "dotfiles" / "hooks"
 AUTH_HOOK = HOOKS_DIR / "gh-app-auth.sh"
 REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"
@@ -59,6 +58,7 @@ REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"
 # pre-write and the bounded store live here, once.
 STORE_HELPER = HOOKS_DIR / "gh-store-token"
 GH_TOK = HOOKS_DIR / "gh-tok"
+BOUNDED_LIB = HOOKS_DIR / "gh-bounded"
 
 SKEW = 120  # both hooks re-mint this many seconds before the real expiry
 
@@ -123,8 +123,8 @@ class Session:
             d.mkdir(parents=True, exist_ok=True)
 
         # The hooks under test, verbatim from the kit — plus the shared
-        # mint/store helper they source.
-        for src in (AUTH_HOOK, REFRESH_HOOK, STORE_HELPER):
+        # mint/store helper they source, and the bound helper *it* sources.
+        for src in (AUTH_HOOK, REFRESH_HOOK, STORE_HELPER, BOUNDED_LIB):
             dst = self.hooks / src.name
             dst.write_text(src.read_text())
             dst.chmod(0o755)
@@ -579,7 +579,9 @@ def test_the_store_call_is_bounded(hook):
             break
     else:
         pytest.fail("no `gh auth login` call found")
-    assert "command -v timeout" in body and "alarm" in body, (
+    assert "hooks/gh-bounded" in body, "the store helper must source gh-bounded"
+    lib = BOUNDED_LIB.read_text()
+    assert "command -v timeout" in lib and "alarm" in lib, (
         "bounded() must try GNU timeout and fall back to a perl alarm"
     )
 
@@ -630,21 +632,21 @@ def test_failed_mint_does_not_hang_without_gnu_timeout(session, hook):
     assert session.gh_invocations == []
 
 
-def _bounded_fn(hook):
-    lines = hook.read_text().splitlines()
+def _bounded_fn():
+    # The one definition both callers source (gh-store-token and gh-tok).
+    lines = BOUNDED_LIB.read_text().splitlines()
     start = next(i for i, ln in enumerate(lines) if ln.startswith("bounded()"))
     end = next(i for i, ln in enumerate(lines) if i > start and ln.rstrip() == "}")
     return "\n".join(lines[start : end + 1])
 
 
-@pytest.mark.parametrize("hook", [STORE_HELPER, GH_TOK])
 @pytest.mark.parametrize("with_gnu_timeout", [True, False])
-def test_bounded_actually_bounds(session, hook, with_gnu_timeout):
+def test_bounded_actually_bounds(session, with_gnu_timeout):
     """Both branches of `bounded` must genuinely kill a stuck command —
     otherwise the fallback is decoration and a Mac regains the hang. (The perl
     alarm(2) survives exec(2), which is what makes the fallback a real bound.)"""
     probe = session.root / "probe.sh"
-    probe.write_text(f"{_bounded_fn(hook)}\nbounded 1 sleep 30\n")
+    probe.write_text(f"{_bounded_fn()}\nbounded 1 sleep 30\n")
     path = (
         os.environ.get("PATH", "/usr/bin:/bin")
         if with_gnu_timeout
@@ -658,6 +660,83 @@ def test_bounded_actually_bounds(session, hook, with_gnu_timeout):
         timeout=10,  # TimeoutExpired here means the bound did nothing
     )
     assert result.returncode != 0, "a stuck store call survived its bound"
+
+
+def _bound_probe_layout(tmp_path, *, with_bounded=True):
+    """The real gh-tok, copied into a directory of its own alongside the library.
+
+    Two gaps this closes. `test_bounded_actually_bounds` proves the FUNCTION
+    kills a stuck command, by extracting it from the library — it cannot show
+    either caller reaches it; and `test_gh_tok_bounds_both_mint_routes` reads
+    the source text, which a rename would satisfy without anything running.
+    Copying gh-tok out of HOOKS_DIR also stops the source line resolving by
+    luck: it must find the library next to the copy, not next to the original.
+    """
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    real = hooks / "gh-tok"
+    real.write_text(GH_TOK.read_text())
+    real.chmod(0o755)
+    if with_bounded:
+        (hooks / "gh-bounded").write_text(BOUNDED_LIB.read_text())
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # `command -v multiplai-gh-token` picks the local route, so no bridge is
+    # involved. It is never actually run: the `timeout` stub below fails first.
+    minter = bindir / "multiplai-gh-token"
+    minter.write_text("#!/usr/bin/env bash\nexit 0\n")
+    minter.chmod(0o755)
+    # Stand in for GNU timeout, recording the argv `bounded` hands it. Reached
+    # only if gh-tok sourced the library and routed the mint through it.
+    log = tmp_path / "timeout-argv.log"
+    stub = bindir / "timeout"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> {log}\n'
+        "exit 7\n"
+    )
+    stub.chmod(0o755)
+    return real, bindir, log
+
+
+def _run_bound_probe(script, bindir, tmp_path):
+    return subprocess.run(
+        [str(script), "acme"],
+        env={
+            "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "HOME": str(tmp_path / "home"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+
+def test_gh_tok_actually_reaches_the_shared_bound(tmp_path):
+    """Executes the real gh-tok and asserts the mint went through `bounded`.
+
+    A stub `timeout` first on PATH records the argv `bounded` hands it. Reaching
+    it at all means the source line resolved; the recorded argv means the mint
+    was routed through the bound rather than called directly.
+    """
+    script, bindir, log = _bound_probe_layout(tmp_path)
+    result = _run_bound_probe(script, bindir, tmp_path)
+    assert result.returncode != 0, "the stub minter fails; gh-tok must not report success"
+    assert log.exists(), f"the bound was never reached: {result.stderr}"
+    recorded = log.read_text().strip()
+    assert "multiplai-gh-token --json acme" in recorded
+    assert recorded.split()[0].isdigit(), f"no timeout seconds in {recorded!r}"
+
+
+def test_gh_tok_says_what_is_missing_when_the_bound_helper_is_absent(tmp_path):
+    """A missing gh-bounded must name itself. Under `set -euo pipefail` a bare
+    failed `.` exits with bash's own message about a path the reader did not
+    write, which is how a broken install looks like a broken bridge."""
+    script, bindir, log = _bound_probe_layout(tmp_path, with_bounded=False)
+    result = _run_bound_probe(script, bindir, tmp_path)
+    assert result.returncode != 0
+    assert "the shared bound helper" in result.stderr, result.stderr
+    assert not log.exists()
 
 
 @pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK, STORE_HELPER])
@@ -831,6 +910,8 @@ def test_gh_tok_bounds_both_mint_routes():
     assert len(mints) == 2, "expected exactly the local and the bridge route"
     for stmt in mints:
         assert "bounded " in stmt, f"unbounded mint route: {stmt}"
-    assert "command -v timeout" in body and "alarm" in body, (
+    assert "gh-bounded" in body, "gh-tok must source the shared gh-bounded helper"
+    lib = BOUNDED_LIB.read_text()
+    assert "command -v timeout" in lib and "alarm" in lib, (
         "bounded() must try GNU timeout and fall back to a perl alarm"
     )

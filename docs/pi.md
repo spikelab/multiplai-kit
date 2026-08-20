@@ -118,6 +118,66 @@ clock, so the profile encodes **peak** — the readout over-reports off-peak
 rather than under-reporting peak. European working mornings sit inside the peak
 window; long unattended runs are half price outside it.
 
+## The openrouter profile
+
+`./pi.sh --pi-profile openrouter` reaches DeepSeek through one OpenRouter key,
+with each model pinned to a different host: **Flash → DigitalOcean**, **Pro →
+DeepSeek first-party**. Both carry `allow_fallbacks: false` and
+`require_parameters: true`, so a request either goes to the named host or fails
+loudly. Unpinned routing is not reproducible — the same slug can be served at a
+different quantization, on a different backend, at a different price, and a
+benchmark that changed underneath you looks like a model regression.
+
+### Read this before assuming it is cheaper
+
+OpenRouter reports **`supports_implicit_caching: false` for DigitalOcean** — and
+for every other third-party host of this model. Only DeepSeek's own endpoint
+returns `true`. The `input_cache_read` rate on those hosts is real but is not
+automatic prefix caching, so an agent loop re-sending a growing transcript pays
+the full input rate on every turn.
+
+That cancels most of the sticker-price win. Per 1M tokens, checked live against
+the OpenRouter endpoints API on 2026-08-20:
+
+| | in | out | cache read | implicit cache |
+|---|---|---|---|---|
+| `digitalocean` (Flash) | $0.068 | $0.168 | $0.0168 | **no** |
+| `deepseek` (Flash, off-peak) | $0.22 | $0.66 | $0.007 | **yes** |
+| `deepseek` (Pro, off-peak) | $0.66 | $1.98 | $0.022 | **yes** |
+| `digitalocean` (Pro) | $0.87 | $1.74 | $0.174 | no |
+
+Worked on a 500K-input / 60K-output task, which is roughly one agentic task's
+shape: DigitalOcean Flash costs **$0.044** with no caching; first-party Flash at
+99% cache hits costs **$0.044**. A wash off-peak — and first-party doubles at
+peak, so DigitalOcean wins there. The tilt is with session length: the longer a
+session runs, the more input is re-sent prefix, and the more the cached route
+pulls ahead.
+
+Pro is not close. DigitalOcean is more expensive on input, 8× worse on cache
+read, and only cheaper on output, which is why Pro is pinned to `deepseek` here.
+
+### Two things worth changing your mind about
+
+**`quantization: "unknown"` on DigitalOcean.** StreamLake ($0.078/$0.157),
+Baidu ($0.080/$0.160) and DeepInfra ($0.090/$0.180) all declare fp8 and cost
+within 15% on input — StreamLake is *cheaper on output*. Undeclared
+quantization is the failure this repo already knows about: an unpinned provider
+serving the "same" model differently is what overturned a published result. If
+output quality wobbles, repoint `only` at `streamlake` before blaming the model.
+
+**Throughput is unverified.** OpenRouter's `throughput_last_30m` returned 0 for
+every provider on this model at time of writing, so per-host tokens/sec could
+not be checked. An earlier note in this workspace put DigitalOcean at ~5 tok/s
+against DeepSeek's ~74; if that still holds it disqualifies the route for
+interactive use regardless of price. Measure it on the first real session.
+
+### Thinking levels differ from the direct profile
+
+OpenRouter takes `reasoning: { effort }`, so this profile exposes `low`,
+`medium`, `high` and lets OpenRouter translate onto DeepSeek's off/high/max
+ladder. The direct `deepseek` profile addresses those provider levels itself and
+exposes `high`/`max` instead. Same models, different control surface.
+
 ## Adding a profile
 
 ```

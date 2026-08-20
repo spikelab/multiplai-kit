@@ -45,6 +45,21 @@ public repo has shipped without in-tree memory hooks from day one (see the
   permission system, so the container is the only boundary there is.
   See `docs/pi.md`.
 
+- **A second pi profile, `openrouter`**, reaching DeepSeek through one
+  OpenRouter key with each model pinned to a different host: Flash to
+  DigitalOcean, Pro to DeepSeek first-party. Both set `allow_fallbacks: false`
+  and `require_parameters: true`, so a request reaches the named host or fails
+  loudly — unpinned routing can serve the same slug at a different
+  quantization, backend and price, which reads as a model regression.
+
+  The profile documents why it is not the obvious saving. OpenRouter reports
+  `supports_implicit_caching: false` for DigitalOcean and for every other
+  third-party host of this model; only DeepSeek's own endpoint caches
+  implicitly. So the cheap route pays full input rate on every re-sent prefix,
+  and on a 500K-in/60K-out task the two come out even against first-party
+  off-peak. Pro is not close — DigitalOcean is dearer on input and 8× worse on
+  cache read — hence the split pinning.
+
 ### Fixed
 
 - **The statusline no longer goes blank when one field of the payload has an

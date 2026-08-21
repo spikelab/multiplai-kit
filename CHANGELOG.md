@@ -45,6 +45,22 @@ public repo has shipped without in-tree memory hooks from day one (see the
   permission system, so the container is the only boundary there is.
   See `docs/pi.md`.
 
+- **Web search in every pi profile.** pi ships no web access at all — no search,
+  no URL fetch — which is its largest gap against Claude Code, and it is a
+  package rather than a setting. `dotfiles/pi-profiles/_shared/packages.txt` is
+  installed into every profile ahead of the profile's own list, and pins
+  `pi-web-access` there: `web_search`, `fetch_content` (URL and PDF to
+  markdown), `source_check` (claims with passage citations) and
+  `get_search_content`. It reads provider keys from the environment, so an
+  `EXA_API_KEY` or `TAVILY_API_KEY` already in `.env` is picked up with no
+  further configuration.
+
+  The package marker now records a **hash of the combined list** instead of a
+  bare "ran once" flag. Previously, adding a line to a `packages.txt` did
+  nothing on any profile that had already launched — a silent no-op that would
+  have read as a broken extension. A failed install leaves the marker unwritten
+  so a transient npm error retries rather than being marked done.
+
 - **A second pi profile, `openrouter`**, reaching DeepSeek through one
   OpenRouter key with each model pinned to a different host: Flash to
   DigitalOcean, Pro to DeepSeek first-party. Both set `allow_fallbacks: false`

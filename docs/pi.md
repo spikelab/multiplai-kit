@@ -178,6 +178,38 @@ OpenRouter takes `reasoning: { effort }`, so this profile exposes `low`,
 ladder. The direct `deepseek` profile addresses those provider levels itself and
 exposes `high`/`max` instead. Same models, different control surface.
 
+## Web search (every profile)
+
+pi ships **no web access at all** — no search, no URL fetch. That is the largest
+single gap against Claude Code, and it is not a setting you can turn on; it
+arrives as a package.
+
+`dotfiles/pi-profiles/_shared/packages.txt` is installed into every profile
+before the profile's own list, and web search is what it is there for. It brings
+four tools — `web_search`, `fetch_content` (URL to markdown, also PDFs),
+`source_check` (claims with passage citations), `get_search_content` — plus
+`/websearch` and `/search`.
+
+No extra configuration: the extension reads provider keys straight from the
+environment, so `EXA_API_KEY` and `TAVILY_API_KEY` in the kit's `.env` are
+already forwarded and already picked up. It walks a fallback chain and stops at
+the first provider that answers. Without any key it can still reach Exa's hosted
+MCP endpoint — but note that queries then go to a third party under no account
+of yours, which is a reason to prefer your own key rather than a fallback.
+
+Adding a line to `_shared/packages.txt` reaches profiles that have **already**
+launched. The marker records a hash of the combined list rather than a bare
+"ran once" flag, so a changed list re-runs; `pi install` is idempotent. A
+package that fails to install leaves the marker unwritten, so a transient npm
+failure retries next launch instead of being silently marked done.
+
+**Two cautions.** pi's own docs are blunt that packages run with full system
+access and extensions execute arbitrary code — the container is the only thing
+between that and your machine, which is another reason `--pi` refuses to run
+without Docker. And several unrelated GitHub projects share the name
+`pi-web-access`; the pinned one is the package published to npm,
+[nicobailon/pi-web-access](https://github.com/nicobailon/pi-web-access).
+
 ## Adding a profile
 
 ```

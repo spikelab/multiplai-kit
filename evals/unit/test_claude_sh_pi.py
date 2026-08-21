@@ -188,9 +188,16 @@ def test_pi_refuses_without_docker(kit, tmp_path):
     assert "requires Docker" in proc.stdout + proc.stderr
 
 
-@pytest.mark.parametrize("bad", ["../escape", "a/b", "", ".hidden", "with space"])
+@pytest.mark.parametrize(
+    "bad", ["../escape", "a/b", "", ".hidden", "with space", "_shared"]
+)
 def test_pi_profile_name_is_validated(kit, bad):
-    """The name becomes a host directory and a mount target."""
+    """The name becomes a host directory and a mount target.
+
+    `_shared` is in the list because it is a real directory under
+    dotfiles/pi-profiles/ holding the package list every profile gets. It is not
+    a profile, and selecting it would mount a state dir named after it.
+    """
     result = kit.launch("--pi-profile", bad)
     assert result.status != 0, f"accepted profile name {bad!r}"
     assert result.argv == []

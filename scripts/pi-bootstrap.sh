@@ -9,11 +9,13 @@
 # What it does, in order:
 #   1. installs or re-installs pi into ~/.pi-cli at the pinned version
 #   2. seeds ~/.pi/agent from the profile template, without overwriting
-#   3. installs the profile's pinned packages, once
+#   3. installs the shared + profile package lists when the list changes
 #   4. execs pi
 #
 # Everything after step 1 is per-profile. ~/.pi is a different host directory
-# for every profile, so profiles never share credentials, models or sessions.
+# for every profile, so profiles never share credentials, models or sessions —
+# which is why a capability wanted everywhere goes in _shared/packages.txt
+# rather than being installed once and hoped to be visible.
 
 set -euo pipefail
 
@@ -35,7 +37,7 @@ TEMPLATE_DIR="$KIT_HOME/dotfiles/pi-profiles/$PROFILE"
 if [ ! -d "$TEMPLATE_DIR" ]; then
     echo "[pi] Error: no such pi profile: $PROFILE" >&2
     echo "[pi]        Profiles available:" >&2
-    for d in "$KIT_HOME/dotfiles/pi-profiles"/*/; do
+    for d in "$KIT_HOME/dotfiles/pi-profiles"/[A-Za-z0-9]*/; do
         [ -d "$d" ] && echo "[pi]          $(basename "$d")" >&2
     done
     exit 1
@@ -115,22 +117,47 @@ done
 #
 # `pi install` writes the package list into settings.json itself, so the
 # template does not hand-write that key — it would be a guess at a schema pi
-# already owns. The marker makes this a first-run cost, not a per-launch one;
-# delete it (or the whole profile dir) to re-run.
+# already owns.
+#
+# Two lists, concatenated: `_shared/packages.txt` applies to every profile, and
+# the profile's own follows it. Shared exists so a capability every profile needs
+# — web search being the first — is declared once instead of copied into each
+# profile and then forgotten in the next one.
+#
+# The marker holds a hash of the resulting list, not a bare flag. A flag made
+# this first-run-only, which meant adding a line to packages.txt silently did
+# nothing on profiles that had already launched — the failure would have looked
+# like a broken extension. `pi install` is idempotent, so re-running a changed
+# list is cheap and safe.
+SHARED_PKG_FILE="$KIT_HOME/dotfiles/pi-profiles/_shared/packages.txt"
 PKG_FILE="$TEMPLATE_DIR/packages.txt"
 MARKER="$PI_AGENT_DIR/.multiplai-packages-installed"
-if [ -f "$PKG_FILE" ] && [ ! -f "$MARKER" ]; then
-    while IFS= read -r pkg; do
-        pkg="${pkg%%#*}"
-        pkg="$(echo "$pkg" | xargs)"
-        [ -n "$pkg" ] || continue
-        echo "[pi] Installing package: $pkg"
-        if ! pi install "$pkg"; then
-            echo "[pi] Warning: failed to install $pkg — continuing without it." >&2
-            echo "[pi]          Re-run after fixing, or install by hand with: pi install $pkg" >&2
-        fi
-    done < "$PKG_FILE"
-    touch "$MARKER"
+
+pkg_list() {
+    cat "$SHARED_PKG_FILE" "$PKG_FILE" 2>/dev/null \
+        | sed 's/#.*//' \
+        | awk 'NF { $1=$1; print }'
+}
+
+WANTED="$(pkg_list)"
+if [ -n "$WANTED" ]; then
+    WANT_HASH="$(printf '%s' "$WANTED" | sha256sum | cut -d' ' -f1)"
+    HAVE_HASH="$(cat "$MARKER" 2>/dev/null || true)"
+    if [ "$WANT_HASH" != "$HAVE_HASH" ]; then
+        failed=0
+        while IFS= read -r pkg; do
+            [ -n "$pkg" ] || continue
+            echo "[pi] Installing package: $pkg"
+            if ! pi install "$pkg"; then
+                echo "[pi] Warning: failed to install $pkg — continuing without it." >&2
+                echo "[pi]          Re-run after fixing, or install by hand with: pi install $pkg" >&2
+                failed=1
+            fi
+        done <<< "$WANTED"
+        # Only record the hash when every package landed, so a transient npm
+        # failure retries on the next launch instead of being marked done.
+        [ "$failed" -eq 0 ] && printf '%s' "$WANT_HASH" > "$MARKER"
+    fi
 fi
 
 # --- 4. readiness -------------------------------------------------------------

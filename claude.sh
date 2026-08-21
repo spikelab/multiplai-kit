@@ -10,6 +10,21 @@
 # Additional flags:
 #   --profile <name>    Load env.<name> for git identity + GH token (default: .env)
 #   --shell             Container shell (bash instead of claude)
+#   --pi                Run the pi coding agent instead of claude, in the same
+#                       container with the same mounts, git identity and
+#                       sandbox. Requires Docker (pi ships no permission
+#                       system, so the container IS the boundary).
+#   --pi-profile <name> As --pi, selecting a pi model profile (default:
+#                       deepseek). A profile is a whole ~/.pi directory —
+#                       models.json, credentials, installed extensions and
+#                       session history — mounted from
+#                       ~/.claude-container/pi/<name>. Profiles are isolated
+#                       from each other. See docs/pi.md.
+#
+#                       NOTE two different things are called "profile" here:
+#                       --profile picks a git identity, --pi-profile picks a
+#                       model configuration. They are orthogonal; combining
+#                       them is fine.
 #
 # Environment:
 #   Every variable assigned in .env / env.<profile> is forwarded into the
@@ -50,6 +65,8 @@
 #   ./claude.sh --local                 # bare, host permissions apply
 #   ./claude.sh --shell                 # container bash shell
 #   ./claude.sh --profile work --shell  # work profile, bash shell
+#   ./pi.sh                             # pi on the deepseek profile
+#   ./pi.sh --pi-profile kimi           # pi on another model profile
 #   ./claude.sh driver --sid new --port 8765 --runner <path>  # hub driver container
 
 set -euo pipefail
@@ -79,6 +96,11 @@ DRV_FOREGROUND=0
 # --- Parse flags (extract ours, pass the rest through) ---
 PROFILE=""
 MODE=""
+# Which pi profile `--pi` launches. NOT the same axis as --profile: --profile
+# picks a git identity + GH token, --pi-profile picks a pi model configuration.
+# The two are orthogonal and can be combined.
+PI_PROFILE="deepseek"
+PI_MODE=0
 PASSTHROUGH_ARGS=()
 CLAUDE_ONLY_ARGS=()
 while [[ $# -gt 0 ]]; do
@@ -129,6 +151,21 @@ while [[ $# -gt 0 ]]; do
             MODE="shell"
             shift
             ;;
+        --pi)
+            PI_MODE=1
+            shift
+            ;;
+        --pi-profile)
+            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
+            PI_MODE=1
+            PI_PROFILE="$2"
+            shift 2
+            ;;
+        --pi-profile=*)
+            PI_MODE=1
+            PI_PROFILE="${1#--pi-profile=}"
+            shift
+            ;;
         --plugin-dir|--add-dir)
             # claude-only flags: must not leak into `bash` in --shell mode
             [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
@@ -148,6 +185,32 @@ done
 
 if [ "$DRIVER_MODE" -eq 1 ] && [ -n "$MODE" ]; then
     echo "Error: driver mode cannot combine with --local/--shell." >&2
+    exit 1
+fi
+if [ "$DRIVER_MODE" -eq 1 ] && [ "$PI_MODE" -eq 1 ]; then
+    echo "Error: driver mode cannot combine with --pi." >&2
+    exit 1
+fi
+
+# --pi replaces the container's command, so it cannot also be --local (no
+# container at all) or --shell (bash instead). Silently letting the last flag
+# win would launch something the user did not ask for.
+if [ "$PI_MODE" -eq 1 ] && [ -n "$MODE" ]; then
+    echo "Error: --pi cannot combine with --$MODE." >&2
+    exit 1
+fi
+
+# The profile name becomes a directory name on the host and a mount target in
+# the container. Reject anything that could escape that directory rather than
+# silently mounting some other path over /home/agent/.pi.
+if [ "$PI_MODE" -eq 1 ] && [[ ! "$PI_PROFILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "Error: --pi-profile must match [A-Za-z0-9][A-Za-z0-9._-]* — got: $PI_PROFILE" >&2
+    exit 1
+fi
+
+# claude-CLI flags have no meaning for pi and would be forwarded verbatim.
+if [ "$PI_MODE" -eq 1 ] && [ ${#CLAUDE_ONLY_ARGS[@]} -gt 0 ]; then
+    echo "Error: --plugin-dir/--add-dir are claude-only and cannot combine with --pi." >&2
     exit 1
 fi
 if [ "$DRIVER_MODE" -eq 1 ] && [ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]; then
@@ -664,6 +727,13 @@ fi
 
 # --- Already inside a container? Run bare with full permissions ---
 if in_container; then
+    # pi mode: the bootstrap is self-contained (it installs pi into ~/.pi-cli
+    # and seeds ~/.pi itself), so a nested launch works — it just gets an
+    # ephemeral pi install, because the host mounts are not there.
+    if [ "$PI_MODE" -eq 1 ]; then
+        export MULTIPLAI_PI_PROFILE="$PI_PROFILE"
+        exec "$SCRIPT_DIR/scripts/pi-bootstrap.sh" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+    fi
     exec_bare skip-permissions
 fi
 
@@ -681,6 +751,15 @@ fi
 # starting is a downgrade nobody asked for, so a stopped daemon is an error with
 # its own message (see the image check below), not this branch. `setup.sh` makes
 # the same three-way split.
+if ! command -v docker &>/dev/null && [ "$PI_MODE" -eq 1 ]; then
+    # No bare rung for pi: the point of --pi is the sandbox, and pi ships no
+    # permission system of its own (upstream says so — containerize it).
+    # Running it bare on the host would be YOLO mode with no boundary at all.
+    echo "Error: --pi requires Docker. pi has no permission system, so the container" >&2
+    echo "       IS the boundary — there is no safe bare-mode equivalent." >&2
+    exit 1
+fi
+
 if ! command -v docker &>/dev/null; then
     echo "[claude] Bare mode (no Docker): claude runs directly on this host, with your"
     echo "         whole filesystem in reach. Permission prompts stay on and are the only"
@@ -696,6 +775,11 @@ CONTAINER_ARGS=("claude" "--dangerously-skip-permissions" "${MCP_ISOLATION[@]}" 
 if [[ "$MODE" == "shell" ]]; then
     # bash doesn't understand --plugin-dir / --add-dir — drop CLAUDE_ONLY_ARGS.
     CONTAINER_ARGS=("bash")
+fi
+if [ "$PI_MODE" -eq 1 ]; then
+    # The bootstrap lives in the kit, which is bind-mounted at its own absolute
+    # path, so pi can be installed and updated without an image release.
+    CONTAINER_ARGS=("$SCRIPT_DIR/scripts/pi-bootstrap.sh")
 fi
 
 IMAGE_NAME="${IMAGE_NAME:-claude-multiplai:local}"
@@ -865,6 +949,26 @@ fi
 CLI_DIR="$HOME/.claude-container/cli"
 mkdir -p "$CLI_DIR"
 MOUNTS+=(-v "$CLI_DIR:/home/agent/.claude-cli")
+
+# Persistent pi state, mounted only in --pi mode.
+#
+# Two separate dirs, because they have different lifetimes:
+#   ~/.pi-cli   the pi npm install — one copy shared by every profile
+#   ~/.pi       the profile's own config, credentials, packages and sessions
+#
+# The profile dir is what makes `--pi-profile` a profile rather than a flag:
+# pi resolves its config from homedir()/.pi/agent with no env-var override
+# (checked in 0.84.2), so switching profiles means mounting a different host
+# directory at the same container path. Profiles are therefore fully isolated —
+# separate models.json, separate auth, separate installed extensions, separate
+# session history. Nothing leaks between them.
+if [ "$PI_MODE" -eq 1 ]; then
+    PI_CLI_DIR="$HOME/.claude-container/pi-cli"
+    PI_STATE_DIR="$HOME/.claude-container/pi/$PI_PROFILE"
+    mkdir -p "$PI_CLI_DIR" "$PI_STATE_DIR"
+    MOUNTS+=(-v "$PI_CLI_DIR:/home/agent/.pi-cli")
+    MOUNTS+=(-v "$PI_STATE_DIR:/home/agent/.pi")
+fi
 
 CREDS_FILE="${CLAUDE_CREDENTIALS_FILE:-$HOME/.claude-container/credentials.json}"
 mkdir -p "$(dirname "$CREDS_FILE")"
@@ -1073,6 +1177,11 @@ ENV_ARGS+=(
     # from pre-fix images are covered without a rebuild.
     -e DISABLE_AUTOUPDATER=1
 )
+
+# Which profile the in-container bootstrap should seed and launch.
+if [ "$PI_MODE" -eq 1 ]; then
+    ENV_ARGS+=(-e MULTIPLAI_PI_PROFILE="$PI_PROFILE")
+fi
 
 # GCP credential env — the key is mounted at a fixed container path, so these
 # two point there, never at the host path in GCP_KEY_FILE.
@@ -1676,8 +1785,10 @@ while :; do
         "${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}" \
         || DOCKER_STATUS=$?
 
-    # Shell mode runs bash — there is no claude session to adopt.
+    # Shell mode runs bash and pi mode runs pi — neither leaves a claude
+    # session to adopt, so the take-back loop has nothing to do.
     [[ "$MODE" == "shell" ]] && break
+    [ "$PI_MODE" -eq 1 ] && break
 
     # Map this container back to its session via the registry, then look for
     # an adoption marker. Every step is best-effort: no registry (plugin not

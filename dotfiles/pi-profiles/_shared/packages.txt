@@ -1,0 +1,22 @@
+# Packages installed into EVERY pi profile, before the profile's own list.
+# One source per line, in `pi install` syntax. Blank lines and # are ignored.
+#
+# This file exists so a capability every profile needs is declared once. Adding
+# a line here installs it into profiles that have already launched too — the
+# marker tracks the content of the list, not just whether it ever ran.
+#
+# Security note, from pi's own docs: packages run with full system access, and
+# extensions execute arbitrary code. The container is the boundary. Pin versions
+# and read the source before adding anything here.
+
+# Web search, URL fetch as markdown, and claim-checking with citations —
+# `web_search`, `fetch_content`, `source_check`, `get_search_content`. pi ships
+# no web access at all, which is the single biggest gap against Claude Code.
+#
+# It reads provider keys straight from the environment, so EXA_API_KEY and
+# TAVILY_API_KEY in the kit's .env are picked up with no further config. Its
+# fallback chain tries providers in order and stops at the first that answers.
+#
+# Note there are several GitHub projects named pi-web-access. This is the one
+# published to npm: github.com/nicobailon/pi-web-access.
+npm:pi-web-access@0.24.0

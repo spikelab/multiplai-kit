@@ -15,6 +15,90 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **`./pi.sh` runs the pi coding agent in the container, on named model
+  profiles.** It wraps `claude.sh --pi` rather than forking it, so the sandbox,
+  workspace and kit mounts, git identity, GH token, env forwarding and SSH host
+  bridge are the same code — nothing to drift. pi is not baked into the image:
+  the bootstrap installs a pinned version into a user npm prefix at `~/.pi-cli`
+  on first launch and caches it across containers, so pi can be bumped without
+  a container release.
+
+  A profile is the whole `~/.pi` directory — `models.json`, credentials,
+  installed packages, session history — mounted from
+  `~/.claude-container/pi/<name>/`, because pi resolves its config from
+  `homedir()/.pi/agent` with no env-var override. Profiles are therefore fully
+  isolated rather than layered. `dotfiles/pi-profiles/<name>/` holds the
+  in-git template, copied into the live directory only where a file is absent,
+  so `/settings`, `pi install` and `pi auth` keep working normally.
+
+  Ships one profile, `deepseek`, carrying the compat fields DeepSeek V4 needs
+  for thinking-mode tool calls (`thinkingFormat: "deepseek"`,
+  `requiresReasoningContentOnAssistantMessages`, `supportsDeveloperRole: false`,
+  `maxTokensField: "max_tokens"`) and a `thinkingLevelMap` restricted to the
+  off/high/max levels DeepSeek actually exposes. It also installs
+  `@rohaquinlop/pi-deepseek-cache`, which stops pi's own system prompt and
+  compaction from invalidating DeepSeek's prefix cache — the difference between
+  cache-hit and cache-miss input pricing is roughly 30×, so it dominates the
+  cost of a session. `--pi` refuses to run without Docker: pi ships no
+  permission system, so the container is the only boundary there is.
+  See `docs/pi.md`.
+
+- **Web search in every pi profile.** pi ships no web access at all — no search,
+  no URL fetch — which is its largest gap against Claude Code, and it is a
+  package rather than a setting. `dotfiles/pi-profiles/_shared/packages.txt` is
+  installed into every profile ahead of the profile's own list, and pins
+  `pi-web-access` there: `web_search`, `fetch_content` (URL and PDF to
+  markdown), `source_check` (claims with passage citations) and
+  `get_search_content`. It reads provider keys from the environment, so an
+  `EXA_API_KEY` or `TAVILY_API_KEY` already in `.env` is picked up with no
+  further configuration.
+
+  The package marker now records a **hash of the combined list** instead of a
+  bare "ran once" flag. Previously, adding a line to a `packages.txt` did
+  nothing on any profile that had already launched — a silent no-op that would
+  have read as a broken extension. A failed install leaves the marker unwritten
+  so a transient npm error retries rather than being marked done.
+
+- **A second pi profile, `openrouter`**, reaching DeepSeek through one
+  OpenRouter key with each model pinned to a different host: Flash to
+  DigitalOcean, Pro to DeepSeek first-party. Both set `allow_fallbacks: false`
+  and `require_parameters: true`, so a request reaches the named host or fails
+  loudly — unpinned routing can serve the same slug at a different
+  quantization, backend and price, which reads as a model regression.
+
+  The profile documents why it is not the obvious saving. OpenRouter reports
+  `supports_implicit_caching: false` for DigitalOcean and for every other
+  third-party host of this model; only DeepSeek's own endpoint caches
+  implicitly. So the cheap route pays full input rate on every re-sent prefix,
+  and on a 500K-in/60K-out task the two come out even against first-party
+  off-peak. Pro is not close — DigitalOcean is dearer on input and 8× worse on
+  cache read — hence the split pinning.
+
+### Security
+
+- **GitHub cloning is disabled in `pi-web-access`.**
+  `dotfiles/pi-profiles/_shared/web-search.json` ships
+  `{"githubClone": {"enabled": false}}`, seeded to `~/.pi/web-search.json` in
+  every profile. In 0.24.0 that code path deletes a directory the user never
+  named: `decodeURIComponent` is applied to each path segment of a github.com
+  URL with no character-set check (so `%2E%2E%2F` becomes `../`), the decoded
+  owner segment is joined into the clone destination with no containment check,
+  and the destination is `rmSync`'d recursively *before* cloning. The host check
+  passes because the host really is github.com.
+
+  The container does not contain this — the workspace is bind-mounted at the
+  same absolute path inside and out — and the trigger is the agent fetching a
+  crafted link, which is what a web-search extension does with links it finds.
+  The flag is checked at the top of the clone entry point before any path is
+  built or removed. Cost is repository cloning only; GitHub reading via the API
+  is a separate module and unaffected, and `git clone` / `gh repo clone` from
+  pi's bash tool still work.
+
+  Seeding now mirrors the whole `~/.pi` tree rather than just `agent/`, since
+  not every extension keeps its config under `agent/`.
+
 ### Fixed
 
 - **The statusline no longer goes blank when one field of the payload has an

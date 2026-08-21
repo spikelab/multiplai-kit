@@ -8,7 +8,7 @@
 #
 # What it does, in order:
 #   1. installs or re-installs pi into ~/.pi-cli at the pinned version
-#   2. seeds ~/.pi/agent from the profile template, without overwriting
+#   2. seeds ~/.pi from the profile template, then shared defaults, no overwrite
 #   3. installs the shared + profile package lists when the list changes
 #   4. execs pi
 #
@@ -99,19 +99,51 @@ export PATH="$PI_CLI_DIR/bin:$PATH"
 # --- 2. seed the profile ----------------------------------------------------
 #
 # Copy-if-absent, never overwrite: the template is the starting point, and
-# anything the user or pi itself has since written to ~/.pi/agent wins. That is
-# what makes it safe to keep the template in git and still let `/settings`,
-# `pi install` and `pi auth` write to the live files.
+# anything the user or pi itself has since written wins. That is what makes it
+# safe to keep the template in git and still let `/settings`, `pi install` and
+# `pi auth` write to the live files.
+#
+# A template directory mirrors ~/.pi, so `agent/models.json` lands at
+# ~/.pi/agent/models.json and a bare `web-search.json` lands at
+# ~/.pi/web-search.json. Extensions do not all keep their config under agent/ —
+# pi-web-access reads ~/.pi/web-search.json — so seeding only agent/ would have
+# left those files unreachable.
+#
+# Profile first, then _shared: copy-if-absent means whoever writes a path first
+# owns it, so this order lets a profile override a shared default rather than
+# the other way round.
 seeded_any=0
-for src in "$TEMPLATE_DIR"/agent/*; do
-    [ -e "$src" ] || continue
-    dest="$PI_AGENT_DIR/$(basename "$src")"
-    if [ ! -e "$dest" ]; then
-        cp -R "$src" "$dest"
-        echo "[pi] Seeded $(basename "$src") from the $PROFILE profile template."
-        seeded_any=1
-    fi
-done
+
+seed_from() {
+    local root="$1" label="$2" src base dest f d
+    [ -d "$root" ] || return 0
+    for src in "$root"/*; do
+        [ -e "$src" ] || continue
+        base="$(basename "$src")"
+        # Control files read by this script, and repo docs — not pi config.
+        case "$base" in packages.txt | required-env.txt | README.md) continue ;; esac
+        dest="$PI_HOME/$base"
+        if [ -d "$src" ]; then
+            mkdir -p "$dest"
+            for f in "$src"/*; do
+                [ -e "$f" ] || continue
+                d="$dest/$(basename "$f")"
+                [ -e "$d" ] && continue
+                cp -R "$f" "$d"
+                echo "[pi] Seeded $base/$(basename "$f") from $label."
+                seeded_any=1
+            done
+        else
+            [ -e "$dest" ] && continue
+            cp -R "$src" "$dest"
+            echo "[pi] Seeded $base from $label."
+            seeded_any=1
+        fi
+    done
+}
+
+seed_from "$TEMPLATE_DIR" "the $PROFILE profile template"
+seed_from "$KIT_HOME/dotfiles/pi-profiles/_shared" "the shared defaults"
 
 # --- 3. packages ------------------------------------------------------------
 #

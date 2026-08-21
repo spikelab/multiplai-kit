@@ -210,6 +210,38 @@ without Docker. And several unrelated GitHub projects share the name
 `pi-web-access`; the pinned one is the package published to npm,
 [nicobailon/pi-web-access](https://github.com/nicobailon/pi-web-access).
 
+### GitHub cloning is off, deliberately
+
+`_shared/web-search.json` ships `{"githubClone": {"enabled": false}}`, seeded to
+`~/.pi/web-search.json` in every profile. That path is not decorative — the
+extension resolves its config to `~/.pi/web-search.json` unless
+`PI_CODING_AGENT_DIR` or `XDG_CONFIG_HOME` is set, and neither is set in this
+container.
+
+The clone path in 0.24.0 will delete a directory you did not name.
+`decodeURIComponent` is applied to each path segment of a github.com URL with no
+character-set check, so `%2E%2E%2F` becomes `../`; the decoded owner segment is
+joined into the clone destination with no containment check; and the destination
+is `rmSync`'d recursively *before* the clone runs. The host check passes because
+the host really is github.com.
+
+**The container does not contain this.** The workspace is bind-mounted at the
+same absolute path inside and out, so a delete under `/Users/…` from in here
+removes the real file. And the trigger is the agent fetching a crafted link —
+precisely what a web-search extension does with links it finds, so an attacker
+needs only a page the agent reads.
+
+`enabled: false` is checked at the top of the clone entry point, before any path
+is built or removed, and returns `null` rather than throwing.
+
+**What it costs:** no repository cloning. GitHub reading through the API is a
+separate module with no reference to this gate, so issues, READMEs and file
+contents still work. For an actual checkout use `git clone` or `gh repo clone`
+from pi's bash tool — that is you naming a repo, not a URL the agent happened to
+read, which is the whole difference.
+
+Re-enable only once upstream has fixed the traversal.
+
 ## Adding a profile
 
 ```

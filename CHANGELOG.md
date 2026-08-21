@@ -76,6 +76,29 @@ public repo has shipped without in-tree memory hooks from day one (see the
   off-peak. Pro is not close — DigitalOcean is dearer on input and 8× worse on
   cache read — hence the split pinning.
 
+### Security
+
+- **GitHub cloning is disabled in `pi-web-access`.**
+  `dotfiles/pi-profiles/_shared/web-search.json` ships
+  `{"githubClone": {"enabled": false}}`, seeded to `~/.pi/web-search.json` in
+  every profile. In 0.24.0 that code path deletes a directory the user never
+  named: `decodeURIComponent` is applied to each path segment of a github.com
+  URL with no character-set check (so `%2E%2E%2F` becomes `../`), the decoded
+  owner segment is joined into the clone destination with no containment check,
+  and the destination is `rmSync`'d recursively *before* cloning. The host check
+  passes because the host really is github.com.
+
+  The container does not contain this — the workspace is bind-mounted at the
+  same absolute path inside and out — and the trigger is the agent fetching a
+  crafted link, which is what a web-search extension does with links it finds.
+  The flag is checked at the top of the clone entry point before any path is
+  built or removed. Cost is repository cloning only; GitHub reading via the API
+  is a separate module and unaffected, and `git clone` / `gh repo clone` from
+  pi's bash tool still work.
+
+  Seeding now mirrors the whole `~/.pi` tree rather than just `agent/`, since
+  not every extension keeps its config under `agent/`.
+
 ### Fixed
 
 - **The statusline no longer goes blank when one field of the payload has an

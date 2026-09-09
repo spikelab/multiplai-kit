@@ -7,7 +7,7 @@ token prefix and no manual mint — which is exactly why they need tests: nothin
 in an ordinary session *looks* different when they silently stop working. The
 symptom arrives an hour later as `Bad credentials (HTTP 401)`.
 
-Five properties are worth pinning, and all five are one-line-edit fragile:
+Six properties are worth pinning, and all six are one-line-edit fragile:
 
   * **Inert without `GH_TOKEN_APP`.** PAT-mode users and marketplace-only users
     must pay one test and see no behaviour change.
@@ -26,6 +26,14 @@ Five properties are worth pinning, and all five are one-line-edit fragile:
     HUNG SessionStart and a hung PreToolUse hook: no session would start, and
     the reverting fix was to tear both hooks out of settings.json. "Exit 0 on
     every path" is not enough — a hook that hangs never reaches its exit.
+  * **A stored token is only half of it.** `git push` over https needs
+    `gh auth setup-git` to have written the credential helper into
+    ~/.gitconfig, and the container wipes ~/.gitconfig on every restart. That
+    used to be a second SessionStart entry in settings.json, which raced this
+    hook's token store and lost — it read a hosts.yml that did not exist yet
+    and logged "You are not logged into any GitHub hosts" every session for
+    months. The auth hook calls it itself now, after the store, on both the
+    mint and the resume path, and never after a failed mint.
   * **Nothing assumes the container's toolchain.** The kit also runs bare on a
     Mac: /bin/bash 3.2 (no $EPOCHSECONDS, no printf '%(...)T'), no GNU
     coreutils (no `timeout`), BSD date. The store-call bound falls back to a
@@ -37,12 +45,13 @@ Everything is driven by stubs: a fake `gh-tok` in the hooks directory and a fake
 `gh` on `PATH`, both recording their invocations. No network, no bridge, no
 `gh` install required.
 
-`GH_STUB` is deliberately forgiving (it `cat`s whatever it gets and exits 0),
-which is what let the hang ship green. `GH_STUB_REALISTIC` models the real
+`GH_STUB` is deliberately forgiving (it `cat`s the token it is given and exits
+0), which is what let the hang ship green. `GH_STUB_REALISTIC` models the real
 thing, including the block, and the tests that matter use it with a hard
 subprocess timeout so a regression fails the suite instead of wedging it.
 """
 
+import json
 import os
 import shutil
 import signal
@@ -59,6 +68,7 @@ REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"
 STORE_HELPER = HOOKS_DIR / "gh-store-token"
 GH_TOK = HOOKS_DIR / "gh-tok"
 BOUNDED_LIB = HOOKS_DIR / "gh-bounded"
+SETTINGS = KIT_ROOT / "dotfiles" / "settings.json"
 
 SKEW = 120  # both hooks re-mint this many seconds before the real expiry
 
@@ -83,10 +93,13 @@ echo "$@" >> "$GH_TOK_CALLS"
 sleep 60
 """
 
+# Only `auth login --with-token` reads stdin — `auth setup-git` does not, and a
+# stub that cats unconditionally would both hang on it and clobber the recorded
+# token with the next invocation's empty stdin.
 GH_STUB = """\
 #!/bin/bash
 echo "$@" >> "$GH_CALLS"
-cat > "$GH_STDIN"
+case "$1 $2" in "auth login") cat > "$GH_STDIN" ;; esac
 """
 
 # What `gh auth login --with-token` actually does, measured on gh 2.96.0: an
@@ -95,6 +108,7 @@ cat > "$GH_STDIN"
 GH_STUB_REALISTIC = """\
 #!/bin/bash
 echo "$@" >> "$GH_CALLS"
+case "$1 $2" in "auth login") ;; *) exit 0 ;; esac
 tok=$(cat)
 printf '%s' "$tok" > "$GH_STDIN"
 if [ -z "$tok" ]; then
@@ -108,6 +122,22 @@ fi
 # Long enough that a real bridge call would finish, far shorter than the 60s
 # block in the realistic stub: a hang fails, a working hook passes.
 HANG_BUDGET = 15
+
+STORE_CALL = "auth login --with-token --hostname github.com"
+SETUP_GIT_CALL = "auth setup-git"
+
+
+def _expected_gh_calls(hook):
+    """What a successful store leaves in the gh call log, per hook.
+
+    The SessionStart hook registers the git credential helper straight after
+    storing the token; the PreToolUse refresh hook does not, because by the time
+    a Bash call runs, SessionStart has already written ~/.gitconfig.
+    """
+    calls = [STORE_CALL]
+    if "auth" in str(hook):
+        calls.append(SETUP_GIT_CALL)
+    return calls
 
 
 class Session:
@@ -246,7 +276,7 @@ def test_auth_hook_stores_the_token_through_a_pipe(session):
     result = session.run("gh-app-auth.sh")
     assert result.returncode == 0
     assert session.mint_attempts == 1
-    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+    assert session.gh_invocations == ["auth login --with-token --hostname github.com", "auth setup-git"]
     assert session.gh_stdin.read_text().strip() == "ghs_stub_token"
 
 
@@ -278,7 +308,7 @@ def test_auth_hook_clears_an_inherited_environment_token(session):
     forwards none, but a stray one must not silently block the store."""
     result = session.run("gh-app-auth.sh", GH_TOKEN="ghp_stray")
     assert result.returncode == 0
-    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+    assert session.gh_invocations == ["auth login --with-token --hostname github.com", "auth setup-git"]
 
 
 def test_auth_hook_skips_the_mint_while_the_cached_token_is_fresh(session):
@@ -289,7 +319,9 @@ def test_auth_hook_skips_the_mint_while_the_cached_token_is_fresh(session):
     result = session.run("gh-app-auth.sh")
     assert result.returncode == 0
     assert session.mint_attempts == 0
-    assert session.gh_invocations == []
+    # No mint — but the credential helper still has to be re-registered, because
+    # the container wipes ~/.gitconfig and this may be the session that needs it.
+    assert session.gh_invocations == [SETUP_GIT_CALL]
     assert not session.fail_marker().exists(), (
         "the skip path must not leave a backoff marker behind"
     )
@@ -314,7 +346,7 @@ def test_child_sessions_still_refresh_tokens(session, hook):
     result = session.run(hook, _HOOK_CHILD_SESSION="1")
     assert result.returncode == 0
     assert session.mint_attempts == 1
-    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+    assert session.gh_invocations == _expected_gh_calls(hook)
 
 
 @pytest.mark.parametrize("hook", ["gh-app-auth.sh", "gh-app-refresh.sh"])
@@ -522,8 +554,94 @@ def test_successful_mint_still_stores_against_a_realistic_gh(session, hook):
     session.write_sidecar("acme", "0")
     result = session.run(hook, timeout=HANG_BUDGET)
     assert result.returncode == 0
-    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+    assert session.gh_invocations == _expected_gh_calls(hook)
     assert session.gh_stdin.read_text().strip() == "ghs_stub_token"
+
+
+# --- registering git's credential helper -------------------------------------
+#
+# `gh auth setup-git` writes `credential.https://github.com.helper` into
+# ~/.gitconfig. Without it an https `git push` prompts for a username and, in a
+# hook-driven session with no terminal, simply fails. The container wipes
+# ~/.gitconfig on every restart, so it is a per-SessionStart job, not a setup
+# step — which is why it lives in this hook and not in a doc.
+
+
+def test_the_auth_hook_registers_the_git_credential_helper(session):
+    """The store and the helper are two separate pieces of state. A session that
+    mints a perfectly good token and never runs setup-git still cannot push."""
+    result = session.run("gh-app-auth.sh")
+    assert result.returncode == 0
+    assert session.gh_invocations == [STORE_CALL, SETUP_GIT_CALL], (
+        "setup-git must run, and only after the token is stored"
+    )
+
+
+def test_setup_git_runs_even_when_the_mint_is_skipped(session):
+    """The regression this whole change is about, in one test.
+
+    SessionStart fires on resume and after a compaction with a token that is
+    still live, so the hook skips the mint. ~/.gitconfig does not survive a
+    container restart the way the token cache does, so skipping the mint must
+    not skip the helper."""
+    session.write_sidecar("acme", str(_now() + 3600))
+    result = session.run("gh-app-auth.sh")
+    assert result.returncode == 0
+    assert session.mint_attempts == 0
+    assert session.gh_invocations == [SETUP_GIT_CALL]
+
+
+def test_a_failed_store_never_registers_the_helper(session):
+    """Pointing git at a credential helper backed by no credential converts a
+    clean failure into a prompt for a username that no hook can answer."""
+    session.set_minter(GH_TOK_FAILING_STUB)
+    result = session.run("gh-app-auth.sh")
+    assert result.returncode == 0
+    assert SETUP_GIT_CALL not in session.gh_invocations
+
+
+@pytest.mark.parametrize("app", ["../evil", "a/b"])
+def test_a_refused_app_name_never_registers_the_helper(session, app):
+    """The shared helper returns before minting on a malformed name. That path
+    writes no backoff marker either, so a hook inferring success from the
+    marker's absence would call setup-git with nothing stored."""
+    result = session.run("gh-app-auth.sh", app=app)
+    assert result.returncode == 0
+    assert session.gh_invocations == []
+
+
+def test_setup_git_cannot_read_the_hooks_stdin():
+    """SessionStart hands the hook its event JSON on stdin. `gh` must be given
+    /dev/null instead: a gh that reads stdin would swallow the payload, and one
+    that waits on it would hang the session start — the 2026-07-30 failure mode,
+    reached by a different route."""
+    line = [
+        ln for ln in AUTH_HOOK.read_text().splitlines()
+        if "gh auth setup-git" in ln and not ln.lstrip().startswith("#")
+    ]
+    assert len(line) == 1, f"expected one setup-git call site, got {line}"
+    assert "</dev/null" in line[0], line[0]
+
+
+def test_settings_only_runs_setup_git_outside_app_mode():
+    """settings.json used to run setup-git as a second SessionStart entry.
+    Claude Code starts an event's entries together, so it read a hosts.yml the
+    auth hook had not written yet and failed every time. App mode gets it from
+    the hook now; the standalone entry must stay for PAT mode, and must be
+    guarded so the two can never both fire."""
+    settings = json.loads(SETTINGS.read_text())
+    commands = [
+        h["command"]
+        for group in settings["hooks"]["SessionStart"]
+        for h in group["hooks"]
+        if "setup-git" in h.get("command", "")
+    ]
+    assert len(commands) == 1, f"expected one standalone setup-git entry, got {commands}"
+    # Polarity matters: App mode must skip (the auth hook runs setup-git
+    # itself), PAT mode must run it (that call writes the credential
+    # helper), and a token-less start must stay quiet.
+    assert '[ -n \\"${GH_TOKEN_APP:-}\\" ] || [ -z \\"${GH_TOKEN:-}\\" ] || gh auth setup-git' in commands[0], commands[0]
+    assert "|| exit 0" not in commands[0], commands[0]
 
 
 @pytest.mark.parametrize("hook", [AUTH_HOOK, REFRESH_HOOK])
@@ -616,7 +734,7 @@ def test_store_works_without_gnu_timeout(session, hook):
     session.write_sidecar("acme", "0")
     result = session.run(hook, timeout=HANG_BUDGET, path=_restricted_path(session))
     assert result.returncode == 0
-    assert session.gh_invocations == ["auth login --with-token --hostname github.com"]
+    assert session.gh_invocations == _expected_gh_calls(hook)
     assert session.gh_stdin.read_text().strip() == "ghs_stub_token"
     assert not session.fail_marker().exists(), "success must clear the backoff marker"
 

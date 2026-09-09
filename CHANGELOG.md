@@ -67,6 +67,24 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Fixed
 
+- **`git push` over https no longer asks for a username.** `gh auth setup-git`
+  was registered as a second `SessionStart` entry in `settings.json`, alongside
+  `gh-app-auth.sh`. Claude Code starts an event's entries together, so it read a
+  `hosts.yml` the auth hook had not written yet, exited with "You are not logged
+  into any GitHub hosts", and left `~/.gitconfig` with no credential helper —
+  181 such lines in one runtime's `hook-errors.log`. Every https `git` operation
+  in the session then prompted for a username no hook can answer, and the
+  workaround was for the session to notice and run `gh auth setup-git` by hand.
+  `gh-app-auth.sh` now calls it directly, ordered after the token store, on the
+  mint path and on the resume path both, and never after a failed mint (which
+  would point git at a helper backed by no credential). `gh` is handed
+  `/dev/null` on stdin so it can neither swallow the SessionStart event payload
+  nor block on it. The standalone `settings.json` entry stays for PAT mode,
+  guarded on `GH_TOKEN_APP` so the two can never both fire. `gh-store-token`
+  publishes `_gh_store_ok` for the caller to test — success cannot be inferred
+  from the backoff marker's absence, because the two paths that refuse before
+  minting never write one.
+
 - **The statusline no longer goes blank when one field of the payload has an
   unexpected shape.** Extracting all nine fields in one `jq` pass made the
   program all-or-nothing: `// ""` covers a null but not a type error, so a

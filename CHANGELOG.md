@@ -15,6 +15,14 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Changed
+
+- **The Clear Writing output style opens with a stop rule.** The default reply
+  is the answer and nothing after it: no unasked extras, at most one offer and
+  only when a decision is pending, verification as a label rather than a
+  story. The naming rule moves to second place; the two govern different
+  decisions. The session nudges in `CLAUDE.md` stay exempt.
+
 ### Removed
 
 - **Config audit 2026-09-14: `dotfiles/CLAUDE.md` loses the rules the harness

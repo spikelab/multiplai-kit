@@ -640,7 +640,7 @@ def test_settings_only_runs_setup_git_outside_app_mode():
     # Polarity matters: App mode must skip (the auth hook runs setup-git
     # itself), PAT mode must run it (that call writes the credential
     # helper), and a token-less start must stay quiet.
-    assert '[ -n \\"${GH_TOKEN_APP:-}\\" ] || [ -z \\"${GH_TOKEN:-}\\" ] || gh auth setup-git' in commands[0], commands[0]
+    assert '[ -n "${GH_TOKEN_APP:-}" ] || [ -z "${GH_TOKEN:-}" ] || gh auth setup-git' in commands[0], commands[0]
     assert "|| exit 0" not in commands[0], commands[0]
 
 

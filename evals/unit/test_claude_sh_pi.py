@@ -19,6 +19,7 @@ import subprocess
 
 import pytest
 
+from test_claude_sh_docker_state import _path_without_docker
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
 from _kitpaths import KIT_ROOT
@@ -171,21 +172,18 @@ def test_pi_refuses_claude_only_flags(kit):
 
 
 def test_pi_refuses_without_docker(kit, tmp_path):
-    """No bare rung for pi: the container is the whole permission boundary."""
-    empty_bin = tmp_path / "nodocker"
-    empty_bin.mkdir()
-    (empty_bin / "claude").write_text("#!/bin/bash\nexit 0\n")
-    (empty_bin / "claude").chmod(0o755)
-    env = {
-        "PATH": f"{empty_bin}:/usr/bin:/bin",
-        "HOME": str(kit.home),
-        "TERM": "xterm",
-    }
-    proc = subprocess.run(
-        [str(kit.root / "claude.sh"), "--pi"], env=env, capture_output=True, text=True
-    )
-    assert proc.returncode != 0
-    assert "requires Docker" in proc.stdout + proc.stderr
+    """No bare rung for pi: the container is the whole permission boundary.
+
+    The PATH must carry no `docker` at all, not merely a stub-free prefix: on
+    a runner with Docker installed, `/usr/bin/docker` further down would turn
+    this into the missing-image case instead.
+    """
+    path = _path_without_docker(kit, tmp_path)
+
+    result = kit.launch("--pi", PATH=path)
+
+    assert result.status != 0
+    assert "requires Docker" in result.output
 
 
 @pytest.mark.parametrize(

@@ -27,7 +27,7 @@
           },
           {
             "type": "command",
-            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; [ -n \"$GH_TOKEN_APP\" ] || exit 0; gh auth setup-git 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
+            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; [ -n \"$GH_TOKEN_APP$GH_TOKEN\" ] || exit 0; gh auth setup-git 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
           }
         ]
       }

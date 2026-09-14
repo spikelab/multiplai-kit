@@ -19,8 +19,8 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 - **Config audit 2026-09-14: `dotfiles/CLAUDE.md` loses the rules the harness
   now states itself.** Parallel tool calls, absolute paths over `cd`, no
-  `sleep` polling, read-before-edit, and "context anxiety" are all in Claude
-  Code's own system prompt or tool descriptions now, so the copies here were
+  `sleep` polling, and read-before-edit are all in Claude Code's own system
+  prompt or tool descriptions now, so the copies here were
   dead weight on every session. Also gone: three duplicates (address-by-name,
   plans-go-to-files, no-rule-duplication) of rules that live in the output
   style or the memory index; the hardcoded skill triggers in "Skill Routing",
@@ -30,7 +30,7 @@ public repo has shipped without in-tree memory hooks from day one (see the
   by the provenance rule; the "tedious work" and "subagent why" scaffolding;
   and the date-anchor bullets, since the date is injected on every prompt.
   The INBOX rules move to the workspace `CLAUDE.md`, where the directory is.
-  About 1,000 words less per session start (4,735 → 3,721).
+  About 1,000 words less per session start (4,552 → 3,721).
 
 - **`permissions.allowedTools` and `disableAllHooks: false` in
   `dotfiles/settings.json`.** The first is not a settings key Claude Code
@@ -47,10 +47,12 @@ public repo has shipped without in-tree memory hooks from day one (see the
   `.multiplai/` runtime state**, which hooks dirty every session; a rule that
   fires every session and is ignored every session teaches the model to skip
   the whole block.
-- **`gh auth setup-git` at SessionStart is guarded by `GH_TOKEN_APP`**, like
-  the mint hook before it. Without the guard it logged "You are not logged
-  into any GitHub hosts" on every PAT-mode or token-less start — 121 of the
-  193 lines in one runtime's `hook-errors.log`.
+- **`gh auth setup-git` at SessionStart runs only when a token is present**
+  (`GH_TOKEN_APP` or `GH_TOKEN`). Without the guard it logged "You are not
+  logged into any GitHub hosts" on every token-less start — 121 of the 193
+  lines in one runtime's `hook-errors.log`. PAT mode still runs it: that call
+  is what writes the git credential helper, and HTTPS remotes have no other
+  credential path.
 - **`modelSettings` pins `xhigh` effort for `claude-fable-5-1`** when that
   model is chosen for a session; the default model stays `claude-opus-5[1m]`
   at `high`.

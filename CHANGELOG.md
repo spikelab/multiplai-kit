@@ -99,7 +99,75 @@ public repo has shipped without in-tree memory hooks from day one (see the
   Seeding now mirrors the whole `~/.pi` tree rather than just `agent/`, since
   not every extension keeps its config under `agent/`.
 
+### Changed
+
+- **The Clear Writing output style opens with a stop rule.** The default reply
+  is the answer and nothing after it: no unasked extras, at most one offer and
+  only when a decision is pending, verification as a label rather than a
+  story. The naming rule moves to second place; the two govern different
+  decisions. The session nudges in `CLAUDE.md` stay exempt.
+
+### Removed
+
+- **Config audit 2026-09-14: `dotfiles/CLAUDE.md` loses the rules the harness
+  now states itself.** Parallel tool calls, absolute paths over `cd`, no
+  `sleep` polling, and read-before-edit are all in Claude Code's own system
+  prompt or tool descriptions now, so the copies here were
+  dead weight on every session. Also gone: three duplicates (address-by-name,
+  plans-go-to-files, no-rule-duplication) of rules that live in the output
+  style or the memory index; the hardcoded skill triggers in "Skill Routing",
+  which contradicted the section's own "no hardcoded trigger table"; the
+  plugin-internals paragraphs under "Session Lifecycle" and "Memory System"
+  (routed memory covers them); the "verify installed state" bullet, subsumed
+  by the provenance rule; the "tedious work" and "subagent why" scaffolding;
+  and the date-anchor bullets, since the date is injected on every prompt.
+  The INBOX rules move to the workspace `CLAUDE.md`, where the directory is.
+  About 1,000 words less per session start (4,552 → 3,721).
+
+- **`permissions.allowedTools` and `disableAllHooks: false` in
+  `dotfiles/settings.json`.** The first is not a settings key Claude Code
+  reads (the documented key is `permissions.allow`, and sessions run in
+  bypass mode anyway); the second restated the default.
+
+### Changed
+
+- **`sed`/heredoc edits are permitted without a self-flag.** The two conflicting
+  bullets (`Edit` is the correct way / `sed` acceptable for 60+ occurrences)
+  are replaced by one: shell edits are fine, but they skip the
+  `validate-syntax` hook, so check `.py`/`.json`/`.yaml` yourself afterwards.
+- **The "STOP and ask about uncommitted changes" rule now exempts
+  `.multiplai/` runtime state**, which hooks dirty every session; a rule that
+  fires every session and is ignored every session teaches the model to skip
+  the whole block.
+- **`gh auth setup-git` at SessionStart runs only when a token is present**
+  (`GH_TOKEN_APP` or `GH_TOKEN`). Without the guard it logged "You are not
+  logged into any GitHub hosts" on every token-less start — 121 of the 193
+  lines in one runtime's `hook-errors.log`. PAT mode still runs it: that call
+  is what writes the git credential helper, and HTTPS remotes have no other
+  credential path.
+- **`modelSettings` pins `xhigh` effort for `claude-fable-5-1`** when that
+  model is chosen for a session; the default model stays `claude-opus-5[1m]`
+  at `high`.
+
 ### Fixed
+
+- **`git push` over https no longer asks for a username.** `gh auth setup-git`
+  was registered as a second `SessionStart` entry in `settings.json`, alongside
+  `gh-app-auth.sh`. Claude Code starts an event's entries together, so it read a
+  `hosts.yml` the auth hook had not written yet, exited with "You are not logged
+  into any GitHub hosts", and left `~/.gitconfig` with no credential helper —
+  181 such lines in one runtime's `hook-errors.log`. Every https `git` operation
+  in the session then prompted for a username no hook can answer, and the
+  workaround was for the session to notice and run `gh auth setup-git` by hand.
+  `gh-app-auth.sh` now calls it directly, ordered after the token store, on the
+  mint path and on the resume path both, and never after a failed mint (which
+  would point git at a helper backed by no credential). `gh` is handed
+  `/dev/null` on stdin so it can neither swallow the SessionStart event payload
+  nor block on it. The standalone `settings.json` entry stays for PAT mode,
+  guarded on `GH_TOKEN_APP` so the two can never both fire. `gh-store-token`
+  publishes `_gh_store_ok` for the caller to test — success cannot be inferred
+  from the backoff marker's absence, because the two paths that refuse before
+  minting never write one.
 
 - **The statusline no longer goes blank when one field of the payload has an
   unexpected shape.** Extracting all nine fields in one `jq` pass made the

@@ -1,0 +1,15 @@
+# Packages installed into this profile on its first launch, in order.
+# One source per line, in `pi install` syntax. Blank lines and # are ignored.
+#
+# Earns its keep only on the Pro route here. DigitalOcean does not do implicit
+# prefix caching (OpenRouter reports supports_implicit_caching: false for it and
+# for every other third-party host of this model), so on Flash there is no
+# automatic cache for this extension to protect. The Pro model is pinned to
+# DeepSeek first-party, which does cache implicitly, and that is the route the
+# extension is doing work on.
+#
+# UNVERIFIED: the extension activates on `deepseek-*` model ids. The ids here
+# are OpenRouter slugs — `deepseek/deepseek-v4-pro` — and whether that matches
+# has not been checked. Run /cache-stats after a few Pro turns; if it reports
+# nothing, the extension is not seeing this model and the line below is inert.
+npm:@rohaquinlop/pi-deepseek-cache@0.5.1

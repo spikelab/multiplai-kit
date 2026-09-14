@@ -1,0 +1,75 @@
+{
+  "providers": {
+    "openrouter": {
+      "name": "OpenRouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "$OPENROUTER_API_KEY",
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "supportsReasoningEffort": true,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash (DigitalOcean)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
+          "cost": {
+            "input": 0.068,
+            "output": 0.168,
+            "cacheRead": 0.0168,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "openRouterRouting": {
+              "only": ["digitalocean"],
+              "allow_fallbacks": false,
+              "require_parameters": true
+            }
+          }
+        },
+        {
+          "id": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro (first-party)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
+          "cost": {
+            "input": 0.66,
+            "output": 1.98,
+            "cacheRead": 0.022,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "openRouterRouting": {
+              "only": ["deepseek"],
+              "allow_fallbacks": false,
+              "require_parameters": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

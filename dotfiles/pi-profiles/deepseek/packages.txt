@@ -1,0 +1,16 @@
+# Packages installed into this profile on its first launch, in order.
+# One source per line, in `pi install` syntax. Blank lines and # are ignored.
+#
+# Pinned deliberately: an unpinned package changes the agent between two
+# launches of the same profile.
+#
+# Delete ~/.claude-container/pi/deepseek/agent/.multiplai-packages-installed
+# to make the next launch re-run this list.
+
+# Keeps DeepSeek's prefix cache intact across a session. pi's own system prompt
+# embeds the current date and working directory, which change between sessions
+# and invalidate the whole prefix; compaction rewrites history and invalidates
+# it again. This freezes the first and makes the second deterministic, and adds
+# /cache-stats, /cache-graph and /cache-reset. Passes through unchanged on
+# non-deepseek-* models.
+npm:@rohaquinlop/pi-deepseek-cache@0.5.1

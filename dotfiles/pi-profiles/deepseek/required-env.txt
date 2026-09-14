@@ -1,0 +1,3 @@
+# Variables this profile expects in the container. The launcher checks only
+# that each is non-empty and never prints a value. Blank lines and # ignored.
+DEEPSEEK_API_KEY

@@ -9,12 +9,6 @@
   "permissions": {
     "deny": [
       "Skill(deep-research)"
-    ],
-    "allowedTools": [
-      "Read",
-      "Bash(git *)",
-      "Bash(gh *)",
-      "WebSearch"
     ]
   },
   "model": "claude-opus-5[1m]",
@@ -33,7 +27,7 @@
           },
           {
             "type": "command",
-            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; gh auth setup-git 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
+            "command": "mkdir -p $CLAUDE_MULTIPLAI_HOME/runtime/logs 2>/dev/null; [ -n \"$GH_TOKEN_APP\" ] || exit 0; gh auth setup-git 2>>$CLAUDE_MULTIPLAI_HOME/runtime/logs/hook-errors.log || true"
           }
         ]
       }
@@ -67,7 +61,6 @@
       }
     ]
   },
-  "disableAllHooks": false,
   "statusLine": {
     "type": "command",
     "command": "bash $CLAUDE_CONFIG_DIR/scripts/statusline.sh",
@@ -87,6 +80,11 @@
   "spinnerTipsEnabled": false,
   "alwaysThinkingEnabled": true,
   "effortLevel": "high",
+  "modelSettings": {
+    "claude-fable-5-1": {
+      "effortLevel": "xhigh"
+    }
+  },
   "autoCompactWindow": 400000,
   "pluginConfigs": {
     "multiplai-context@multiplai": {

@@ -15,6 +15,46 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Removed
+
+- **Config audit 2026-09-14: `dotfiles/CLAUDE.md` loses the rules the harness
+  now states itself.** Parallel tool calls, absolute paths over `cd`, no
+  `sleep` polling, read-before-edit, and "context anxiety" are all in Claude
+  Code's own system prompt or tool descriptions now, so the copies here were
+  dead weight on every session. Also gone: three duplicates (address-by-name,
+  plans-go-to-files, no-rule-duplication) of rules that live in the output
+  style or the memory index; the hardcoded skill triggers in "Skill Routing",
+  which contradicted the section's own "no hardcoded trigger table"; the
+  plugin-internals paragraphs under "Session Lifecycle" and "Memory System"
+  (routed memory covers them); the "verify installed state" bullet, subsumed
+  by the provenance rule; the "tedious work" and "subagent why" scaffolding;
+  and the date-anchor bullets, since the date is injected on every prompt.
+  The INBOX rules move to the workspace `CLAUDE.md`, where the directory is.
+  About 1,000 words less per session start (4,735 → 3,721).
+
+- **`permissions.allowedTools` and `disableAllHooks: false` in
+  `dotfiles/settings.json`.** The first is not a settings key Claude Code
+  reads (the documented key is `permissions.allow`, and sessions run in
+  bypass mode anyway); the second restated the default.
+
+### Changed
+
+- **`sed`/heredoc edits are permitted without a self-flag.** The two conflicting
+  bullets (`Edit` is the correct way / `sed` acceptable for 60+ occurrences)
+  are replaced by one: shell edits are fine, but they skip the
+  `validate-syntax` hook, so check `.py`/`.json`/`.yaml` yourself afterwards.
+- **The "STOP and ask about uncommitted changes" rule now exempts
+  `.multiplai/` runtime state**, which hooks dirty every session; a rule that
+  fires every session and is ignored every session teaches the model to skip
+  the whole block.
+- **`gh auth setup-git` at SessionStart is guarded by `GH_TOKEN_APP`**, like
+  the mint hook before it. Without the guard it logged "You are not logged
+  into any GitHub hosts" on every PAT-mode or token-less start — 121 of the
+  193 lines in one runtime's `hook-errors.log`.
+- **`modelSettings` pins `xhigh` effort for `claude-fable-5-1`** when that
+  model is chosen for a session; the default model stays `claude-opus-5[1m]`
+  at `high`.
+
 ### Fixed
 
 - **The statusline no longer goes blank when one field of the payload has an

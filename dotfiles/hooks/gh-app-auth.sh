@@ -23,10 +23,18 @@
 # `timeout`. Every construct below works on both. Keep it that way; the tests
 # pin the specific offenders.
 #
-# `gh auth setup-git` (registered AFTER this hook in settings.json) makes
-# `gh auth git-credential` git's credential helper, which is what lets
-# `git clone/fetch/push` over https work off the same stored token with no token
-# in the URL and no bespoke helper.
+# This hook also runs `gh auth setup-git`, which makes `gh auth git-credential`
+# git's credential helper — that is what lets `git clone/fetch/push` over https
+# work off the same stored token with no token in the URL and no bespoke helper.
+# It used to be a second SessionStart entry in settings.json. Claude Code starts
+# the entries of one event together, so that copy raced the token store and lost:
+# it read a hosts.yml that this hook had not written yet and exited with "You are
+# not logged into any GitHub hosts" (181 such lines in one runtime's
+# hook-errors.log, 2026-09-09), leaving ~/.gitconfig with no credential helper
+# and every https push in the session asking for a username. Calling it from
+# here, after the store, is ordered by construction. settings.json still runs a
+# standalone copy, but only when GH_TOKEN_APP is unset (PAT mode), so the two
+# can never both fire.
 
 [ -n "${GH_TOKEN_APP:-}" ] || exit 0
 
@@ -56,7 +64,18 @@ now=${EPOCHSECONDS:-$(date +%s)}
 exp=0
 { read -r exp < "$CACHE_DIR/$GH_TOKEN_APP.json.exp"; } 2>/dev/null
 case "$exp" in ''|*[!0-9]*) exp=0 ;; esac
-(( exp > now + 120 )) && exit 0
+
+# Registers the git credential helper in ~/.gitconfig. Separate from the token:
+# the container wipes ~/.gitconfig on every restart, so this has to run on every
+# SessionStart — including the resume path below, which skips the mint because
+# the stored token is still live.
+#
+# `</dev/null` because SessionStart hands this hook the event JSON on stdin, and
+# `gh` must never be left free to read it. It is also what keeps a `gh` that
+# waits on stdin from wedging the whole session start.
+setup_git() { gh auth setup-git </dev/null 2>>"$LOG" || true; }
+
+(( exp > now + 120 )) && { setup_git; exit 0; }
 
 # Mint+store — backoff marker first, mint via gh-tok, emptiness check, bounded
 # store — is the block shared with gh-app-refresh.sh; all the reasoning
@@ -64,6 +83,12 @@ case "$exp" in ''|*[!0-9]*) exp=0 ;; esac
 _GH_STORE_TAG="gh-app-auth"
 _GH_STORE_FAIL_HINT="gh will be unauthenticated"
 . "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-store-token"
+
+# Only once there is a credential to point git at. `_gh_store_ok` is set by
+# gh-store-token on the one path that stores a token. Calling setup-git after a
+# failed mint would hand `gh` a hosts.yml it has no entry in — noise at best,
+# and on the failure paths the tests pin, a fork this hook must not make.
+[ -n "${_gh_store_ok:-}" ] && setup_git
 
 # A failed mint must never block session start.
 exit 0

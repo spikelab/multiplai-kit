@@ -14,8 +14,18 @@
 #   _GH_STORE_TAG        log tag naming the calling hook
 #   _GH_STORE_FAIL_HINT  what a failed mint means for that hook's caller
 #
+# Sets, for the caller to read after sourcing:
+#   _gh_store_ok         non-empty only when a token was actually stored. Every
+#                        other path — malformed app name, unreadable `bounded`,
+#                        failed mint, failed store — leaves it empty. Read it
+#                        rather than inferring success from the backoff marker:
+#                        the two early returns below never write a marker, so an
+#                        absent marker does NOT mean a credential exists.
+#
 # Everything here must stay bash-3.2-safe and coreutils-free (the kit also
 # runs bare on a Mac) — see the hooks' headers; the tests pin the offenders.
+
+_gh_store_ok=""
 
 # The app name becomes a filename ($CACHE_DIR/$GH_TOKEN_APP.json.fail). gh-tok
 # validates the same value before its own paths, but the backoff marker below
@@ -76,6 +86,7 @@ tok=$("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/gh-tok" "$GH_TOKEN_APP" 2>>"$LO
 if [ -n "$tok" ] && printf '%s\n' "$tok" \
      | bounded 20 gh auth login --with-token --hostname github.com >>"$LOG" 2>&1; then
     rm -f "$CACHE_DIR/$GH_TOKEN_APP.json.fail" 2>/dev/null || true
+    _gh_store_ok=1
 else
     printf '%s %s: mint/store failed for app "%s"; %s\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_GH_STORE_TAG" "$GH_TOKEN_APP" "$_GH_STORE_FAIL_HINT" \

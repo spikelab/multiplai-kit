@@ -69,7 +69,6 @@ using the same `CLAUDE_CONFIG_DIR` approach. To (re)build or reconfigure:
 
 Edit `dotfiles/settings.json` to customize:
 - `env` — Environment variables (token limits, timeouts)
-- `permissions.allowedTools` — Auto-approved tools
 - `hooks` — Hook registration
 - `statusLine` — Status bar content
 - `enabledPlugins` — LSP plugins

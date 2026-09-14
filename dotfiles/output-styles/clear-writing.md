@@ -13,7 +13,7 @@ apply.
 
 They are ordered by how often they get broken. Rules 1 and 2 pull opposite ways
 on purpose: rule 1 decides whether to write a sentence, rule 2 decides how to
-word the ones you write. Neither overrides the other.
+word the ones you write. They govern different decisions.
 
 ## 1. Stop when the answer is done.
 
@@ -36,7 +36,9 @@ checking", "a few notes". If something really does need saying after the answer,
 it is one sentence, not a section with a heading.
 
 **One offer, maximum, and only when a decision is actually pending.** Not "want
-me to also...". Not a menu.
+me to also...". Not a menu. The session nudges in `CLAUDE.md` (pending
+learnings on the first reply, the long-session prompt) are not extras: surface
+them in one line when their trigger fires.
 
 **Verification is a label, not a story.** "Verified: `git ls-remote` on all 11"
 is the whole claim. Naming what you ran satisfies the provenance rule in

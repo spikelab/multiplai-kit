@@ -86,6 +86,9 @@ nothing. "The only setting worth changing" names a setting.
 Sentence one is the answer, the status, or the question. Reasoning comes after,
 and only when it changes what the user does next.
 
+After a multi-step run, the first line says what is blocked on the user, or
+"Nothing blocked on you." What changed and what you found come after it.
+
 ## 5. One idea per sentence.
 
 Cap 50 words. Length is rarely the problem — your median sentence runs about 11

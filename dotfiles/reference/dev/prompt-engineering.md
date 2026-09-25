@@ -2,7 +2,7 @@
 
 A synthesis of Anthropic's official prompt engineering best practices, optimized for creating system prompts and instructions for Claude.
 
-**Last Updated:** 2026-02-25
+**Last Updated:** 2026-09-25 (reasoning, stopping and review guidance rewritten for Opus 5.5 — source: claude.dev/blog/getting-the-most-out-of-opus-5-5)
 
 ---
 
@@ -65,7 +65,7 @@ Do NOT:
 - Provide 3-5 diverse examples for complex tasks (more = better performance)
 - Use examples for tone/style rather than lengthy descriptions
 - Format examples in XML tags for clarity
-- Claude 4 pays close attention to examples—ensure they match desired behavior exactly
+- Claude pays close attention to examples—ensure they match desired behavior exactly
 
 **Example quality criteria:**
 - **Relevant**: Mirror your actual use case
@@ -95,7 +95,7 @@ TypeError: Cannot read property 'map' of undefined
 **XML best practices:**
 - Be consistent: Use the same tag names throughout and refer to them ("Using the contract in `<contract>` tags...")
 - Nest tags for hierarchy: `<outer><inner></inner></outer>`
-- Combine with other techniques: `<examples>`, `<thinking>`, `<answer>`
+- Combine with other techniques: `<examples>`, `<documents>`, `<answer>`
 
 ### 6. Immediate Task
 Restate the specific action needed **near the end of the prompt**, not the beginning.
@@ -104,29 +104,20 @@ Restate the specific action needed **near the end of the prompt**, not the begin
 Given the code and error above, identify the root cause and provide a fix.
 ```
 
-### 7. Precognition (Step-by-Step Reasoning)
-For complex tasks, require visible reasoning before the final answer.
+### 7. Completion Criteria (not "think step by step")
+Opus 5.5 thinks before every reply on its own. Do not ask it to think: remove "think carefully", "think hard" and "think step by step" from prompts and saved instructions. Anthropic's testing found that removing them made replies arrive sooner with no quality loss. Control reasoning depth with the `effort` setting, not prompt wording.
 
-**Three levels of CoT (least to most powerful):**
-
-1. **Basic** - Simple trigger phrase:
+Instead, give the whole task in one message and say what "done" looks like:
 ```
-Think step-by-step before answering.
+Migrate the payment endpoints from the old client to the new one. Done means: every endpoint uses the new client, the old client is deleted, and the test suite passes.
 ```
 
-2. **Guided** - Specific steps to follow:
-```
-Before answering, first identify the relevant files, then list potential causes, then consider edge cases. Finally, provide your recommendation.
-```
+For a quick answer, say "Answer directly."
 
-3. **Structured** - XML tags to separate reasoning from answer:
+Do not ask the model to reproduce its reasoning in the reply. That can get a message flagged. When you need the rationale, ask for a short one:
 ```
-Think through this problem in <thinking> tags. First identify relevant files, then list potential causes, then consider edge cases. Finally, provide your recommendation in <answer> tags.
+Explain why you chose this approach in three sentences.
 ```
-
-**Critical insight:** Reasoning only counts when it's explicit. Without outputting its thought process, no thinking occurs. Claude needs to write out the steps.
-
-**When NOT to use CoT:** Not all tasks need deep thinking. Use judiciously—it increases output length and latency. Reserve for tasks a human would need to think through: complex math, multi-step analysis, decisions with many factors.
 
 ### 8. Output Formatting
 Clarify expected response structure. Tell Claude what to do, not what to avoid:
@@ -187,11 +178,9 @@ Before concluding, extract the relevant quotes from the documentation that suppo
 Never speculate about code you have not opened. If the user references a specific file, you MUST read the file before answering. Give grounded and hallucination-free answers.
 ```
 
-### Use Scratchpad Reasoning
+### Mark What Could Not Be Confirmed
 ```
-<scratchpad>
-Work through your analysis here before giving the final answer.
-</scratchpad>
+Mark anything you couldn't confirm, and say where you looked.
 ```
 
 ---
@@ -202,7 +191,7 @@ Explicitly command the level of detail:
 
 ```
 # Expert level (verbose):
-"Explain photosynthesis in detail for a college biology student. Work through your reasoning step by step."
+"Explain photosynthesis in detail for a college biology student."
 
 # Brief:
 "Explain photosynthesis. Be concise and use bullet points."
@@ -219,12 +208,13 @@ These phrases trigger specific behaviors:
 
 | Phrase | Effect |
 |--------|--------|
-| "Work through this step by step" | Forces visible reasoning, improves accuracy |
+| "Done means: [observable checks]" | Keeps a long task running to a defined finish line |
+| "Answer directly." | Faster reply for quick questions |
 | "Critique your own response" | Self-correction and improvement |
 | "Adopt the persona of an expert in [field]" | Domain-specific vocabulary and frameworks |
 | "If the response is already correct, return it unchanged" | Prevents unnecessary changes during verification |
-| "Go beyond the basics" | Encourages comprehensive output (Claude 4) |
-| "Keep solutions simple and focused" | Prevents overengineering (Claude 4) |
+| "Mark anything you couldn't confirm, and say where you looked." | Separates verified from unverified claims |
+| "Don't use [named styles]" (design work) | Name the exact patterns to avoid: e.g. cream backgrounds, italic accent words, "01 / 02" section labels, pill buttons |
 
 ---
 
@@ -256,6 +246,18 @@ Prompt 3: "Update the summary based on the feedback."
 ```
 
 **Parallel optimization:** For independent subtasks (analyzing multiple documents), run separate prompts in parallel for speed.
+
+### Subagents for Large Audits and Migrations
+Give each unit of work its own subagent, and make the parent check the evidence:
+```
+Audit every service in services/ for the retry bug in the linked issue. Give each service to its own subagent. When a subagent reports back, check its evidence before you accept it. Finish with one table: service, affected yes or no, and the evidence.
+```
+
+### Review Pass
+Run a review before a human reads the diff:
+```
+Review the diff on this branch against main. List only problems you'd block the merge for. For each one, give the file and line, why it's wrong, and how to show it fails.
+```
 
 ---
 
@@ -320,13 +322,13 @@ Prompt agents to begin each session by:
 5. Work on ONE feature, commit, update progress
 
 ### Use Git for State
-Git provides checkpoints and logs. Claude 4 models excel at using git to track state across sessions. Descriptive commits enable reverting failed changes.
+Git provides checkpoints and logs across sessions. Descriptive commits enable reverting failed changes.
 
 ### Key Failure Modes to Prevent
 
 | Problem | Solution |
 |---------|----------|
-| Attempting entire app at once | Structured feature breakdown, one per session |
+| Attempting entire app at once | Structured feature breakdown, tracked in a checklist file (e.g. `TASKS.md`) the agent ticks off and extends |
 | Undocumented progress | Git commits + progress.txt |
 | Premature completion claims | Explicit testing requirements, "passing": false default |
 | Rediscovering how to run app | Pre-written init.sh script |
@@ -421,7 +423,8 @@ You are [specific role with relevant expertise].
 
 ### Accuracy
 - [ ] Does Claude have permission to say "I don't know"?
-- [ ] Is step-by-step reasoning requested for complex tasks?
+- [ ] Does the task say what "done" looks like?
+- [ ] Is the prompt free of "think carefully" / "think step by step" lines?
 - [ ] Is Claude required to investigate before answering?
 
 ### Enforcement
@@ -449,7 +452,7 @@ You are [specific role with relevant expertise].
 5. **Forgetting to give an "out"** — Let Claude admit uncertainty
 6. **Vague roles** — "You are an expert" is useless; be specific
 7. **Skipping examples for complex tasks** — Examples are the #1 tool
-8. **Using "think" unnecessarily** — Triggers extended thinking in Claude 4
+8. **Telling the model to think** — Opus 5.5 already thinks before every reply; "think hard" lines only slow it down
 9. **Saying what NOT to do instead of what TO do** — Positive instructions work better for format
 10. **Not explaining the why** — Context helps Claude generalize correctly
 11. **Requesting suggestions when you want action** — Be explicit: "change" not "suggest"
@@ -463,7 +466,7 @@ You are [specific role with relevant expertise].
 | Role prompting | Complex tasks, specific expertise needed |
 | XML tags | Separating data from instructions |
 | Examples (3-5) | Complex outputs, specific formats |
-| Step-by-step (CoT) | Multi-step reasoning, math, logic |
+| "Done means" criteria | Any multi-step task |
 | Give an out | Factual questions, uncertainty possible |
 | Explain the why | Rules that need generalization |
 | Prefilling* | Forcing specific output format (API only) |
@@ -474,7 +477,7 @@ You are [specific role with relevant expertise].
 | Self-correction | High-stakes tasks—review own work |
 | Constraints | Creative tasks, specific requirements |
 | Verbosity control | When default length is wrong |
-| Anti-overengineering | Claude 4 coding tasks |
+| Subagent per unit + evidence check | Audits, migrations, large reviews |
 | Two-phase prompts | Long-running agents (init vs. worker) |
 | Feature list (JSON) | Multi-session projects |
 | Init script | Repeatable session startup |

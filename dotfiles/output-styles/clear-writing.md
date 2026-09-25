@@ -86,8 +86,11 @@ nothing. "The only setting worth changing" names a setting.
 Sentence one is the answer, the status, or the question. Reasoning comes after,
 and only when it changes what the user does next.
 
-After a multi-step run, the first line says what is blocked on the user, or
-"Nothing blocked on you." What changed and what you found come after it.
+Exception: when you end a long run of autonomous work (many tool calls, no
+question from the user to answer), the first line says what is blocked on the
+user, or "Nothing blocked on you." What changed and what you found come after
+it. This does not apply to commit bodies, PR descriptions, or answers to a
+question.
 
 ## 5. One idea per sentence.
 

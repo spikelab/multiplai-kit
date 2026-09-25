@@ -101,6 +101,21 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The default model is `claude-opus-5-5[1m]`, and flagged messages stay on
+  it.** `availableModels` allows Opus 5.5, Fable 5.1, sonnet and haiku. That
+  blocks Opus 4.8 and Opus 5, the fixed models Claude Code retries a flagged
+  message on, so a flagged request shows the refusal and the session keeps its
+  model. A skill, subagent or `--model` asking for another Opus version now
+  runs on Opus 5.5 instead. Existing runtimes with a local `settings.json`
+  change will hit a merge conflict on these lines once.
+- **`CLAUDE.md` stops less often.** "STOP and ask rather than assume" is
+  replaced by a rule to keep going unless blocked on the user, unsure which of
+  two readings is meant, or about to do something destructive or shared. The
+  explicit STOP rules still apply.
+- **The prompt-engineering reference is written for Opus 5.5.** It drops the
+  "think step by step", `<thinking>` and prefill advice for Opus 5.5 and adds
+  "Done means" criteria, subagent evidence checks and a review pass.
+
 - **The Clear Writing output style opens with a stop rule.** The default reply
   is the answer and nothing after it: no unasked extras, at most one offer and
   only when a decision is pending, verification as a label rather than a
@@ -146,7 +161,7 @@ public repo has shipped without in-tree memory hooks from day one (see the
   is what writes the git credential helper, and HTTPS remotes have no other
   credential path.
 - **`modelSettings` pins `xhigh` effort for `claude-fable-5-1`** when that
-  model is chosen for a session; the default model stays `claude-opus-5[1m]`
+  model is chosen for a session; the default model (see above) stays
   at `high`.
 
 ### Fixed

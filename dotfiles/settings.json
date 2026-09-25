@@ -12,8 +12,12 @@
     ]
   },
   "model": "claude-opus-5-5[1m]",
-  "availableModels": ["claude-opus-5-5", "claude-fable-5-1", "sonnet", "haiku"],
-  "switchModelsOnFlag": false,
+  "availableModels": [
+    "claude-opus-5-5",
+    "claude-fable-5-1",
+    "sonnet",
+    "haiku"
+  ],
   "outputStyle": "Clear Writing",
   "skillOverrides": {
     "deep-research": "off"

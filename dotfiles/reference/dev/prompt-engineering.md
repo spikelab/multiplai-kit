@@ -105,14 +105,16 @@ Given the code and error above, identify the root cause and provide a fix.
 ```
 
 ### 7. Completion Criteria (not "think step by step")
-Opus 5.5 thinks before every reply on its own. Do not ask it to think: remove "think carefully", "think hard" and "think step by step" from prompts and saved instructions. Anthropic's testing found that removing them made replies arrive sooner with no quality loss. Control reasoning depth with the `effort` setting, not prompt wording.
+Opus 5.5 thinks before every reply on its own. When the prompt runs on Opus 5.5, do not ask it to think: remove "think carefully", "think hard" and "think step by step" from prompts and saved instructions. Anthropic's testing found that removing them made replies arrive sooner with no clear drop in quality. Control reasoning depth with the `effort` setting, not prompt wording.
+
+This applies to Opus 5.5 only. A model running with thinking off (e.g. Haiku 4.5 in the kit's router and maintainer prompts) still benefits from guided steps before the answer.
 
 Instead, give the whole task in one message and say what "done" looks like:
 ```
 Migrate the payment endpoints from the old client to the new one. Done means: every endpoint uses the new client, the old client is deleted, and the test suite passes.
 ```
 
-For a quick answer, say "Answer directly."
+For a quick answer, say "Answer directly." This shortens the reply, not the reasoning; depth still comes from `effort`.
 
 Do not ask the model to reproduce its reasoning in the reply. That can get a message flagged. When you need the rationale, ask for a short one:
 ```
@@ -209,12 +211,12 @@ These phrases trigger specific behaviors:
 | Phrase | Effect |
 |--------|--------|
 | "Done means: [observable checks]" | Keeps a long task running to a defined finish line |
-| "Answer directly." | Faster reply for quick questions |
+| "Answer directly." | Shorter reply for quick questions (reasoning depth is set by `effort`) |
 | "Critique your own response" | Self-correction and improvement |
 | "Adopt the persona of an expert in [field]" | Domain-specific vocabulary and frameworks |
 | "If the response is already correct, return it unchanged" | Prevents unnecessary changes during verification |
 | "Mark anything you couldn't confirm, and say where you looked." | Separates verified from unverified claims |
-| "Don't use [named styles]" (design work) | Name the exact patterns to avoid: e.g. cream backgrounds, italic accent words, "01 / 02" section labels, pill buttons |
+| "Don't use [named styles]" (design work) | Name the exact patterns to avoid: e.g. cream backgrounds, italic accent words, "01 / 02" section labels, pill buttons. The one exception to "say what to do" (Common Mistakes #9): for visual style, Anthropic recommends naming what to avoid |
 
 ---
 
@@ -328,7 +330,7 @@ Git provides checkpoints and logs across sessions. Descriptive commits enable re
 
 | Problem | Solution |
 |---------|----------|
-| Attempting entire app at once | Structured feature breakdown, tracked in a checklist file (e.g. `TASKS.md`) the agent ticks off and extends |
+| Attempting entire app at once | Structured feature breakdown: `features.json` across sessions (see Feature List File); a `TASKS.md` checklist the agent ticks off and extends is fine within one session |
 | Undocumented progress | Git commits + progress.txt |
 | Premature completion claims | Explicit testing requirements, "passing": false default |
 | Rediscovering how to run app | Pre-written init.sh script |
@@ -424,7 +426,7 @@ You are [specific role with relevant expertise].
 ### Accuracy
 - [ ] Does Claude have permission to say "I don't know"?
 - [ ] Does the task say what "done" looks like?
-- [ ] Is the prompt free of "think carefully" / "think step by step" lines?
+- [ ] On Opus 5.5: is the prompt free of "think carefully" / "think step by step" lines?
 - [ ] Is Claude required to investigate before answering?
 
 ### Enforcement
@@ -452,8 +454,8 @@ You are [specific role with relevant expertise].
 5. **Forgetting to give an "out"** — Let Claude admit uncertainty
 6. **Vague roles** — "You are an expert" is useless; be specific
 7. **Skipping examples for complex tasks** — Examples are the #1 tool
-8. **Telling the model to think** — Opus 5.5 already thinks before every reply; "think hard" lines only slow it down
-9. **Saying what NOT to do instead of what TO do** — Positive instructions work better for format
+8. **Telling Opus 5.5 to think** — it already thinks before every reply; "think hard" lines only slow it down (models with thinking off are different)
+9. **Saying what NOT to do instead of what TO do** — Positive instructions work better for format (exception: naming visual styles to avoid in design work)
 10. **Not explaining the why** — Context helps Claude generalize correctly
 11. **Requesting suggestions when you want action** — Be explicit: "change" not "suggest"
 
@@ -469,7 +471,7 @@ You are [specific role with relevant expertise].
 | "Done means" criteria | Any multi-step task |
 | Give an out | Factual questions, uncertainty possible |
 | Explain the why | Rules that need generalization |
-| Prefilling* | Forcing specific output format (API only) |
+| Structured outputs | Forcing a specific output format (API) — prefilling is rejected on Opus 5.5 |
 | Task at end | Always—put main instruction last |
 | Data at top | Long context (20K+ tokens) |
 | Quote first | Long documents—ground in evidence |
@@ -482,5 +484,3 @@ You are [specific role with relevant expertise].
 | Feature list (JSON) | Multi-session projects |
 | Init script | Repeatable session startup |
 | One feature per session | Prevent context exhaustion |
-
-*Prefill caveats: Cannot end with trailing whitespace. Not supported with extended thinking.

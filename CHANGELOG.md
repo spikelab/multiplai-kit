@@ -15,6 +15,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dev server inside a session is reachable from the Mac.** Sessions
+  ran on Docker's default `bridge` network, where OrbStack resolves
+  `<container>.orb.local` but connections from the Mac hang. `claude.sh` now
+  creates a user-defined Docker network named `multiplai` on first launch and puts
+  every interactive session and hub driver on it, so
+  `http://<container>.orb.local:PORT` connects. Nothing is published to host
+  ports and outbound access is unchanged.
+
 ### Added
 
 - **`./pi.sh` runs the pi coding agent in the container, on named model

@@ -898,6 +898,35 @@ esac
 # does). Resolution is the floor here, not reachability.
 HOST_ALIAS_ARGS=(--add-host host.docker.internal:host-gateway)
 
+# --- Session network: a user-defined bridge, so the Mac can reach the session ---
+#
+# Without --network, a container joins Docker's default `bridge`. OrbStack
+# resolves `<container>.orb.local` for a container there, but connections from
+# the Mac to it hang, so a dev server bound to 0.0.0.0 inside the session was
+# unreachable at http://$(hostname).orb.local:PORT. On a user-defined network
+# the same URL connects. Every session and hub driver joins one shared network,
+# `multiplai`, created on first launch. Nothing is published to host ports, and
+# outbound access is unchanged (a user-defined bridge routes out like `bridge`).
+# Sessions of every profile share this network, so one can reach another by
+# container name (`cc-p-…:PORT`). On `bridge` they could already reach each
+# other by IP; the name lookup is what is new. One network per profile would
+# cut that path, and is left for later.
+#
+# Two launchers can race on the create; the loser's `create` fails with
+# "already exists", so success is judged by a second inspect, not by create's
+# exit status. The drain and the venv-ownership prep run stay on the default
+# bridge: nothing ever connects to them.
+SESSION_NETWORK=multiplai
+if ! docker network inspect "$SESSION_NETWORK" >/dev/null 2>&1; then
+    docker network create "$SESSION_NETWORK" >/dev/null 2>&1 || true
+    if ! docker network inspect "$SESSION_NETWORK" >/dev/null 2>&1; then
+        echo "Error: could not create the Docker network '$SESSION_NETWORK'." >&2
+        echo "  Try it by hand to see Docker's reason: docker network create $SESSION_NETWORK" >&2
+        exit 1
+    fi
+fi
+NETWORK_ARGS=(--network "$SESSION_NETWORK")
+
 # --- Ensure kit-venv volume is agent-writable ---
 # New Docker named volumes are root-owned. The venv-sync entrypoint runs as
 # the agent user and can't create the venv on a fresh volume. Fix ownership
@@ -1237,6 +1266,7 @@ if [ "$DRIVER_MODE" -eq 1 ]; then
         --hostname "$DRV_NAME" \
         --workdir "$DRV_PROJECT_DIR" \
         "${HOST_ALIAS_ARGS[@]}" \
+        "${NETWORK_ARGS[@]}" \
         "${MOUNTS[@]}" \
         "${ENV_ARGS[@]}" \
         -e MULTIPLAI_DRIVER_TOKEN \
@@ -1775,6 +1805,7 @@ while :; do
         --hostname "$CONTAINER_NAME" \
         --workdir "$WORKDIR_ARG" \
         "${HOST_ALIAS_ARGS[@]}" \
+        "${NETWORK_ARGS[@]}" \
         "${MOUNTS[@]}" \
         "${SSH_MOUNT[@]+"${SSH_MOUNT[@]}"}" \
         "${ENV_ARGS[@]}" \

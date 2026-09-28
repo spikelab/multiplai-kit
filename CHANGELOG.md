@@ -23,7 +23,9 @@ public repo has shipped without in-tree memory hooks from day one (see the
   creates a user-defined Docker network named `multiplai` on first launch and puts
   every interactive session and hub driver on it, so
   `http://<container>.orb.local:PORT` connects. Nothing is published to host
-  ports and outbound access is unchanged.
+  ports and outbound access is unchanged. Sessions of every profile
+  share the network, so one can reach another by container name as well as by
+  IP, which was already possible.
 
 ### Added
 

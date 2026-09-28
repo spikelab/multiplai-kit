@@ -907,6 +907,10 @@ HOST_ALIAS_ARGS=(--add-host host.docker.internal:host-gateway)
 # the same URL connects. Every session and hub driver joins one shared network,
 # `multiplai`, created on first launch. Nothing is published to host ports, and
 # outbound access is unchanged (a user-defined bridge routes out like `bridge`).
+# Sessions of every profile share this network, so one can reach another by
+# container name (`cc-p-…:PORT`). On `bridge` they could already reach each
+# other by IP; the name lookup is what is new. One network per profile would
+# cut that path, and is left for later.
 #
 # Two launchers can race on the create; the loser's `create` fails with
 # "already exists", so success is judged by a second inspect, not by create's

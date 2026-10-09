@@ -123,6 +123,30 @@ def test_deep_path_keeps_the_last_two_components():
     assert ".../multiplai-kit/scripts" in out
 
 
+@pytest.mark.parametrize(
+    "path,shown",
+    [
+        ("/host/home/someone/workspace/.worktrees/statusline-cache", "wt:statusline-cache"),
+        ("/host/home/someone/workspace/.worktrees/statusline-cache/evals", "wt:statusline-cache/evals"),
+        ("/repo/.claude/worktrees/fix-worktree-bug", "wt:fix-worktree-bug"),
+        (
+            "/host/home/someone/workspace/.worktrees/statusline-cache/dotfiles/scripts/lib",
+            "wt:statusline-cache/.../lib",
+        ),
+    ],
+)
+def test_worktree_path_collapses_to_its_name(path, shown):
+    out = run(payload(workspace={"current_dir": path}, cwd=path))
+    assert f"| {shown} |" in out
+
+
+def test_the_worktrees_directory_itself_is_not_a_worktree():
+    path = "/host/home/someone/workspace/.worktrees"
+    out = run(payload(workspace={"current_dir": path}, cwd=path))
+    assert "wt:" not in out
+    assert "| ~/.worktrees |" in out
+
+
 def test_missing_rate_limits_drops_the_segments_cleanly():
     out = run(payload(rate_limits=None))
     assert "5h" not in out
@@ -164,7 +188,7 @@ def test_missing_effort_drops_the_segment():
 )
 def test_effort_is_abbreviated(level, shown):
     out = run(payload(effort={"level": level}))
-    assert f"| {shown} |" in out
+    assert out.startswith(f"Opus 5 1M {shown} | ")
 
 
 def test_workspace_falls_back_to_the_dotfile(tmp_path):

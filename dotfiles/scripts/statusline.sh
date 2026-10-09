@@ -91,11 +91,29 @@ if [ -z "$ws" ]; then
 fi
 [ -n "$ws" ] && short_cwd="${short_cwd/#$ws/'~'}"
 short_cwd="${short_cwd/#$HOME/'~'}"
-# Further shorten: keep the last two path components if long
-if [ "${#short_cwd}" -gt 28 ]; then
-  parent="${short_cwd%/*}"
-  short_cwd=".../${parent##*/}/${short_cwd##*/}"
-fi
+# Inside a worktree, the worktree's name is the useful part: everything up to
+# and including the first path component containing "worktree" is dropped and
+# "wt:" marks it ("$ws/.worktrees/foo/src" -> "wt:foo/src"). The first match
+# is the container, so a worktree that is itself named "fix-worktree" still
+# shows. Being in the container directory itself is not a worktree.
+case "$cwd" in
+  *worktree*/?*)
+    wt_rest="${cwd#*worktree}"
+    wt_rest="${wt_rest#*/}"
+    short_cwd="wt:${wt_rest%/}"
+    # Further shorten: keep the worktree name and the last component if long
+    if [ "${#short_cwd}" -gt 28 ] && [ "${wt_rest%/}" != "${wt_rest%%/*}" ]; then
+      short_cwd="wt:${wt_rest%%/*}/.../${wt_rest##*/}"
+    fi
+    ;;
+  *)
+    # Further shorten: keep the last two path components if long
+    if [ "${#short_cwd}" -gt 28 ]; then
+      parent="${short_cwd%/*}"
+      short_cwd=".../${parent##*/}/${short_cwd##*/}"
+    fi
+    ;;
+esac
 
 # Git info. `branch --show-current` itself fails outside a repo (exit 128), so
 # no separate rev-parse probe is needed; success with empty output is detached.
@@ -153,15 +171,16 @@ if [ -n "$d7_pct" ]; then
   fi
 fi
 
-# Reasoning effort, abbreviated (absent on models without the parameter)
+# Reasoning effort, abbreviated, set right after the model name with no
+# separator (absent on models without the parameter)
 effort_info=""
 case "$effort" in
-  low)    effort_info=" ${SEP} ${CYAN}lo${RST}" ;;
-  medium) effort_info=" ${SEP} ${CYAN}med${RST}" ;;
-  high)   effort_info=" ${SEP} ${CYAN}hi${RST}" ;;
-  xhigh)  effort_info=" ${SEP} ${CYAN}xhi${RST}" ;;
-  max)    effort_info=" ${SEP} ${CYAN}max${RST}" ;;
-  ?*)     effort_info=" ${SEP} ${CYAN}${effort}${RST}" ;;
+  low)    effort_info=" ${CYAN}lo${RST}" ;;
+  medium) effort_info=" ${CYAN}med${RST}" ;;
+  high)   effort_info=" ${CYAN}hi${RST}" ;;
+  xhigh)  effort_info=" ${CYAN}xhi${RST}" ;;
+  max)    effort_info=" ${CYAN}max${RST}" ;;
+  ?*)     effort_info=" ${CYAN}${effort}${RST}" ;;
 esac
 
 # Prompt cache — e.g. "cache 91% ⟳42m ✗2". The percentage is the session's

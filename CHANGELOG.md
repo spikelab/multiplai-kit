@@ -24,6 +24,11 @@ public repo has shipped without in-tree memory hooks from day one (see the
   re-processed content the cache already held, and reads `cache off` when no
   response has reported cache tokens. It uses the `prompt_cache` object that
   Claude Code passes to the status line from v2.1.251.
+- **The status line takes less width.** Reasoning effort sits right after the
+  model name (`Opus 5.5 1M hi`) with no separator between them. Inside a
+  worktree the path shows as `wt:<name>`: everything up to the first path
+  component containing "worktree" is dropped, so
+  `~/.worktrees/statusline-cache/evals` reads `wt:statusline-cache/evals`.
 
 ### Fixed
 

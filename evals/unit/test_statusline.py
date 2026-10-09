@@ -46,6 +46,15 @@ def payload(**overrides):
             "five_hour": {"used_percentage": 72, "resets_at": now + 5400 + 30},
             "seven_day": {"used_percentage": 52, "resets_at": now + 180000},
         },
+        "prompt_cache": {
+            "warm": True,
+            "caching_observed": True,
+            "ttl": "1h",
+            "expires_at": now + 2520 + 30,
+            "requests": 14,
+            "misses": 0,
+            "hit_ratio": 0.914,
+        },
     }
     for key, value in overrides.items():
         if value is None:
@@ -114,6 +123,30 @@ def test_deep_path_keeps_the_last_two_components():
     assert ".../multiplai-kit/scripts" in out
 
 
+@pytest.mark.parametrize(
+    "path,shown",
+    [
+        ("/host/home/someone/workspace/.worktrees/statusline-cache", "wt:statusline-cache"),
+        ("/host/home/someone/workspace/.worktrees/statusline-cache/evals", "wt:statusline-cache/evals"),
+        ("/repo/.claude/worktrees/fix-worktree-bug", "wt:fix-worktree-bug"),
+        (
+            "/host/home/someone/workspace/.worktrees/statusline-cache/dotfiles/scripts/lib",
+            "wt:statusline-cache/.../lib",
+        ),
+    ],
+)
+def test_worktree_path_collapses_to_its_name(path, shown):
+    out = run(payload(workspace={"current_dir": path}, cwd=path))
+    assert f"| {shown} |" in out
+
+
+def test_the_worktrees_directory_itself_is_not_a_worktree():
+    path = "/host/home/someone/workspace/.worktrees"
+    out = run(payload(workspace={"current_dir": path}, cwd=path))
+    assert "wt:" not in out
+    assert "| ~/.worktrees |" in out
+
+
 def test_missing_rate_limits_drops_the_segments_cleanly():
     out = run(payload(rate_limits=None))
     assert "5h" not in out
@@ -121,8 +154,8 @@ def test_missing_rate_limits_drops_the_segments_cleanly():
 
 
 def test_a_wrongly_typed_subtree_only_costs_its_own_fields():
-    """One jq pass extracts all nine fields, so an error anywhere in the
-    program aborts all nine. `//` covers null but not a type error: with
+    """One jq pass extracts every field, so an error anywhere in the
+    program aborts all of them. `//` covers null but not a type error: with
     `rate_limits` a string rather than an object, `.rate_limits.five_hour`
     raises, jq exits non-zero and prints nothing, and the statusline loses
     model, directory and context% along with the usage segments — an empty
@@ -136,11 +169,11 @@ def test_a_wrongly_typed_subtree_only_costs_its_own_fields():
 
 
 def test_a_newline_inside_a_value_does_not_truncate_the_record():
-    """The nine fields arrive as one delimited record. A plain `read` stops at
+    """The fields arrive as one delimited record. A plain `read` stops at
     the first newline, so a newline in any value would silently empty every
-    field after it — here, everything downstream of the output style. The
+    field after it — here, everything downstream of the model name. The
     record is NUL-terminated and read with `-d ''` instead."""
-    out = run(payload(output_style={"name": "custom\nstyle"}))
+    out = run(payload(model={"display_name": "Opus\n5"}))
     assert "5h 72%" in out
     assert "7d 52%" in out
     assert not out.rstrip().endswith("|")
@@ -155,7 +188,7 @@ def test_missing_effort_drops_the_segment():
 )
 def test_effort_is_abbreviated(level, shown):
     out = run(payload(effort={"level": level}))
-    assert f"| {shown} |" in out
+    assert out.startswith(f"Opus 5 1M {shown} | ")
 
 
 def test_workspace_falls_back_to_the_dotfile(tmp_path):
@@ -195,3 +228,70 @@ def test_percentages_are_color_coded_by_severity():
     assert color_of(10) == green
     assert color_of(50) == yellow
     assert color_of(80) == red
+
+
+def test_output_style_is_not_shown():
+    out = run(payload(output_style={"name": "Clear Writing"}))
+    assert "Clear Writing" not in out
+
+
+def test_warm_cache_shows_hit_ratio_and_time_until_cold():
+    out = run(payload())
+    assert out.endswith("cache 91% ⟳42m")
+
+
+def test_cold_cache_says_cold_instead_of_a_countdown():
+    data = payload()
+    data["prompt_cache"].update(warm=False, expires_at=None)
+    out = run(data)
+    assert "cache 91% cold" in out
+    assert "⟳42m" not in out
+
+
+def test_cache_misses_show_only_when_there_are_some():
+    assert "✗" not in run(payload())
+    data = payload()
+    data["prompt_cache"]["misses"] = 2
+    assert run(data).endswith("⟳42m ✗2")
+
+
+def test_null_hit_ratio_drops_only_the_percentage():
+    data = payload()
+    data["prompt_cache"]["hit_ratio"] = None
+    assert run(data).endswith("cache ⟳42m")
+
+
+def test_caching_not_observed_says_off():
+    data = payload()
+    data["prompt_cache"].update(
+        caching_observed=False, warm=False, expires_at=None, hit_ratio=None
+    )
+    assert run(data).endswith("cache off")
+
+
+def test_missing_prompt_cache_drops_the_segment_cleanly():
+    out = run(payload(prompt_cache=None))
+    assert "cache" not in out
+    assert not out.rstrip().endswith("|")
+
+
+def test_cache_hit_ratio_is_color_coded_with_high_as_good():
+    def color_of(ratio):
+        data = payload()
+        data["prompt_cache"]["hit_ratio"] = ratio
+        raw = subprocess.run(
+            ["bash", str(SCRIPT)],
+            input=json.dumps(data),
+            capture_output=True,
+            text=True,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/home/agent", "STATUSLINE_TZ": "UTC"},
+            check=True,
+        ).stdout
+        match = re.search(r"cache (\033\[\d+m)", raw)
+        assert match, f"no color code before the cache percentage in {raw!r}"
+        return match.group(1)
+
+    green, yellow, red = "\033[32m", "\033[33m", "\033[31m"
+    assert color_of(0.95) == green
+    assert color_of(0.6) == yellow
+    assert color_of(0.1) == red

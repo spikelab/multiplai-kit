@@ -15,6 +15,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Changed
+
+- **The status line shows the prompt cache instead of the output style.** The
+  new segment reads `cache 91% ⟳42m`: the session's cache hit ratio (green at
+  80% and up, red under 50%) and the time until the cached prefix goes cold.
+  It reads `cold` once the cache has expired, adds a red `✗N` when N requests
+  re-processed content the cache already held, and reads `cache off` when no
+  response has reported cache tokens. It uses the `prompt_cache` object that
+  Claude Code passes to the status line from v2.1.251.
+
 ### Fixed
 
 - **A dev server inside a session is reachable from the Mac.** Sessions

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Claude Code statusline — reads JSON from stdin, outputs formatted status
-# Shows: model + effort | dir | git branch | context % | 5h and 7d plan usage | output style
+# Shows: model + effort | dir | git branch | context % | 5h and 7d plan usage | prompt cache
 #
 # Timezone: reset clock-times render in $STATUSLINE_TZ, falling back to
 # $CLAUDE_CONFIG_DIR/.timezone, then the system zone. Containers run UTC, so
@@ -32,9 +32,10 @@ SEP="${DIM}|${RST}"
 #
 #   * Every path is wrapped `(...)? // ""`. `//` alone only covers null; it does
 #     NOT cover a type error, and one badly-shaped subtree aborts the whole
-#     program. A payload whose `.rate_limits` is the string "unavailable" —
+#     program. It also treats `false` as missing, so the two prompt-cache
+#     booleans are turned into strings before `//` sees them. A payload whose `.rate_limits` is the string "unavailable" —
 #     which is the shape that appears before the session's first API response —
-#     made jq exit 5 and print nothing, blanking all nine fields including
+#     made jq exit 5 and print nothing, blanking every field including
 #     model and cwd (and an empty cwd then breaks the `git -C` below). `?`
 #     confines the failure to the field that failed.
 #   * The delimiter is the unit separator (\x1f), not a tab: tab is IFS
@@ -42,23 +43,28 @@ SEP="${DIM}|${RST}"
 #     field after an empty one.
 #   * The record is NUL-terminated and read with `-d ''` from a process
 #     substitution. Plain `read` stops at the first newline, so a newline
-#     anywhere in a value (an output-style name, a path) would silently empty
+#     anywhere in a value (a model name, a path) would silently empty
 #     every field after it. Command substitution cannot carry the NUL, hence
 #     `< <(...)`.
 #
 # Plan usage limits are claude.ai subscribers only, and absent until the
 # session's first API response — every consumer below tolerates an empty value.
-IFS=$'\x1f' read -r -d '' model cwd style used effort h5_pct h5_reset d7_pct d7_reset \
+IFS=$'\x1f' read -r -d '' model cwd used effort h5_pct h5_reset d7_pct d7_reset \
+  cache_seen cache_warm cache_expires cache_hit cache_misses \
   < <(printf '%s' "$input" | jq -j '[
   ((.model.display_name)? // "?"),
   ((.workspace.current_dir)? // "?"),
-  ((.output_style.name)? // ""),
   ((.context_window.used_percentage)? // ""),
   ((.effort.level)? // ""),
   ((.rate_limits.five_hour.used_percentage)? // ""),
   ((.rate_limits.five_hour.resets_at)? // ""),
   ((.rate_limits.seven_day.used_percentage)? // ""),
-  ((.rate_limits.seven_day.resets_at)? // "")
+  ((.rate_limits.seven_day.resets_at)? // ""),
+  ((.prompt_cache.caching_observed | if . == null then "" else tostring end)? // ""),
+  ((.prompt_cache.warm | if . == null then "" else tostring end)? // ""),
+  ((.prompt_cache.expires_at)? // ""),
+  ((.prompt_cache.hit_ratio * 100 | floor)? // ""),
+  ((.prompt_cache.misses)? // "")
 ] | map(tostring) | join("\u001f") + "\u0000"')
 
 # Shorten the model name: "Opus 5 (1M context)" -> "Opus 5 1M". Width is the real
@@ -158,11 +164,30 @@ case "$effort" in
   ?*)     effort_info=" ${SEP} ${CYAN}${effort}${RST}" ;;
 esac
 
-# Output style (only show if not "default")
-style_info=""
-if [ -n "$style" ] && [ "$style" != "null" ] && [ "$style" != "default" ]; then
-  style_info=" ${SEP} ${CYAN}${style}${RST}"
+# Prompt cache — e.g. "cache 91% ⟳42m ✗2". The percentage is the session's
+# cache hit ratio, so unlike the other percentages a high one is good. The
+# countdown runs to when the cached prefix goes cold, and "cold" replaces it
+# once that has happened. "✗N" counts requests that re-processed content the
+# cache already held, and only shows when N > 0. Absent until the session's
+# first API response; "cache off" means no response has reported cache tokens.
+cache_info=""
+if [ "$cache_seen" = "false" ]; then
+  cache_info=" ${SEP} ${DIM}cache off${RST}"
+elif [ "$cache_seen" = "true" ]; then
+  cache_info=" ${SEP} cache"
+  if [ -n "$cache_hit" ]; then
+    if [ "$cache_hit" -ge 80 ]; then hit_color="$GREEN"
+    elif [ "$cache_hit" -ge 50 ]; then hit_color="$YELLOW"
+    else hit_color="$RED"; fi
+    cache_info="${cache_info} ${hit_color}${cache_hit}%${RST}"
+  fi
+  if [ "$cache_warm" = "true" ] && [ -n "$cache_expires" ]; then
+    cache_info="${cache_info} ${DIM}⟳$(until_hm "$cache_expires")${RST}"
+  else
+    cache_info="${cache_info} ${YELLOW}cold${RST}"
+  fi
+  [ "${cache_misses:-0}" -gt 0 ] 2>/dev/null && cache_info="${cache_info} ${RED}✗${cache_misses}${RST}"
 fi
 
 # Assemble
-echo -n "${BOLD}${model}${RST}${effort_info} ${SEP} ${short_cwd}${git_info}${ctx_info}${h5_info}${d7_info}${style_info}"
+echo -n "${BOLD}${model}${RST}${effort_info} ${SEP} ${short_cwd}${git_info}${ctx_info}${h5_info}${d7_info}${cache_info}"

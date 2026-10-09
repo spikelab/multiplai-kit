@@ -17,6 +17,10 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **A new standing rule in `dotfiles/CLAUDE.md` limits edits to the lines a
+  request needs.** Claude leaves code next to its change alone, mentions
+  unrelated dead code instead of deleting it, and removes only what its own
+  change left unused.
 - **The status line shows the prompt cache instead of the output style.** The
   new segment reads `cache 91% ⟳42m`: the session's cache hit ratio (green at
   80% and up, red under 50%) and the time until the cached prefix goes cold.

@@ -17,6 +17,12 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **Commits and PRs no longer carry a claude.ai session link.** Claude Code
+  appends a `Claude-Session:` trailer to commits and the session URL to PR
+  descriptions in web and Remote Control sessions, which puts private session
+  links into public repos. `dotfiles/settings.json` now sets
+  `"attribution": {"sessionUrl": false}`. The `Co-Authored-By` trailer and the
+  PR footer are unchanged.
 - **A new standing rule in `dotfiles/CLAUDE.md` limits edits to the lines a
   request needs.** Claude leaves code next to its change alone, mentions
   unrelated dead code instead of deleting it, and removes only what its own

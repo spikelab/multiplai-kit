@@ -18,6 +18,9 @@
     "sonnet",
     "haiku"
   ],
+  "attribution": {
+    "sessionUrl": false
+  },
   "outputStyle": "Clear Writing",
   "skillOverrides": {
     "deep-research": "off"

@@ -33,6 +33,10 @@ public repo has shipped without in-tree memory hooks from day one (see the
   worktree the path shows as `wt:<name>`: everything up to the first path
   component containing "worktree" is dropped, so
   `~/.worktrees/statusline-cache/evals` reads `wt:statusline-cache/evals`.
+- **The status line is two lines.** The path and git branch moved to a
+  second line, so a long path or branch name no longer pushes the plan usage
+  and cache segments off the right edge. The first line keeps the model,
+  effort, context, plan usage and cache.
 
 ### Fixed
 

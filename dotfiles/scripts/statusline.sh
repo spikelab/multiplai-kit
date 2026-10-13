@@ -1,6 +1,7 @@
 #!/bin/bash
 # Claude Code statusline — reads JSON from stdin, outputs formatted status
-# Shows: model + effort | dir | git branch | context % | 5h and 7d plan usage | prompt cache
+# Line 1: model + effort | context % | 5h and 7d plan usage | prompt cache
+# Line 2: dir | git branch
 #
 # Timezone: reset clock-times render in $STATUSLINE_TZ, falling back to
 # $CLAUDE_CONFIG_DIR/.timezone, then the system zone. Containers run UTC, so
@@ -75,7 +76,7 @@ model="${model/ (/ }"; model="${model/)/}"
 
 # Shorten the path. $HOME is the container's home, not the host's, so the
 # workspace root needs collapsing too — otherwise an absolute host path eats
-# ~30 columns and pushes the usage segments off a narrow terminal.
+# ~30 columns of its line.
 # NB: the replacement is quoted because bash tilde-expands a bare `~` there,
 # which silently turns "~" straight back into "$HOME".
 short_cwd="$cwd"
@@ -208,5 +209,7 @@ elif [ "$cache_seen" = "true" ]; then
   [ "${cache_misses:-0}" -gt 0 ] 2>/dev/null && cache_info="${cache_info} ${RED}✗${cache_misses}${RST}"
 fi
 
-# Assemble
-echo -n "${BOLD}${model}${RST}${effort_info} ${SEP} ${short_cwd}${git_info}${ctx_info}${h5_info}${d7_info}${cache_info}"
+# Assemble. The path and branch go on a second line, so a long one cannot push
+# the usage and cache segments past the terminal's last column.
+echo "${BOLD}${model}${RST}${effort_info}${ctx_info}${h5_info}${d7_info}${cache_info}"
+echo -n "${short_cwd}${git_info}"

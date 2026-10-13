@@ -5,7 +5,7 @@ error channel, so a broken segment just looks like a segment nobody added.
 
 1. **Width.** Everything past the terminal's last column is truncated, and the
    usage segments sit at the far right. The model name and an absolute host path
-   were together worth ~45 columns.
+   were together worth ~45 columns, so the path and branch now get a second line.
 2. **Absent fields.** `rate_limits` only exists for Claude.ai subscribers and
    only after the session's first API response; `effort` is absent on models
    without the parameter. Both must degrade to "segment missing", not to a
@@ -84,6 +84,16 @@ def run(data, env=None):
     return ANSI.sub("", proc.stdout)
 
 
+def top(out):
+    """Line 1: model, context, plan usage and prompt cache."""
+    return out.split("\n")[0]
+
+
+def bottom(out):
+    """Line 2: the path and git branch."""
+    return out.split("\n")[1]
+
+
 def test_shows_both_usage_windows():
     out = run(payload())
     assert "5h 72%" in out
@@ -105,7 +115,25 @@ def test_expired_reset_does_not_render_a_negative_countdown():
 def test_fits_in_eighty_columns():
     # The whole point of the model/path shortening. 80 is the narrowest common
     # terminal; past it the usage segments are the first thing to disappear.
-    assert len(run(payload())) <= 80
+    assert all(len(line) <= 80 for line in run(payload()).split("\n"))
+
+
+def test_path_and_branch_go_on_the_second_line(tmp_path):
+    # A long path plus a branch used to push the cache segment off the screen.
+    repo = tmp_path / "a-fairly-long-project-name" / "with-a-long-subdirectory"
+    repo.mkdir(parents=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "feat/some-long-branch-name", str(repo)],
+        check=True,
+    )
+    out = run(payload(workspace={"current_dir": str(repo)}, cwd=str(repo)))
+    assert out.count("\n") == 1
+    assert top(out).startswith("Opus 5 1M med | 8% | 5h 72%")
+    assert top(out).endswith("cache 91% ⟳42m")
+    assert bottom(out) == (
+        ".../a-fairly-long-project-name/with-a-long-subdirectory"
+        " | feat/some-long-branch-name"
+    )
 
 
 def test_workspace_root_collapses_to_tilde():
@@ -137,14 +165,14 @@ def test_deep_path_keeps_the_last_two_components():
 )
 def test_worktree_path_collapses_to_its_name(path, shown):
     out = run(payload(workspace={"current_dir": path}, cwd=path))
-    assert f"| {shown} |" in out
+    assert bottom(out) == shown
 
 
 def test_the_worktrees_directory_itself_is_not_a_worktree():
     path = "/host/home/someone/workspace/.worktrees"
     out = run(payload(workspace={"current_dir": path}, cwd=path))
     assert "wt:" not in out
-    assert "| ~/.worktrees |" in out
+    assert bottom(out) == "~/.worktrees"
 
 
 def test_missing_rate_limits_drops_the_segments_cleanly():
@@ -176,7 +204,7 @@ def test_a_newline_inside_a_value_does_not_truncate_the_record():
     out = run(payload(model={"display_name": "Opus\n5"}))
     assert "5h 72%" in out
     assert "7d 52%" in out
-    assert not out.rstrip().endswith("|")
+    assert not top(out).rstrip().endswith("|")
 
 
 def test_missing_effort_drops_the_segment():
@@ -237,7 +265,7 @@ def test_output_style_is_not_shown():
 
 def test_warm_cache_shows_hit_ratio_and_time_until_cold():
     out = run(payload())
-    assert out.endswith("cache 91% ⟳42m")
+    assert top(out).endswith("cache 91% ⟳42m")
 
 
 def test_cold_cache_says_cold_instead_of_a_countdown():
@@ -252,13 +280,13 @@ def test_cache_misses_show_only_when_there_are_some():
     assert "✗" not in run(payload())
     data = payload()
     data["prompt_cache"]["misses"] = 2
-    assert run(data).endswith("⟳42m ✗2")
+    assert top(run(data)).endswith("⟳42m ✗2")
 
 
 def test_null_hit_ratio_drops_only_the_percentage():
     data = payload()
     data["prompt_cache"]["hit_ratio"] = None
-    assert run(data).endswith("cache ⟳42m")
+    assert top(run(data)).endswith("cache ⟳42m")
 
 
 def test_caching_not_observed_says_off():
@@ -266,13 +294,13 @@ def test_caching_not_observed_says_off():
     data["prompt_cache"].update(
         caching_observed=False, warm=False, expires_at=None, hit_ratio=None
     )
-    assert run(data).endswith("cache off")
+    assert top(run(data)).endswith("cache off")
 
 
 def test_missing_prompt_cache_drops_the_segment_cleanly():
     out = run(payload(prompt_cache=None))
     assert "cache" not in out
-    assert not out.rstrip().endswith("|")
+    assert not top(out).rstrip().endswith("|")
 
 
 def test_cache_hit_ratio_is_color_coded_with_high_as_good():

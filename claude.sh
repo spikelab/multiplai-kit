@@ -13,19 +13,12 @@
 #   --pi                Run the pi coding agent instead of claude, in the same
 #                       container with the same mounts, git identity and
 #                       sandbox. Requires Docker (pi ships no permission
-#                       system, so the container IS the boundary).
-#   --pi-profile <name> As --pi, selecting a pi model profile (default:
-#                       MULTIPLAI_PI_PROFILE, else "default"). A profile is a
-#                       whole ~/.pi directory — models.json, credentials,
+#                       system, so the container IS the boundary). pi runs on
+#                       the one pi config — models.json, credentials,
 #                       installed extensions and session history — mounted
-#                       from ~/.claude-container/pi/<name>. Every container
-#                       session mounts one, so `pi` works from claude too.
-#                       Profiles are isolated from each other. See docs/pi.md.
-#
-#                       NOTE two different things are called "profile" here:
-#                       --profile picks a git identity, --pi-profile picks a
-#                       model configuration. They are orthogonal; combining
-#                       them is fine.
+#                       from ~/.claude-container/pi/default. Every container
+#                       session mounts it, so `pi` works from claude too.
+#                       See docs/pi.md.
 #
 # Environment:
 #   Every variable assigned in .env / env.<profile> is forwarded into the
@@ -66,8 +59,7 @@
 #   ./claude.sh --local                 # bare, host permissions apply
 #   ./claude.sh --shell                 # container bash shell
 #   ./claude.sh --profile work --shell  # work profile, bash shell
-#   ./pi.sh                             # pi on the default profile
-#   ./pi.sh --pi-profile kimi           # pi on another model profile
+#   ./pi.sh                             # the pi coding agent
 #   ./claude.sh driver --sid new --port 8765 --runner <path>  # hub driver container
 
 set -euo pipefail
@@ -97,17 +89,6 @@ DRV_FOREGROUND=0
 # --- Parse flags (extract ours, pass the rest through) ---
 PROFILE=""
 MODE=""
-# Which pi profile is mounted at ~/.pi. NOT the same axis as --profile: --profile
-# picks a git identity + GH token, --pi-profile picks a pi model configuration.
-# The two are orthogonal and can be combined. `--pi-profile` wins; otherwise
-# MULTIPLAI_PI_PROFILE from the shell or .env (never env.<profile>); otherwise
-# this default. Resolved once .env is loaded.
-PI_PROFILE="default"
-PI_PROFILE_SET=0
-# Inside a container this is the profile the outer launch mounted at ~/.pi (it
-# passes -e MULTIPLAI_PI_PROFILE). Read before .env or env.<profile> is sourced,
-# so neither file can stand in for it. Only the nested --pi path reads it.
-PI_PROFILE_INHERITED="$(printenv MULTIPLAI_PI_PROFILE || true)"
 PI_MODE=0
 PASSTHROUGH_ARGS=()
 CLAUDE_ONLY_ARGS=()
@@ -163,18 +144,9 @@ while [[ $# -gt 0 ]]; do
             PI_MODE=1
             shift
             ;;
-        --pi-profile)
-            [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
-            PI_MODE=1
-            PI_PROFILE="$2"
-            PI_PROFILE_SET=1
-            shift 2
-            ;;
-        --pi-profile=*)
-            PI_MODE=1
-            PI_PROFILE="${1#--pi-profile=}"
-            PI_PROFILE_SET=1
-            shift
+        --pi-profile|--pi-profile=*)
+            echo "Error: --pi-profile was removed: there is one pi config now, and models are picked per call with pi:<model>@<provider> (see docs/pi.md)." >&2
+            exit 1
             ;;
         --plugin-dir|--add-dir)
             # claude-only flags: must not leak into `bash` in --shell mode
@@ -313,31 +285,6 @@ source_env_file() {
 }
 
 source_env_file "$SCRIPT_DIR/.env"
-
-# The pi profile is read HERE, after .env and before env.<profile>: pi is never
-# tied to --profile, so a MULTIPLAI_PI_PROFILE in env.work must not pick the pi
-# config. The shell already won over .env inside source_env_file.
-if [ "$PI_PROFILE_SET" -eq 0 ]; then
-    PI_PROFILE="${MULTIPLAI_PI_PROFILE:-$PI_PROFILE}"
-fi
-
-# The profile name becomes a directory name on the host and a mount target in
-# the container. Reject anything that could escape that directory rather than
-# silently mounting some other path over /home/agent/.pi. Called for --pi here,
-# and again for every container launch below, since every one mounts it; a bare
-# claude launch mounts nothing, so a bad value does not block it.
-check_pi_profile_name() {
-    [[ "$PI_PROFILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && return 0
-    if [ "$PI_PROFILE_SET" -eq 1 ]; then
-        echo "Error: --pi-profile must match [A-Za-z0-9][A-Za-z0-9._-]* — got: $PI_PROFILE" >&2
-    else
-        echo "Error: MULTIPLAI_PI_PROFILE must match [A-Za-z0-9][A-Za-z0-9._-]* — got: $PI_PROFILE" >&2
-    fi
-    exit 1
-}
-if [ "$PI_MODE" -eq 1 ]; then
-    check_pi_profile_name
-fi
 
 # --- Load profile overlay (if specified) ---
 if [ -n "$PROFILE" ]; then
@@ -756,22 +703,8 @@ fi
 if in_container; then
     # pi mode: the bootstrap seeds ~/.pi and execs the pi the entrypoint put on
     # PATH, so a nested launch works. It runs on the ~/.pi this container
-    # already mounted, which the outer launch chose and named in
-    # MULTIPLAI_PI_PROFILE. A nested launch cannot mount a different config, so
-    # a --pi-profile naming another profile is refused: the bootstrap would seed
-    # that profile's template files and install its packages into the mounted
-    # one, which persists on the Mac, and pi would still run on the mounted
-    # config. A container from a launcher that set no MULTIPLAI_PI_PROFILE has
-    # no persistent ~/.pi, so there is nothing to protect and nothing to refuse.
+    # already mounted from the Mac.
     if [ "$PI_MODE" -eq 1 ]; then
-        if [ "$PI_PROFILE_SET" -eq 1 ] && [ -n "$PI_PROFILE_INHERITED" ] \
-            && [ "$PI_PROFILE" != "$PI_PROFILE_INHERITED" ]; then
-            echo "Error: this container has the pi profile '$PI_PROFILE_INHERITED' mounted at ~/.pi;" >&2
-            echo "       a nested launch cannot switch it to '$PI_PROFILE'. Run this on the host" >&2
-            echo "       instead: ./pi.sh --pi-profile $PI_PROFILE" >&2
-            exit 1
-        fi
-        export MULTIPLAI_PI_PROFILE="$PI_PROFILE"
         exec "$SCRIPT_DIR/scripts/pi-bootstrap.sh" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
     fi
     exec_bare skip-permissions
@@ -810,8 +743,6 @@ if ! command -v docker &>/dev/null; then
 fi
 
 # --- Container mode (default) ---
-
-check_pi_profile_name
 
 CONTAINER_ARGS=("claude" "--dangerously-skip-permissions" "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}")
 if [[ "$MODE" == "shell" ]]; then
@@ -1028,24 +959,17 @@ MOUNTS+=(-v "$CLI_DIR:/home/agent/.claude-cli")
 # Three dirs, because they have different lifetimes:
 #   ~/.pi-cli   the pi install, owned by the container entrypoint, which runs
 #               pi's own installer into ~/.pi-cli/agent and `pi update`s it
-#               weekly. One copy shared by every profile.
-#   ~/.pi       one pi config: models.json, credentials (the ChatGPT login
-#               included), packages and sessions. `--pi-profile` picks it for
-#               --pi launches; otherwise MULTIPLAI_PI_PROFILE, else `default`.
+#               weekly.
+#   ~/.pi       the one pi config, from ~/.claude-container/pi/default:
+#               models.json, credentials (the ChatGPT login included), packages
+#               and sessions. The model spec picks the provider per call.
 #   ~/.codex    the Codex home: its releases, its binary in bin/, and its login.
 #               The entrypoint installs and updates it the same way.
-#
-# The pi config dir is what makes a profile a profile rather than a flag: pi
-# resolves its config from homedir()/.pi/agent, so switching profiles means
-# mounting a different host directory at the same container path. Profiles are
-# therefore fully isolated — separate models.json, separate auth, separate
-# installed extensions, separate session history. The `default` template puts
-# every provider in one config, so most users never need a second one.
 #
 # The dirs are created here because a bind mount of a missing host path makes
 # Docker create it root-owned, which the agent user cannot write to.
 PI_CLI_DIR="$HOME/.claude-container/pi-cli"
-PI_STATE_DIR="$HOME/.claude-container/pi/$PI_PROFILE"
+PI_STATE_DIR="$HOME/.claude-container/pi/default"
 CODEX_DIR="$HOME/.claude-container/codex"
 mkdir -p "$PI_CLI_DIR" "$PI_STATE_DIR" "$CODEX_DIR"
 MOUNTS+=(-v "$PI_CLI_DIR:/home/agent/.pi-cli")
@@ -1056,11 +980,10 @@ MOUNTS+=(-v "$CODEX_DIR:/home/agent/.codex")
 # session never runs scripts/pi-bootstrap.sh, and `pi` from inside it would
 # otherwise find an empty ~/.pi. The same copy as the bootstrap's — keep the two
 # in step: copy-if-absent, never overwrite, so a settings.json pi has written
-# (its deviceId) or an auth.json holding a login always wins. Profile template
-# first, then _shared, so a profile can override a shared default. A template
-# folder mirrors ~/.pi; its control files and docs are not pi config. A profile
-# with no template is mounted as it is. A failed copy warns and never costs the
-# session.
+# (its deviceId) or an auth.json holding a login always wins. The default
+# template first, then _shared, so it can override a shared default. A template
+# folder mirrors ~/.pi; its control files and docs are not pi config. A failed
+# copy warns and never costs the session.
 _pi_seeded=0
 seed_pi_from() {
     local root="$1" src base dest f d
@@ -1092,12 +1015,12 @@ seed_pi_from() {
         fi
     done
 }
-if [ -d "$DOTFILES_DIR/pi-profiles/$PI_PROFILE" ]; then
-    seed_pi_from "$DOTFILES_DIR/pi-profiles/$PI_PROFILE"
+if [ -d "$DOTFILES_DIR/pi-profiles/default" ]; then
+    seed_pi_from "$DOTFILES_DIR/pi-profiles/default"
     seed_pi_from "$DOTFILES_DIR/pi-profiles/_shared"
 fi
 if [ "$_pi_seeded" -eq 1 ]; then
-    echo "[claude] Seeded pi profile '$PI_PROFILE' at $PI_STATE_DIR from the kit template."
+    echo "[claude] Seeded the pi config at $PI_STATE_DIR from the kit template."
 fi
 
 CREDS_FILE="${CLAUDE_CREDENTIALS_FILE:-$HOME/.claude-container/credentials.json}"
@@ -1253,7 +1176,7 @@ _ENV_DENY="WORKSPACE SSH_BUILD_KEY GCP_KEY_FILE CLAUDE_CREDENTIALS_FILE
 GEMINI_CONFIG_DIR IDE_LOCK_DIR IMAGE_NAME CONTAINER_REPO CONTAINER_REF KIT_VENV_VOLUME
 MULTIPLAI_NET MULTIPLAI_MOUNT_GEMINI MULTIPLAI_HUB_URL
 MULTIPLAI_HUB_TOKEN MULTIPLAI_DRIVER_TOKEN HOST_HOME CLAUDE_CONFIG_DIR
-CLAUDE_MULTIPLAI_HOME DISABLE_AUTOUPDATER GOOGLE_APPLICATION_CREDENTIALS MULTIPLAI_PI_PROFILE
+CLAUDE_MULTIPLAI_HOME DISABLE_AUTOUPDATER GOOGLE_APPLICATION_CREDENTIALS
 CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
 SSH_AUTH_SOCK PATH HOME USER LOGNAME SHELL PWD OLDPWD HOSTNAME"
 
@@ -1307,11 +1230,6 @@ ENV_ARGS+=(
     # from pre-fix images are covered without a rebuild.
     -e DISABLE_AUTOUPDATER=1
 )
-
-# Which pi profile is mounted at ~/.pi — the in-container bootstrap seeds and
-# launches it, and a nested `claude.sh --pi` resolves to it. Always the
-# computed value, which is why the name is on the denylist above.
-ENV_ARGS+=(-e MULTIPLAI_PI_PROFILE="$PI_PROFILE")
 
 # GCP credential env — the key is mounted at a fixed container path, so these
 # two point there, never at the host path in GCP_KEY_FILE.

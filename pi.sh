@@ -8,13 +8,13 @@
 # watching them drift.
 #
 # Usage:
-#   ./pi.sh                          # pi on the default profile
-#   ./pi.sh --pi-profile kimi        # a different model profile
-#   ./pi.sh --profile work           # work git identity, default pi profile
+#   ./pi.sh                          # pi, on the one pi config
+#   ./pi.sh --profile work           # work git identity
 #   ./pi.sh -p "summarise this repo" # pi flags pass straight through
 #
-# A pi profile is a whole ~/.pi directory: models.json, credentials, installed
-# packages, session history. See docs/pi.md.
+# The pi config is a whole ~/.pi directory, mounted from
+# ~/.claude-container/pi/default: models.json, credentials, installed packages,
+# session history. See docs/pi.md.
 
 set -euo pipefail
 

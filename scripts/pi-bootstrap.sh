@@ -3,7 +3,7 @@
 #
 # claude.sh --pi runs this instead of `claude`. It lives in the kit (which is
 # bind-mounted into the container at its own absolute path) rather than in the
-# image, so profile handling can change without cutting a container release.
+# image, so seeding and packages can change without cutting a container release.
 #
 # It does not install pi. The container entrypoint does that, the same way it
 # keeps Claude Code current: pi's own installer into ~/.pi-cli/agent, a weekly
@@ -11,19 +11,15 @@
 # into the image as the fallback. This script runs whichever `pi` is on PATH.
 #
 # What it does, in order:
-#   1. seeds ~/.pi from the profile template, then shared defaults, no overwrite
-#   2. installs the shared + profile package lists when the list changes
-#   3. warns about any provider key the profile names that is unset
+#   1. seeds ~/.pi from the default template, then shared defaults, no overwrite
+#   2. installs the shared + default package lists when the list changes
+#   3. warns about any provider key the template names that is unset
 #   4. execs pi
 #
-# All of it is per-profile. ~/.pi is a different host directory for every
-# profile, so profiles never share credentials, models or sessions — which is
-# why a capability wanted everywhere goes in _shared/packages.txt rather than
-# being installed once and hoped to be visible.
+# There is one pi config, ~/.claude-container/pi/default on the Mac, so the
+# template is always dotfiles/pi-profiles/default.
 
 set -euo pipefail
-
-PROFILE="${MULTIPLAI_PI_PROFILE:-default}"
 
 KIT_HOME="${CLAUDE_MULTIPLAI_HOME:-}"
 if [ -z "$KIT_HOME" ] || [ ! -d "$KIT_HOME" ]; then
@@ -32,15 +28,7 @@ if [ -z "$KIT_HOME" ] || [ ! -d "$KIT_HOME" ]; then
     exit 1
 fi
 
-TEMPLATE_DIR="$KIT_HOME/dotfiles/pi-profiles/$PROFILE"
-if [ ! -d "$TEMPLATE_DIR" ]; then
-    echo "[pi] Error: no such pi profile: $PROFILE" >&2
-    echo "[pi]        Profiles available:" >&2
-    for d in "$KIT_HOME/dotfiles/pi-profiles"/[A-Za-z0-9]*/; do
-        [ -d "$d" ] && echo "[pi]          $(basename "$d")" >&2
-    done
-    exit 1
-fi
+TEMPLATE_DIR="$KIT_HOME/dotfiles/pi-profiles/default"
 
 PI_HOME="$HOME/.pi"
 PI_AGENT_DIR="$PI_HOME/agent"
@@ -57,7 +45,7 @@ fi
 
 mkdir -p "$PI_AGENT_DIR"
 
-# --- 1. seed the profile ----------------------------------------------------
+# --- 1. seed the config -----------------------------------------------------
 #
 # Copy-if-absent, never overwrite: the template is the starting point, and
 # anything the user or pi itself has since written wins. That is what makes it
@@ -70,9 +58,9 @@ mkdir -p "$PI_AGENT_DIR"
 # pi-web-access reads ~/.pi/web-search.json — so seeding only agent/ would have
 # left those files unreachable.
 #
-# Profile first, then _shared: copy-if-absent means whoever writes a path first
-# owns it, so this order lets a profile override a shared default rather than
-# the other way round.
+# default first, then _shared: copy-if-absent means whoever writes a path first
+# owns it, so this order lets the default template override a shared default
+# rather than the other way round.
 #
 # claude.sh runs the same copy on the Mac before every container launch, so a
 # plain Claude session gets a seeded ~/.pi too. Keep the two in step.
@@ -106,7 +94,7 @@ seed_from() {
     done
 }
 
-seed_from "$TEMPLATE_DIR" "the $PROFILE profile template"
+seed_from "$TEMPLATE_DIR" "the default template"
 seed_from "$KIT_HOME/dotfiles/pi-profiles/_shared" "the shared defaults"
 
 # --- 2. packages ------------------------------------------------------------
@@ -115,14 +103,11 @@ seed_from "$KIT_HOME/dotfiles/pi-profiles/_shared" "the shared defaults"
 # template does not hand-write that key — it would be a guess at a schema pi
 # already owns.
 #
-# Two lists, concatenated: `_shared/packages.txt` applies to every profile, and
-# the profile's own follows it. Shared exists so a capability every profile needs
-# — web search being the first — is declared once instead of copied into each
-# profile and then forgotten in the next one.
+# Two lists, concatenated: `_shared/packages.txt`, then the default template's.
 #
 # The marker holds a hash of the resulting list, not a bare flag. A flag made
 # this first-run-only, which meant adding a line to packages.txt silently did
-# nothing on profiles that had already launched — the failure would have looked
+# nothing on a config that had already launched — the failure would have looked
 # like a broken extension. `pi install` is idempotent, so re-running a changed
 # list is cheap and safe.
 SHARED_PKG_FILE="$KIT_HOME/dotfiles/pi-profiles/_shared/packages.txt"
@@ -173,13 +158,13 @@ if [ -f "$TEMPLATE_DIR/required-env.txt" ]; then
     done < "$TEMPLATE_DIR/required-env.txt"
     if [ ${#missing[@]} -gt 0 ]; then
         echo "[pi] Warning: these are unset, so the providers that read them are off: ${missing[*]}" >&2
-        echo "[pi]          The $PROFILE profile's other providers still work. To turn them on," >&2
+        echo "[pi]          The other providers still work. To turn these on," >&2
         echo "[pi]          add the keys to the kit's .env (or env.<profile>) — claude.sh" >&2
         echo "[pi]          forwards every non-empty variable named there into the container." >&2
         echo "[pi]          You can also authenticate interactively with /login." >&2
     fi
 fi
 
-[ "$seeded_any" -eq 1 ] && echo "[pi] Profile '$PROFILE' ready at ~/.pi (host: ~/.claude-container/pi/$PROFILE)."
+[ "$seeded_any" -eq 1 ] && echo "[pi] Config ready at ~/.pi (host: ~/.claude-container/pi/default)."
 
 exec pi "$@"

@@ -92,41 +92,27 @@ def test_pi_sh_wrapper_matches_claude_sh_pi(kit):
     ]
 
 
-# --- the mounts that make a profile persist ----------------------------------
+# --- the mount that makes the pi config persist ------------------------------
 
 
-def test_profile_state_is_mounted_from_the_host(kit):
+def test_pi_config_is_mounted_from_the_host(kit):
     """Without this mount, credentials and installed packages die with the container."""
     result = kit.launch("--pi")
     host = _mount_for(result.argv, PI_HOME)
     assert host == str(kit.home / ".claude-container/pi/default"), _mounts(result.argv)
 
 
-def test_cli_dir_is_shared_across_profiles(kit):
-    """One pi install, many profiles — the CLI mount must not be profile-scoped."""
-    default = _mount_for(kit.launch("--pi").argv, PI_CLI)
-    other = _mount_for(kit.launch("--pi-profile", "kimi").argv, PI_CLI)
-    assert default == other == str(kit.home / ".claude-container/pi-cli")
-
-
-def test_profiles_get_separate_state_dirs(kit):
-    """The isolation claim in docs/pi.md, asserted.
-
-    pi reads its config from `~/.pi/agent` unless `PI_CODING_AGENT_DIR` is set,
-    and the container does not set it for sessions, so the mount is what selects
-    a profile. Two profiles sharing a host directory would share credentials,
-    models and session history — silently.
-    """
-    a = _mount_for(kit.launch("--pi").argv, PI_HOME)
-    b = _mount_for(kit.launch("--pi-profile", "kimi").argv, PI_HOME)
-    assert a is not None and b is not None
-    assert a != b
-    assert a.endswith("/default") and b.endswith("/kimi")
-
-
-def test_profile_name_reaches_the_bootstrap(kit):
-    result = kit.launch("--pi-profile", "kimi")
-    assert "MULTIPLAI_PI_PROFILE=kimi" in result.argv
+@pytest.mark.parametrize(
+    "flags",
+    [("--pi-profile", "x"), ("--pi-profile=x",), ("--pi", "--pi-profile", "default")],
+)
+def test_pi_profile_flag_is_removed(kit, flags):
+    """There is one pi config; the old flag fails loudly rather than reaching pi."""
+    result = kit.launch(*flags)
+    assert result.status != 0
+    assert "--pi-profile was removed" in result.output
+    assert "docs/pi.md" in result.output
+    assert result.argv == []
 
 
 # --- every container session carries pi and Codex --------------------------
@@ -136,14 +122,14 @@ def test_profile_name_reaches_the_bootstrap(kit):
 # every mode, or the weekly update and the ChatGPT login are redone every launch.
 
 
-def _assert_pi_and_codex_mounts(kit, argv, pi_profile="default"):
+def _assert_pi_and_codex_mounts(kit, argv):
     cc = kit.home / ".claude-container"
     assert _mount_for(argv, PI_CLI) == str(cc / "pi-cli"), _mounts(argv)
-    assert _mount_for(argv, PI_HOME) == str(cc / "pi" / pi_profile), _mounts(argv)
+    assert _mount_for(argv, PI_HOME) == str(cc / "pi" / "default"), _mounts(argv)
     assert _mount_for(argv, CODEX_HOME) == str(cc / "codex"), _mounts(argv)
     # Created before the launch: a bind mount of a missing host path makes
     # Docker create it root-owned, which the agent user cannot write to.
-    for d in ("pi-cli", f"pi/{pi_profile}", "codex"):
+    for d in ("pi-cli", "pi/default", "codex"):
         assert (cc / d).is_dir(), d
 
 
@@ -170,45 +156,27 @@ def test_driver_launch_mounts_pi_and_codex_state(kit):
     _assert_pi_and_codex_mounts(kit, result.argv)
 
 
-def test_env_pi_profile_selects_the_mounted_config(kit):
-    """(b) `MULTIPLAI_PI_PROFILE=x` mounts `pi/x` in a plain session."""
-    result = kit.launch(MULTIPLAI_PI_PROFILE="x")
+@pytest.mark.parametrize("flags", [(), ("--pi",)])
+@pytest.mark.parametrize("source", ["shell", ".env"])
+def test_a_leftover_pi_profile_variable_changes_no_mount(kit, flags, source):
+    """A MULTIPLAI_PI_PROFILE from the old profile selection mounts `pi/default` all the same."""
+    if source == ".env":
+        kit.append_env('MULTIPLAI_PI_PROFILE="x"\n')
+        result = kit.launch(*flags)
+    else:
+        result = kit.launch(*flags, MULTIPLAI_PI_PROFILE="x")
     assert result.status == 0, result.output
-    _assert_pi_and_codex_mounts(kit, result.argv, pi_profile="x")
-
-
-def test_env_pi_profile_from_the_env_file_selects_the_mounted_config(kit):
-    kit.append_env('MULTIPLAI_PI_PROFILE="x"\n')
-    result = kit.launch()
-    assert result.status == 0, result.output
-    _assert_pi_and_codex_mounts(kit, result.argv, pi_profile="x")
-
-
-def test_pi_profile_flag_overrides_the_env_profile(kit):
-    """(c) `--pi --pi-profile kimi` mounts `pi/kimi`, whatever the env names."""
-    result = kit.launch("--pi", "--pi-profile", "kimi", MULTIPLAI_PI_PROFILE="x")
-    assert result.status == 0, result.output
-    _assert_pi_and_codex_mounts(kit, result.argv, pi_profile="kimi")
-    # The computed value, never the env's, is what the container is told.
-    assert "MULTIPLAI_PI_PROFILE=kimi" in result.argv
-    assert "MULTIPLAI_PI_PROFILE" not in result.argv
-
-
-def test_pi_without_a_profile_flag_uses_the_env_profile(kit):
-    result = kit.launch("--pi", MULTIPLAI_PI_PROFILE="x")
-    assert result.status == 0, result.output
-    assert _mount_for(result.argv, PI_HOME) == str(kit.home / ".claude-container/pi/x")
+    _assert_pi_and_codex_mounts(kit, result.argv)
+    assert not (kit.home / ".claude-container" / "pi" / "x").exists()
 
 
 def test_git_profile_changes_no_pi_mount(kit):
-    """(d) `--profile work` changes no pi mount — not even when env.work names one.
+    """(d) `--profile work` changes no pi mount.
 
     pi is never tied to `--profile`: that flag picks a git identity and a GitHub
-    token. A pi profile named in env.work is ignored for the mount.
+    token.
     """
-    kit.write_profile(
-        "work", 'GIT_AUTHOR_NAME="Work Name"\nMULTIPLAI_PI_PROFILE="work"\n'
-    )
+    kit.write_profile("work", 'GIT_AUTHOR_NAME="Work Name"\n')
     plain = kit.launch()
     work = kit.launch("--profile", "work")
     assert work.status == 0, work.output
@@ -216,31 +184,21 @@ def test_git_profile_changes_no_pi_mount(kit):
     for path in (PI_CLI, PI_HOME, CODEX_HOME):
         assert _mount_for(work.argv, path) == _mount_for(plain.argv, path), path
     _assert_pi_and_codex_mounts(kit, work.argv)
-    assert "MULTIPLAI_PI_PROFILE=default" in work.argv
-
-
-@pytest.mark.parametrize("bad", ["../escape", "a/b", ".hidden", "with space", "_shared"])
-def test_env_pi_profile_name_is_validated(kit, bad):
-    """The env value becomes a host directory and a mount target, same as the flag."""
-    result = kit.launch(MULTIPLAI_PI_PROFILE=bad)
-    assert result.status != 0, f"accepted profile name {bad!r}"
-    assert result.argv == []
 
 
 # --- the git identity axis stays independent ---------------------------------
 
 
-def test_pi_profile_and_git_profile_compose(kit):
-    """`--profile` picks a git identity, `--pi-profile` a model config.
+def test_pi_and_git_profile_compose(kit):
+    """`--pi --profile work` takes work's git identity and still mounts `pi/default`.
 
-    Two different things share the word "profile"; a change that collapsed them
-    would make `--profile work` silently pick a pi profile named `work`.
+    A change that tied the pi config to `--profile` would make `--profile work`
+    silently mount a pi config named `work`.
     """
     kit.write_profile("work", 'GIT_AUTHOR_NAME="Work Name"\n')
     result = kit.launch("--profile", "work", "--pi")
     assert result.status == 0, result.output
-    pi_home = _mount_for(result.argv, PI_HOME)
-    assert pi_home is not None and pi_home.endswith("/default")
+    assert _mount_for(result.argv, PI_HOME) == str(kit.home / ".claude-container/pi/default")
     assert result.resolved("GIT_AUTHOR_NAME") == "Work Name"
 
 
@@ -284,21 +242,6 @@ def test_pi_refuses_without_docker(kit, tmp_path):
     assert "requires Docker" in result.output
 
 
-@pytest.mark.parametrize(
-    "bad", ["../escape", "a/b", "", ".hidden", "with space", "_shared"]
-)
-def test_pi_profile_name_is_validated(kit, bad):
-    """The name becomes a host directory and a mount target.
-
-    `_shared` is in the list because it is a real directory under
-    dotfiles/pi-profiles/ holding the package list every profile gets. It is not
-    a profile, and selecting it would mount a state dir named after it.
-    """
-    result = kit.launch("--pi-profile", bad)
-    assert result.status != 0, f"accepted profile name {bad!r}"
-    assert result.argv == []
-
-
 def test_pi_refuses_driver_mode(kit):
     result = kit.launch("driver", "--pi")
     assert result.status != 0
@@ -308,7 +251,7 @@ def test_pi_refuses_driver_mode(kit):
 #
 # `scripts/pi-bootstrap.sh` runs inside the container as `--pi`'s command. The
 # container entrypoint now owns installing and updating pi, so the bootstrap
-# only seeds the profile, installs its packages and execs the `pi` on PATH. It
+# only seeds the config, installs its packages and execs the `pi` on PATH. It
 # is run here directly, against the real templates, with a stub `pi` and a stub
 # `npm` that fails the test if anything still calls it.
 
@@ -357,8 +300,7 @@ def _bootstrap(tmp_path, *args, with_pi=True, **env_extra):
 def test_missing_openrouter_key_warns_and_still_launches(tmp_path):
     """(e) One config holds several providers; a missing key disables only its own."""
     proc, home, calls, npm = _bootstrap(
-        tmp_path, "-p", "hello",
-        MULTIPLAI_PI_PROFILE="default", DEEPSEEK_API_KEY="sk-deepseek-secret",
+        tmp_path, "-p", "hello", DEEPSEEK_API_KEY="sk-deepseek-secret"
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "OPENROUTER_API_KEY" in proc.stderr
@@ -369,8 +311,15 @@ def test_missing_openrouter_key_warns_and_still_launches(tmp_path):
     assert (home / ".pi" / "agent" / "models.json").is_file()
 
 
-def test_bootstrap_defaults_to_the_default_profile(tmp_path):
+def test_bootstrap_seeds_the_default_template(tmp_path):
     proc, home, calls, _ = _bootstrap(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    seeded = json.loads((home / ".pi" / "agent" / "models.json").read_text())
+    assert sorted(seeded["providers"]) == ["deepseek", "openrouter"]
+
+
+def test_bootstrap_ignores_a_leftover_pi_profile_variable(tmp_path):
+    proc, home, calls, _ = _bootstrap(tmp_path, MULTIPLAI_PI_PROFILE="openrouter")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     seeded = json.loads((home / ".pi" / "agent" / "models.json").read_text())
     assert sorted(seeded["providers"]) == ["deepseek", "openrouter"]
@@ -411,7 +360,7 @@ def test_bootstrap_keeps_user_edits(tmp_path):
 # --- seeding on the Mac, before the container starts -------------------------
 #
 # A plain Claude session never runs the bootstrap, so `pi` from inside it would
-# find an empty ~/.pi. The launcher seeds the mounted profile folder on the host
+# find an empty ~/.pi. The launcher seeds the mounted pi config folder on the host
 # with the same absent-files-only copy, from the kit's templates.
 
 
@@ -422,7 +371,7 @@ def _with_templates(kit):
     return kit.home / ".claude-container" / "pi"
 
 
-def test_plain_launch_seeds_the_default_profile(kit):
+def test_plain_launch_seeds_the_default_config(kit):
     state = _with_templates(kit)
     result = kit.launch()
     assert result.status == 0, result.output
@@ -465,35 +414,15 @@ def test_seeding_never_overwrites_user_edits(kit):
     assert (agent / "auth.json").read_text() == auth
 
 
-def test_seeding_follows_the_selected_profile(kit):
-    state = _with_templates(kit)
-    result = kit.launch("--pi-profile", "openrouter")
-    assert result.status == 0, result.output
-    seeded = json.loads((state / "openrouter" / "agent" / "models.json").read_text())
-    assert sorted(seeded["providers"]) == ["openrouter"]
-    assert not (state / "default").exists()
-
-
-def test_profile_without_a_template_still_launches_unseeded(kit):
-    state = _with_templates(kit)
-    result = kit.launch(MULTIPLAI_PI_PROFILE="kimi")
-    assert result.status == 0, result.output
-    assert (state / "kimi").is_dir()
-    assert list((state / "kimi").iterdir()) == []
-
 
 # --- a nested --pi launch, from inside a container ---------------------------
 #
 # Inside a container `claude.sh --pi` cannot mount anything: it runs the
-# bootstrap on the ~/.pi the outer launch already mounted from the Mac, and the
-# outer launch names that profile in MULTIPLAI_PI_PROFILE. A nested
-# `--pi-profile` naming another profile would seed that profile's template files
-# and install its packages into the mounted one, which persists on the Mac, then
-# run pi on a config other than the one asked for. So it is refused.
+# bootstrap on the ~/.pi the outer launch already mounted from the Mac.
 
 BOOTSTRAP_STUB = """\
 #!/bin/bash
-printf '%s\\n' "$MULTIPLAI_PI_PROFILE" "$@" > "$BOOTSTRAP_OUT"
+printf '%s\\n' "$@" > "$BOOTSTRAP_OUT"
 exit 0
 """
 
@@ -523,39 +452,11 @@ def _nested_launch(kit, *args, **env):
     return result, ran
 
 
-def test_nested_pi_runs_on_the_mounted_profile(nested):
-    result, ran = _nested_launch(nested, "--pi", "-p", "hi", MULTIPLAI_PI_PROFILE="openrouter")
+def test_nested_pi_runs_the_bootstrap_on_the_mounted_config(nested):
+    result, ran = _nested_launch(nested, "--pi", "-p", "hi")
     assert result.status == 0, result.output
     assert result.argv == [], "a nested launch must not start another container"
-    assert ran == ["openrouter", "-p", "hi"]
-
-
-def test_nested_pi_profile_naming_the_mounted_profile_runs(nested):
-    result, ran = _nested_launch(
-        nested, "--pi", "--pi-profile", "default", MULTIPLAI_PI_PROFILE="default"
-    )
-    assert result.status == 0, result.output
-    assert ran == ["default"]
-
-
-def test_nested_pi_profile_naming_another_profile_is_refused(nested):
-    """It would write openrouter's template and packages into the mounted default."""
-    result, ran = _nested_launch(
-        nested, "--pi", "--pi-profile", "openrouter", MULTIPLAI_PI_PROFILE="default"
-    )
-    assert result.status != 0
-    assert ran is None, "the bootstrap must not run against the wrong profile"
-    assert "openrouter" in result.output and "default" in result.output
-
-
-def test_nested_pi_profile_refusal_ignores_the_env_file(nested):
-    """The mounted profile is what the outer launch passed in, not what .env says."""
-    nested.append_env('MULTIPLAI_PI_PROFILE="openrouter"\n')
-    result, ran = _nested_launch(
-        nested, "--pi", "--pi-profile", "openrouter", MULTIPLAI_PI_PROFILE="default"
-    )
-    assert result.status != 0
-    assert ran is None
+    assert ran == ["-p", "hi"]
 
 
 # --- (e) through the launcher: a missing OPENROUTER_API_KEY -------------------
@@ -590,13 +491,12 @@ def test_launch_with_openrouter_key_unset_warns_and_still_launches(kit, tmp_path
     forwarded = _container_env(result)
     assert forwarded.get("DEEPSEEK_API_KEY") == "sk-deepseek-secret"
     assert "OPENROUTER_API_KEY" not in forwarded, "an empty key is never forwarded"
-    assert forwarded.get("MULTIPLAI_PI_PROFILE") == "default"
 
     boot = next(i for i, a in enumerate(result.argv) if a.endswith("scripts/pi-bootstrap.sh"))
     passthrough = result.argv[boot + 1:]
     proc, _, calls, _ = _bootstrap(
         tmp_path, *passthrough,
-        **{k: v for k, v in forwarded.items() if k in ("DEEPSEEK_API_KEY", "MULTIPLAI_PI_PROFILE")},
+        DEEPSEEK_API_KEY=forwarded["DEEPSEEK_API_KEY"],
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "OPENROUTER_API_KEY" in proc.stderr

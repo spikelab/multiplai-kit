@@ -15,11 +15,12 @@
 #                       sandbox. Requires Docker (pi ships no permission
 #                       system, so the container IS the boundary).
 #   --pi-profile <name> As --pi, selecting a pi model profile (default:
-#                       deepseek). A profile is a whole ~/.pi directory —
-#                       models.json, credentials, installed extensions and
-#                       session history — mounted from
-#                       ~/.claude-container/pi/<name>. Profiles are isolated
-#                       from each other. See docs/pi.md.
+#                       MULTIPLAI_PI_PROFILE, else "default"). A profile is a
+#                       whole ~/.pi directory — models.json, credentials,
+#                       installed extensions and session history — mounted
+#                       from ~/.claude-container/pi/<name>. Every container
+#                       session mounts one, so `pi` works from claude too.
+#                       Profiles are isolated from each other. See docs/pi.md.
 #
 #                       NOTE two different things are called "profile" here:
 #                       --profile picks a git identity, --pi-profile picks a
@@ -65,7 +66,7 @@
 #   ./claude.sh --local                 # bare, host permissions apply
 #   ./claude.sh --shell                 # container bash shell
 #   ./claude.sh --profile work --shell  # work profile, bash shell
-#   ./pi.sh                             # pi on the deepseek profile
+#   ./pi.sh                             # pi on the default profile
 #   ./pi.sh --pi-profile kimi           # pi on another model profile
 #   ./claude.sh driver --sid new --port 8765 --runner <path>  # hub driver container
 
@@ -96,10 +97,13 @@ DRV_FOREGROUND=0
 # --- Parse flags (extract ours, pass the rest through) ---
 PROFILE=""
 MODE=""
-# Which pi profile `--pi` launches. NOT the same axis as --profile: --profile
+# Which pi profile is mounted at ~/.pi. NOT the same axis as --profile: --profile
 # picks a git identity + GH token, --pi-profile picks a pi model configuration.
-# The two are orthogonal and can be combined.
-PI_PROFILE="deepseek"
+# The two are orthogonal and can be combined. `--pi-profile` wins; otherwise
+# MULTIPLAI_PI_PROFILE from the shell or .env (never env.<profile>); otherwise
+# this default. Resolved once .env is loaded.
+PI_PROFILE="default"
+PI_PROFILE_SET=0
 PI_MODE=0
 PASSTHROUGH_ARGS=()
 CLAUDE_ONLY_ARGS=()
@@ -159,11 +163,13 @@ while [[ $# -gt 0 ]]; do
             [ $# -ge 2 ] || { echo "Error: $1 requires a value" >&2; exit 1; }
             PI_MODE=1
             PI_PROFILE="$2"
+            PI_PROFILE_SET=1
             shift 2
             ;;
         --pi-profile=*)
             PI_MODE=1
             PI_PROFILE="${1#--pi-profile=}"
+            PI_PROFILE_SET=1
             shift
             ;;
         --plugin-dir|--add-dir)
@@ -197,14 +203,6 @@ fi
 # win would launch something the user did not ask for.
 if [ "$PI_MODE" -eq 1 ] && [ -n "$MODE" ]; then
     echo "Error: --pi cannot combine with --$MODE." >&2
-    exit 1
-fi
-
-# The profile name becomes a directory name on the host and a mount target in
-# the container. Reject anything that could escape that directory rather than
-# silently mounting some other path over /home/agent/.pi.
-if [ "$PI_MODE" -eq 1 ] && [[ ! "$PI_PROFILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-    echo "Error: --pi-profile must match [A-Za-z0-9][A-Za-z0-9._-]* — got: $PI_PROFILE" >&2
     exit 1
 fi
 
@@ -311,6 +309,31 @@ source_env_file() {
 }
 
 source_env_file "$SCRIPT_DIR/.env"
+
+# The pi profile is read HERE, after .env and before env.<profile>: pi is never
+# tied to --profile, so a MULTIPLAI_PI_PROFILE in env.work must not pick the pi
+# config. The shell already won over .env inside source_env_file.
+if [ "$PI_PROFILE_SET" -eq 0 ]; then
+    PI_PROFILE="${MULTIPLAI_PI_PROFILE:-$PI_PROFILE}"
+fi
+
+# The profile name becomes a directory name on the host and a mount target in
+# the container. Reject anything that could escape that directory rather than
+# silently mounting some other path over /home/agent/.pi. Called for --pi here,
+# and again for every container launch below, since every one mounts it; a bare
+# claude launch mounts nothing, so a bad value does not block it.
+check_pi_profile_name() {
+    [[ "$PI_PROFILE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && return 0
+    if [ "$PI_PROFILE_SET" -eq 1 ]; then
+        echo "Error: --pi-profile must match [A-Za-z0-9][A-Za-z0-9._-]* — got: $PI_PROFILE" >&2
+    else
+        echo "Error: MULTIPLAI_PI_PROFILE must match [A-Za-z0-9][A-Za-z0-9._-]* — got: $PI_PROFILE" >&2
+    fi
+    exit 1
+}
+if [ "$PI_MODE" -eq 1 ]; then
+    check_pi_profile_name
+fi
 
 # --- Load profile overlay (if specified) ---
 if [ -n "$PROFILE" ]; then
@@ -727,9 +750,11 @@ fi
 
 # --- Already inside a container? Run bare with full permissions ---
 if in_container; then
-    # pi mode: the bootstrap is self-contained (it installs pi into ~/.pi-cli
-    # and seeds ~/.pi itself), so a nested launch works — it just gets an
-    # ephemeral pi install, because the host mounts are not there.
+    # pi mode: the bootstrap seeds ~/.pi and execs the pi the entrypoint put on
+    # PATH, so a nested launch works. It runs on the ~/.pi this container
+    # already mounted, which the outer launch chose: a nested --pi-profile
+    # cannot mount a different config, it only names the template the
+    # bootstrap seeds absent files from.
     if [ "$PI_MODE" -eq 1 ]; then
         export MULTIPLAI_PI_PROFILE="$PI_PROFILE"
         exec "$SCRIPT_DIR/scripts/pi-bootstrap.sh" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
@@ -770,6 +795,8 @@ if ! command -v docker &>/dev/null; then
 fi
 
 # --- Container mode (default) ---
+
+check_pi_profile_name
 
 CONTAINER_ARGS=("claude" "--dangerously-skip-permissions" "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}")
 if [[ "$MODE" == "shell" ]]; then
@@ -979,25 +1006,36 @@ CLI_DIR="$HOME/.claude-container/cli"
 mkdir -p "$CLI_DIR"
 MOUNTS+=(-v "$CLI_DIR:/home/agent/.claude-cli")
 
-# Persistent pi state, mounted only in --pi mode.
+# Persistent pi and Codex state, mounted in EVERY container session — plain
+# claude, --shell, --pi and the hub driver — so `pi` and `codex` work as tools
+# from inside a Claude session, not only under ./pi.sh.
 #
-# Two separate dirs, because they have different lifetimes:
-#   ~/.pi-cli   the pi npm install — one copy shared by every profile
-#   ~/.pi       the profile's own config, credentials, packages and sessions
+# Three dirs, because they have different lifetimes:
+#   ~/.pi-cli   the pi install, owned by the container entrypoint, which runs
+#               pi's own installer into ~/.pi-cli/agent and `pi update`s it
+#               weekly. One copy shared by every profile.
+#   ~/.pi       one pi config: models.json, credentials (the ChatGPT login
+#               included), packages and sessions. `--pi-profile` picks it for
+#               --pi launches; otherwise MULTIPLAI_PI_PROFILE, else `default`.
+#   ~/.codex    the Codex home: its releases, its binary in bin/, and its login.
+#               The entrypoint installs and updates it the same way.
 #
-# The profile dir is what makes `--pi-profile` a profile rather than a flag:
-# pi resolves its config from homedir()/.pi/agent with no env-var override
-# (checked in 0.84.2), so switching profiles means mounting a different host
-# directory at the same container path. Profiles are therefore fully isolated —
-# separate models.json, separate auth, separate installed extensions, separate
-# session history. Nothing leaks between them.
-if [ "$PI_MODE" -eq 1 ]; then
-    PI_CLI_DIR="$HOME/.claude-container/pi-cli"
-    PI_STATE_DIR="$HOME/.claude-container/pi/$PI_PROFILE"
-    mkdir -p "$PI_CLI_DIR" "$PI_STATE_DIR"
-    MOUNTS+=(-v "$PI_CLI_DIR:/home/agent/.pi-cli")
-    MOUNTS+=(-v "$PI_STATE_DIR:/home/agent/.pi")
-fi
+# The pi config dir is what makes a profile a profile rather than a flag: pi
+# resolves its config from homedir()/.pi/agent, so switching profiles means
+# mounting a different host directory at the same container path. Profiles are
+# therefore fully isolated — separate models.json, separate auth, separate
+# installed extensions, separate session history. The `default` template puts
+# every provider in one config, so most users never need a second one.
+#
+# The dirs are created here because a bind mount of a missing host path makes
+# Docker create it root-owned, which the agent user cannot write to.
+PI_CLI_DIR="$HOME/.claude-container/pi-cli"
+PI_STATE_DIR="$HOME/.claude-container/pi/$PI_PROFILE"
+CODEX_DIR="$HOME/.claude-container/codex"
+mkdir -p "$PI_CLI_DIR" "$PI_STATE_DIR" "$CODEX_DIR"
+MOUNTS+=(-v "$PI_CLI_DIR:/home/agent/.pi-cli")
+MOUNTS+=(-v "$PI_STATE_DIR:/home/agent/.pi")
+MOUNTS+=(-v "$CODEX_DIR:/home/agent/.codex")
 
 CREDS_FILE="${CLAUDE_CREDENTIALS_FILE:-$HOME/.claude-container/credentials.json}"
 mkdir -p "$(dirname "$CREDS_FILE")"
@@ -1152,7 +1190,7 @@ _ENV_DENY="WORKSPACE SSH_BUILD_KEY GCP_KEY_FILE CLAUDE_CREDENTIALS_FILE
 GEMINI_CONFIG_DIR IDE_LOCK_DIR IMAGE_NAME CONTAINER_REPO CONTAINER_REF KIT_VENV_VOLUME
 MULTIPLAI_NET MULTIPLAI_MOUNT_GEMINI MULTIPLAI_HUB_URL
 MULTIPLAI_HUB_TOKEN MULTIPLAI_DRIVER_TOKEN HOST_HOME CLAUDE_CONFIG_DIR
-CLAUDE_MULTIPLAI_HOME DISABLE_AUTOUPDATER GOOGLE_APPLICATION_CREDENTIALS
+CLAUDE_MULTIPLAI_HOME DISABLE_AUTOUPDATER GOOGLE_APPLICATION_CREDENTIALS MULTIPLAI_PI_PROFILE
 CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
 SSH_AUTH_SOCK PATH HOME USER LOGNAME SHELL PWD OLDPWD HOSTNAME"
 
@@ -1207,10 +1245,10 @@ ENV_ARGS+=(
     -e DISABLE_AUTOUPDATER=1
 )
 
-# Which profile the in-container bootstrap should seed and launch.
-if [ "$PI_MODE" -eq 1 ]; then
-    ENV_ARGS+=(-e MULTIPLAI_PI_PROFILE="$PI_PROFILE")
-fi
+# Which pi profile is mounted at ~/.pi — the in-container bootstrap seeds and
+# launches it, and a nested `claude.sh --pi` resolves to it. Always the
+# computed value, which is why the name is on the denylist above.
+ENV_ARGS+=(-e MULTIPLAI_PI_PROFILE="$PI_PROFILE")
 
 # GCP credential env — the key is mounted at a fixed container path, so these
 # two point there, never at the host path in GCP_KEY_FILE.

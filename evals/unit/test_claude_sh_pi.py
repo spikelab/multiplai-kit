@@ -1,10 +1,13 @@
-"""Pins what `claude.sh --pi` launches, and what it refuses to launch.
+"""Pins what `claude.sh --pi` launches, what it refuses to launch, and the pi and
+Codex state every container session mounts.
 
-`--pi` replaces the container's command and adds two mounts. Both are easy to
-break silently: a command left as `claude` still starts a working session, and a
-missing `~/.pi` mount still starts a working *pi* session — one that quietly
-writes its credentials and installed packages into a `--rm` container and loses
-them on exit. Neither failure announces itself, so they get asserted here.
+`--pi` replaces the container's command. Every container session — `--pi` or
+not — mounts three host folders: the pi install (`~/.pi-cli`), one pi config
+(`~/.pi`) and the Codex home (`~/.codex`). Both are easy to break silently: a
+command left as `claude` still starts a working session, and a missing `~/.pi`
+mount still starts a working *pi* session — one that quietly writes its
+credentials and installed packages into a `--rm` container and loses them on
+exit. Neither failure announces itself, so they get asserted here.
 
 The refusals matter as much as the launch. pi ships no permission system, so the
 container is the only boundary there is; `--pi --local` or `--pi` with no Docker
@@ -19,6 +22,7 @@ import subprocess
 
 import pytest
 
+from test_claude_sh_crossplatform import _driver_launch
 from test_claude_sh_docker_state import _path_without_docker
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
@@ -26,6 +30,7 @@ from _kitpaths import KIT_ROOT
 
 PI_HOME = "/home/agent/.pi"
 PI_CLI = "/home/agent/.pi-cli"
+CODEX_HOME = "/home/agent/.codex"
 
 
 def _mounts(argv):
@@ -93,7 +98,7 @@ def test_profile_state_is_mounted_from_the_host(kit):
     """Without this mount, credentials and installed packages die with the container."""
     result = kit.launch("--pi")
     host = _mount_for(result.argv, PI_HOME)
-    assert host == str(kit.home / ".claude-container/pi/deepseek"), _mounts(result.argv)
+    assert host == str(kit.home / ".claude-container/pi/default"), _mounts(result.argv)
 
 
 def test_cli_dir_is_shared_across_profiles(kit):
@@ -114,7 +119,7 @@ def test_profiles_get_separate_state_dirs(kit):
     b = _mount_for(kit.launch("--pi-profile", "kimi").argv, PI_HOME)
     assert a is not None and b is not None
     assert a != b
-    assert a.endswith("/deepseek") and b.endswith("/kimi")
+    assert a.endswith("/default") and b.endswith("/kimi")
 
 
 def test_profile_name_reaches_the_bootstrap(kit):
@@ -122,11 +127,102 @@ def test_profile_name_reaches_the_bootstrap(kit):
     assert "MULTIPLAI_PI_PROFILE=kimi" in result.argv
 
 
-def test_pi_mounts_are_absent_without_the_flag(kit):
-    """A plain claude session must not carry pi's state into the container."""
+# --- every container session carries pi and Codex --------------------------
+#
+# `pi` and `codex` are tools a Claude session calls, not only things `--pi`
+# launches. Their installs and their logins must survive a `--rm` container in
+# every mode, or the weekly update and the ChatGPT login are redone every launch.
+
+
+def _assert_pi_and_codex_mounts(kit, argv, pi_profile="default"):
+    cc = kit.home / ".claude-container"
+    assert _mount_for(argv, PI_CLI) == str(cc / "pi-cli"), _mounts(argv)
+    assert _mount_for(argv, PI_HOME) == str(cc / "pi" / pi_profile), _mounts(argv)
+    assert _mount_for(argv, CODEX_HOME) == str(cc / "codex"), _mounts(argv)
+    # Created before the launch: a bind mount of a missing host path makes
+    # Docker create it root-owned, which the agent user cannot write to.
+    for d in ("pi-cli", f"pi/{pi_profile}", "codex"):
+        assert (cc / d).is_dir(), d
+
+
+def test_plain_launch_mounts_pi_and_codex_state(kit):
+    """(a) A plain claude launch mounts all three, with `pi/default` at `~/.pi`."""
+    result = kit.launch()
+    assert result.status == 0, result.output
+    assert "claude" in result.argv, "a plain launch must still run claude"
+    _assert_pi_and_codex_mounts(kit, result.argv)
+
+
+def test_shell_launch_mounts_pi_and_codex_state(kit):
     result = kit.launch("--shell", "-c", "true")
-    assert _mount_for(result.argv, PI_HOME) is None
-    assert _mount_for(result.argv, PI_CLI) is None
+    assert result.status == 0, result.output
+    _assert_pi_and_codex_mounts(kit, result.argv)
+
+
+def test_driver_launch_mounts_pi_and_codex_state(kit):
+    """The hub driver composes its own `docker run`; it must carry them too."""
+    result = _driver_launch(kit)
+    assert result.status == 0, result.output
+    assert "--name" in result.argv
+    assert result.argv[result.argv.index("--name") + 1].startswith("claude-drv-")
+    _assert_pi_and_codex_mounts(kit, result.argv)
+
+
+def test_env_pi_profile_selects_the_mounted_config(kit):
+    """(b) `MULTIPLAI_PI_PROFILE=x` mounts `pi/x` in a plain session."""
+    result = kit.launch(MULTIPLAI_PI_PROFILE="x")
+    assert result.status == 0, result.output
+    _assert_pi_and_codex_mounts(kit, result.argv, pi_profile="x")
+
+
+def test_env_pi_profile_from_the_env_file_selects_the_mounted_config(kit):
+    kit.append_env('MULTIPLAI_PI_PROFILE="x"\n')
+    result = kit.launch()
+    assert result.status == 0, result.output
+    _assert_pi_and_codex_mounts(kit, result.argv, pi_profile="x")
+
+
+def test_pi_profile_flag_overrides_the_env_profile(kit):
+    """(c) `--pi --pi-profile kimi` mounts `pi/kimi`, whatever the env names."""
+    result = kit.launch("--pi", "--pi-profile", "kimi", MULTIPLAI_PI_PROFILE="x")
+    assert result.status == 0, result.output
+    _assert_pi_and_codex_mounts(kit, result.argv, pi_profile="kimi")
+    # The computed value, never the env's, is what the container is told.
+    assert "MULTIPLAI_PI_PROFILE=kimi" in result.argv
+    assert "MULTIPLAI_PI_PROFILE" not in result.argv
+
+
+def test_pi_without_a_profile_flag_uses_the_env_profile(kit):
+    result = kit.launch("--pi", MULTIPLAI_PI_PROFILE="x")
+    assert result.status == 0, result.output
+    assert _mount_for(result.argv, PI_HOME) == str(kit.home / ".claude-container/pi/x")
+
+
+def test_git_profile_changes_no_pi_mount(kit):
+    """(d) `--profile work` changes no pi mount — not even when env.work names one.
+
+    pi is never tied to `--profile`: that flag picks a git identity and a GitHub
+    token. A pi profile named in env.work is ignored for the mount.
+    """
+    kit.write_profile(
+        "work", 'GIT_AUTHOR_NAME="Work Name"\nMULTIPLAI_PI_PROFILE="work"\n'
+    )
+    plain = kit.launch()
+    work = kit.launch("--profile", "work")
+    assert work.status == 0, work.output
+    assert work.resolved("GIT_AUTHOR_NAME") == "Work Name"
+    for path in (PI_CLI, PI_HOME, CODEX_HOME):
+        assert _mount_for(work.argv, path) == _mount_for(plain.argv, path), path
+    _assert_pi_and_codex_mounts(kit, work.argv)
+    assert "MULTIPLAI_PI_PROFILE=default" in work.argv
+
+
+@pytest.mark.parametrize("bad", ["../escape", "a/b", ".hidden", "with space", "_shared"])
+def test_env_pi_profile_name_is_validated(kit, bad):
+    """The env value becomes a host directory and a mount target, same as the flag."""
+    result = kit.launch(MULTIPLAI_PI_PROFILE=bad)
+    assert result.status != 0, f"accepted profile name {bad!r}"
+    assert result.argv == []
 
 
 # --- the git identity axis stays independent ---------------------------------
@@ -142,7 +238,7 @@ def test_pi_profile_and_git_profile_compose(kit):
     result = kit.launch("--profile", "work", "--pi")
     assert result.status == 0, result.output
     pi_home = _mount_for(result.argv, PI_HOME)
-    assert pi_home is not None and pi_home.endswith("/deepseek")
+    assert pi_home is not None and pi_home.endswith("/default")
     assert result.resolved("GIT_AUTHOR_NAME") == "Work Name"
 
 

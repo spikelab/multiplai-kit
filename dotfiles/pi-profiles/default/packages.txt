@@ -1,0 +1,10 @@
+# Packages installed into this profile on its first launch, after
+# _shared/packages.txt. One source per line, in `pi install` syntax. Blank lines
+# and # are ignored.
+#
+# Deliberately empty: the default profile installs exactly the shared list.
+# The deepseek and openrouter profiles add @rohaquinlop/pi-deepseek-cache on top;
+# add its line here to get it in this profile too.
+#
+# Delete ~/.claude-container/pi/default/agent/.multiplai-packages-installed
+# to make the next launch re-run the list.

@@ -1,0 +1,9 @@
+# Variables this profile's providers read. The launcher checks only that each
+# is non-empty and never prints a value. Blank lines and # ignored.
+#
+# This one config holds several providers, so a missing key is a warning, not
+# an error: it disables that provider and leaves the others working. pi's
+# built-in `openai` provider (Sign in with ChatGPT) needs no variable — log in
+# once with `/login openai`.
+DEEPSEEK_API_KEY
+OPENROUTER_API_KEY

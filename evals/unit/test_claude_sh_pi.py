@@ -112,9 +112,10 @@ def test_cli_dir_is_shared_across_profiles(kit):
 def test_profiles_get_separate_state_dirs(kit):
     """The isolation claim in docs/pi.md, asserted.
 
-    pi reads its config from `homedir()/.pi/agent` with no env-var override, so
-    two profiles sharing a host directory would share credentials, models and
-    session history — silently.
+    pi reads its config from `~/.pi/agent` unless `PI_CODING_AGENT_DIR` is set,
+    and the container does not set it for sessions, so the mount is what selects
+    a profile. Two profiles sharing a host directory would share credentials,
+    models and session history — silently.
     """
     a = _mount_for(kit.launch("--pi").argv, PI_HOME)
     b = _mount_for(kit.launch("--pi-profile", "kimi").argv, PI_HOME)
@@ -479,3 +480,126 @@ def test_profile_without_a_template_still_launches_unseeded(kit):
     assert result.status == 0, result.output
     assert (state / "kimi").is_dir()
     assert list((state / "kimi").iterdir()) == []
+
+
+# --- a nested --pi launch, from inside a container ---------------------------
+#
+# Inside a container `claude.sh --pi` cannot mount anything: it runs the
+# bootstrap on the ~/.pi the outer launch already mounted from the Mac, and the
+# outer launch names that profile in MULTIPLAI_PI_PROFILE. A nested
+# `--pi-profile` naming another profile would seed that profile's template files
+# and install its packages into the mounted one, which persists on the Mac, then
+# run pi on a config other than the one asked for. So it is refused.
+
+BOOTSTRAP_STUB = """\
+#!/bin/bash
+printf '%s\\n' "$MULTIPLAI_PI_PROFILE" "$@" > "$BOOTSTRAP_OUT"
+exit 0
+"""
+
+
+@pytest.fixture
+def nested(kit, tmp_path):
+    """The kit launcher as it behaves inside a container, with a stub bootstrap."""
+    marker = tmp_path / "dockerenv"
+    marker.write_text("")
+    launcher = kit.root / "claude.sh"
+    launcher.write_text(
+        launcher.read_text().replace("/nonexistent-dockerenv-marker", str(marker))
+    )
+    (kit.root / "scripts").mkdir()
+    stub = kit.root / "scripts" / "pi-bootstrap.sh"
+    stub.write_text(BOOTSTRAP_STUB)
+    stub.chmod(0o755)
+    kit.bootstrap_out = tmp_path / "bootstrap.txt"
+    return kit
+
+
+def _nested_launch(kit, *args, **env):
+    if kit.bootstrap_out.exists():
+        kit.bootstrap_out.unlink()
+    result = kit.launch(*args, BOOTSTRAP_OUT=str(kit.bootstrap_out), **env)
+    ran = kit.bootstrap_out.read_text().splitlines() if kit.bootstrap_out.exists() else None
+    return result, ran
+
+
+def test_nested_pi_runs_on_the_mounted_profile(nested):
+    result, ran = _nested_launch(nested, "--pi", "-p", "hi", MULTIPLAI_PI_PROFILE="openrouter")
+    assert result.status == 0, result.output
+    assert result.argv == [], "a nested launch must not start another container"
+    assert ran == ["openrouter", "-p", "hi"]
+
+
+def test_nested_pi_profile_naming_the_mounted_profile_runs(nested):
+    result, ran = _nested_launch(
+        nested, "--pi", "--pi-profile", "default", MULTIPLAI_PI_PROFILE="default"
+    )
+    assert result.status == 0, result.output
+    assert ran == ["default"]
+
+
+def test_nested_pi_profile_naming_another_profile_is_refused(nested):
+    """It would write openrouter's template and packages into the mounted default."""
+    result, ran = _nested_launch(
+        nested, "--pi", "--pi-profile", "openrouter", MULTIPLAI_PI_PROFILE="default"
+    )
+    assert result.status != 0
+    assert ran is None, "the bootstrap must not run against the wrong profile"
+    assert "openrouter" in result.output and "default" in result.output
+
+
+def test_nested_pi_profile_refusal_ignores_the_env_file(nested):
+    """The mounted profile is what the outer launch passed in, not what .env says."""
+    nested.append_env('MULTIPLAI_PI_PROFILE="openrouter"\n')
+    result, ran = _nested_launch(
+        nested, "--pi", "--pi-profile", "openrouter", MULTIPLAI_PI_PROFILE="default"
+    )
+    assert result.status != 0
+    assert ran is None
+
+
+# --- (e) through the launcher: a missing OPENROUTER_API_KEY -------------------
+#
+# The launcher has no key check of its own; the warning lives in the bootstrap,
+# which only runs inside the container. So the case runs both halves: the
+# stub-docker launch shows `--pi` still launches with the key unset, and the
+# bootstrap, handed exactly the environment that `docker run` would give the
+# container, warns about that key and execs pi.
+
+
+def _container_env(result):
+    """The environment real docker would give the container, from the recorded argv."""
+    env = {}
+    argv = result.argv
+    for i, a in enumerate(argv):
+        if a == "-e" and i + 1 < len(argv):
+            name, sep, value = argv[i + 1].partition("=")
+            if sep:
+                env[name] = value
+            elif result.resolved(name) is not None:
+                env[name] = result.resolved(name)
+    return env
+
+
+def test_launch_with_openrouter_key_unset_warns_and_still_launches(kit, tmp_path):
+    """(e) through the stub-docker launch, then the bootstrap on what it forwards."""
+    kit.append_env('DEEPSEEK_API_KEY="sk-deepseek-secret"\nOPENROUTER_API_KEY=""\n')
+    result = kit.launch("--pi", "-p", "hello")
+    assert result.status == 0, result.output
+    assert any(a.endswith("scripts/pi-bootstrap.sh") for a in result.argv), result.argv
+    forwarded = _container_env(result)
+    assert forwarded.get("DEEPSEEK_API_KEY") == "sk-deepseek-secret"
+    assert "OPENROUTER_API_KEY" not in forwarded, "an empty key is never forwarded"
+    assert forwarded.get("MULTIPLAI_PI_PROFILE") == "default"
+
+    boot = next(i for i, a in enumerate(result.argv) if a.endswith("scripts/pi-bootstrap.sh"))
+    passthrough = result.argv[boot + 1:]
+    proc, _, calls, _ = _bootstrap(
+        tmp_path, *passthrough,
+        **{k: v for k, v in forwarded.items() if k in ("DEEPSEEK_API_KEY", "MULTIPLAI_PI_PROFILE")},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "OPENROUTER_API_KEY" in proc.stderr
+    assert "DEEPSEEK_API_KEY" not in proc.stderr
+    assert "sk-deepseek-secret" not in proc.stdout + proc.stderr
+    assert calls and calls[-1] == "-p hello", calls

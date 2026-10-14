@@ -51,6 +51,12 @@ public repo has shipped without in-tree memory hooks from day one (see the
   and `MULTIPLAI_PI_PROFILE` is no longer forwarded from `.env` — the container
   gets the resolved name. To keep using the old profile, set
   `MULTIPLAI_PI_PROFILE=deepseek` in `.env`.
+- **Inside a session, `./pi.sh --pi-profile <name>` is refused unless `<name>`
+  is the profile already mounted at `~/.pi`.** A nested launch cannot mount
+  another profile, and now that every session mounts its pi config from the
+  Mac, running the bootstrap for another profile would copy that profile's
+  template files and install its packages into the mounted one for good. Run
+  `./pi.sh --pi-profile <name>` on the Mac instead.
 - **A missing provider key no longer reads as a broken profile.** The `--pi`
   warning now says the providers that read the unset key are off and the
   profile's other providers still work; the launch goes on as before.

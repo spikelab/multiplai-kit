@@ -87,6 +87,11 @@ otherwise `MULTIPLAI_PI_PROFILE` from the shell or `.env`; otherwise `default`.
 `MULTIPLAI_PI_PROFILE` in an `env.<name>` file is ignored, so `--profile` never
 picks a pi config.
 
+From inside a session, `./pi.sh` runs on the profile that session already has
+mounted at `~/.pi`; a nested launch cannot mount another one. So
+`./pi.sh --pi-profile <name>` inside a session is refused unless `<name>` is the
+mounted profile. Run it on the Mac to switch.
+
 ## What a pi profile is
 
 The whole `~/.pi` directory: `models.json`, credentials, installed packages,

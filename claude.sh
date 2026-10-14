@@ -104,6 +104,10 @@ MODE=""
 # this default. Resolved once .env is loaded.
 PI_PROFILE="default"
 PI_PROFILE_SET=0
+# Inside a container this is the profile the outer launch mounted at ~/.pi (it
+# passes -e MULTIPLAI_PI_PROFILE). Read before .env or env.<profile> is sourced,
+# so neither file can stand in for it. Only the nested --pi path reads it.
+PI_PROFILE_INHERITED="$(printenv MULTIPLAI_PI_PROFILE || true)"
 PI_MODE=0
 PASSTHROUGH_ARGS=()
 CLAUDE_ONLY_ARGS=()
@@ -752,10 +756,21 @@ fi
 if in_container; then
     # pi mode: the bootstrap seeds ~/.pi and execs the pi the entrypoint put on
     # PATH, so a nested launch works. It runs on the ~/.pi this container
-    # already mounted, which the outer launch chose: a nested --pi-profile
-    # cannot mount a different config, it only names the template the
-    # bootstrap seeds absent files from.
+    # already mounted, which the outer launch chose and named in
+    # MULTIPLAI_PI_PROFILE. A nested launch cannot mount a different config, so
+    # a --pi-profile naming another profile is refused: the bootstrap would seed
+    # that profile's template files and install its packages into the mounted
+    # one, which persists on the Mac, and pi would still run on the mounted
+    # config. A container from a launcher that set no MULTIPLAI_PI_PROFILE has
+    # no persistent ~/.pi, so there is nothing to protect and nothing to refuse.
     if [ "$PI_MODE" -eq 1 ]; then
+        if [ "$PI_PROFILE_SET" -eq 1 ] && [ -n "$PI_PROFILE_INHERITED" ] \
+            && [ "$PI_PROFILE" != "$PI_PROFILE_INHERITED" ]; then
+            echo "Error: this container has the pi profile '$PI_PROFILE_INHERITED' mounted at ~/.pi;" >&2
+            echo "       a nested launch cannot switch it to '$PI_PROFILE'. Run this on the host" >&2
+            echo "       instead: ./pi.sh --pi-profile $PI_PROFILE" >&2
+            exit 1
+        fi
         export MULTIPLAI_PI_PROFILE="$PI_PROFILE"
         exec "$SCRIPT_DIR/scripts/pi-bootstrap.sh" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
     fi

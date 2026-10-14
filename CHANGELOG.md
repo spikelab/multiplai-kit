@@ -36,10 +36,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
   for example `[buildme.review] MODEL=pi:<model>@openai` or
   `review_verifier_model=pi:deepseek-v4-pro@deepseek` in `multiplai.conf`. See
   `docs/pi.md`.
-- **The launcher seeds the pi config on the Mac before each launch**, from the
-  kit's template, copying only files that are absent — so `pi` works in a plain
-  Claude session without ever running `./pi.sh`, and a `settings.json` or
-  `auth.json` you or pi have changed is never overwritten.
+- **`pi` called from a plain Claude, `--shell` or driver session has the same
+  config and packages as `./pi.sh`**, without ever running it. The launcher
+  seeds the pi config on the Mac before each launch, from the kit's template,
+  copying only files that are absent, so a `settings.json` or `auth.json` you or
+  pi have changed is never overwritten. Each container session then installs
+  the `packages.txt` lists (web search and the DeepSeek cache fix) before its
+  command starts, when the list has changed since the last install; on other
+  launches it only reads a marker. A failed install prints one warning naming
+  the cause and the session starts anyway, with `pi install`'s output in
+  `~/.pi/agent/.multiplai-packages.log`.
 
 ### Changed
 

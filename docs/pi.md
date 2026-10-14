@@ -87,6 +87,16 @@ ready `~/.pi`; `scripts/pi-bootstrap.sh` does it again under `--pi`. Anything
 you or pi subsequently write — `/settings`, `pi install`, `/login` — wins over
 the template and survives the next launch.
 
+The packages in `packages.txt` cannot be copied: `pi install` has to run inside
+the container, where pi is. So every container session installs them, not only
+`--pi`. A plain claude, `--shell` or driver launch starts its command behind
+`scripts/pi-bootstrap.sh --packages-only --`, which installs the lists when they
+changed (see [Web search](#web-search)) and then runs claude, bash or the
+driver runner as before; `--pi` runs the whole bootstrap, packages included. So
+`pi` called as a tool from a Claude session (`pi:<model>@<provider>` in a
+buildme or `/multiplai-dev:review` step) has web search and the DeepSeek cache
+fix too.
+
 ## How pi and Codex get into the container
 
 The same way Claude Code does: a pinned copy baked into the image as the
@@ -159,7 +169,8 @@ on the same model traced the cost spread between harnesses to hit rate rather
 than token count.
 
 pi defeats its own cache in two places, and `@rohaquinlop/pi-deepseek-cache`
-(installed on first launch, see `default/packages.txt`) fixes both: it freezes
+(installed by the first container launch of any kind, see
+`default/packages.txt`) fixes both: it freezes
 the date and working directory that pi's system prompt embeds, and makes
 compaction deterministic so post-compaction turns still hit.
 `showCacheMissNotices` is on so a miss is visible rather than silent;
@@ -275,10 +286,21 @@ MCP endpoint — but note that queries then go to a third party under no account
 of yours, which is a reason to prefer your own key rather than a fallback.
 
 Adding a line to either `packages.txt` reaches a config that has **already**
-launched. The marker records a hash of the combined list rather than a bare
-"ran once" flag, so a changed list re-runs; `pi install` is idempotent. A
-package that fails to install leaves the marker unwritten, so a transient npm
-failure retries next launch instead of being silently marked done.
+launched. The marker, `~/.pi/agent/.multiplai-packages-installed`, records a
+hash of the combined list rather than a bare "ran once" flag, so a changed list
+re-runs on the next container launch of any kind; `pi install` is idempotent.
+While the hash matches, the launch only reads the marker. A package that fails
+to install leaves the marker unwritten, so a transient npm failure retries next
+launch instead of being silently marked done.
+
+Outside `--pi`, a failed install never stops the session. No network, no `pi`
+in the container yet, or an npm error prints one `[pi] Warning:` line naming
+the cause, and claude, bash or the driver runner starts anyway, with pi lacking
+those packages until a later launch installs them. `pi install`'s own output
+goes to `~/.pi/agent/.multiplai-packages.log`, since the terminal belongs to the
+session about to start. The session waits for the install while it runs, which
+happens only on a launch where the list changed. Under `--pi` the install
+prints each package and each failure in the terminal, as before.
 
 **Two cautions.** pi's own docs are blunt that packages run with full system
 access and extensions execute arbitrary code — the container is the only thing

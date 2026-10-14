@@ -151,16 +151,16 @@ if [ -n "$used" ] && [ "$used" != "null" ]; then
   ctx_info=" ${SEP} $(pct_color "$used")${used}%${RST}"
 fi
 
-# Session (5h) usage — e.g. "5h 70% ⟳1h36m". Relative, because what matters is
+# Session (5h) usage — e.g. "5h 70% 1h36m". Relative, because what matters is
 # how long until it clears.
 h5_info=""
 if [ -n "$h5_pct" ]; then
   h5_int=${h5_pct%.*}
   h5_info=" ${SEP} 5h $(pct_color "$h5_int")${h5_int}%${RST}"
-  [ -n "$h5_reset" ] && h5_info="${h5_info} ${DIM}⟳$(until_hm "$h5_reset")${RST}"
+  [ -n "$h5_reset" ] && h5_info="${h5_info} ${DIM}$(until_hm "$h5_reset")${RST}"
 fi
 
-# Weekly (7d, all models) usage — e.g. "7d 52% ⟳Mon 06:00". Absolute, because
+# Weekly (7d, all models) usage — e.g. "7d 52% Mon 06:00". Absolute, because
 # days-from-now is harder to act on than a weekday.
 d7_info=""
 if [ -n "$d7_pct" ]; then
@@ -168,7 +168,7 @@ if [ -n "$d7_pct" ]; then
   d7_info=" ${SEP} 7d $(pct_color "$d7_int")${d7_int}%${RST}"
   if [ -n "$d7_reset" ]; then
     d7_when=$(date -d "@$d7_reset" '+%a %H:%M' 2>/dev/null || date -r "$d7_reset" '+%a %H:%M' 2>/dev/null)
-    [ -n "$d7_when" ] && d7_info="${d7_info} ${DIM}⟳${d7_when}${RST}"
+    [ -n "$d7_when" ] && d7_info="${d7_info} ${DIM}${d7_when}${RST}"
   fi
 fi
 
@@ -184,7 +184,7 @@ case "$effort" in
   ?*)     effort_info=" ${CYAN}${effort}${RST}" ;;
 esac
 
-# Prompt cache — e.g. "cache 91% ⟳42m ✗2". The percentage is the session's
+# Prompt cache — e.g. "cache 91% 42m ✗2". The percentage is the session's
 # cache hit ratio, so unlike the other percentages a high one is good. The
 # countdown runs to when the cached prefix goes cold, and "cold" replaces it
 # once that has happened. "✗N" counts requests that re-processed content the
@@ -202,7 +202,7 @@ elif [ "$cache_seen" = "true" ]; then
     cache_info="${cache_info} ${hit_color}${cache_hit}%${RST}"
   fi
   if [ "$cache_warm" = "true" ] && [ -n "$cache_expires" ]; then
-    cache_info="${cache_info} ${DIM}⟳$(until_hm "$cache_expires")${RST}"
+    cache_info="${cache_info} ${DIM}$(until_hm "$cache_expires")${RST}"
   else
     cache_info="${cache_info} ${YELLOW}cold${RST}"
   fi

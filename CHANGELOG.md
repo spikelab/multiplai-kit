@@ -17,6 +17,9 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The status line no longer draws `⟳` before reset times.** Many terminal
+  fonts render it as an empty circle that overlaps the next character, so
+  `5h 3% ⟳4h9m` now reads `5h 3% 4h9m`; the 7d and cache segments drop it too.
 - **A new standing rule in `dotfiles/CLAUDE.md` limits edits to the lines a
   request needs.** Claude leaves code next to its change alone, mentions
   unrelated dead code instead of deleting it, and removes only what its own

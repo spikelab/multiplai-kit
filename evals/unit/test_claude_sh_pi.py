@@ -414,6 +414,30 @@ def test_seeding_never_overwrites_user_edits(kit):
     assert (agent / "auth.json").read_text() == auth
 
 
+def test_a_failed_seed_copy_warns_and_still_launches(kit):
+    """A copy that fails on the Mac costs only that file, never the session.
+
+    The launcher runs under `set -e`, so an unguarded `cp` that fails would end
+    the launch before `docker run`. A read-only `agent/` folder with
+    `models.json` absent makes the copy fail the way a permissions slip on the
+    Mac would.
+    """
+    state = _with_templates(kit)
+    agent = state / "default" / "agent"
+    agent.mkdir(parents=True)
+    agent.chmod(0o555)
+    try:
+        result = kit.launch()
+    finally:
+        agent.chmod(0o755)
+
+    assert result.status == 0, result.output
+    assert "could not seed" in result.output
+    assert str(agent / "models.json") in result.output
+    assert not (agent / "models.json").exists()
+    assert "claude" in result.argv, "docker run must still be reached"
+    _assert_pi_and_codex_mounts(kit, result.argv)
+
 
 # --- a nested --pi launch, from inside a container ---------------------------
 #

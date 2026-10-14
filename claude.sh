@@ -985,8 +985,8 @@ MOUNTS+=(-v "$PI_STATE_DIR:/home/agent/.pi")
 MOUNTS+=(-v "$CODEX_DIR:/home/agent/.codex")
 
 # Seed the pi config here, on the Mac, where the templates live: a plain Claude
-# session never runs scripts/pi-bootstrap.sh, and `pi` from inside it would
-# otherwise find an empty ~/.pi. The same copy as the bootstrap's — keep the two
+# session runs only the packages step of scripts/pi-bootstrap.sh, which does not
+# seed, and `pi` from inside it would otherwise find an empty ~/.pi. The same copy as the bootstrap's — keep the two
 # in step: copy-if-absent, never overwrite, so a settings.json pi has written
 # (its deviceId) or an auth.json holding a login always wins. The default
 # template first, then _shared, so it can override a shared default. A template

@@ -559,8 +559,8 @@ def test_packages_only_runs_the_entrypoints_hookspath_check_for_claude(tmp_path)
 
 # --- seeding on the Mac, before the container starts -------------------------
 #
-# A plain Claude session never runs the bootstrap, so `pi` from inside it would
-# find an empty ~/.pi. The launcher seeds the mounted pi config folder on the host
+# A plain Claude session runs only the bootstrap's packages step, which does not
+# seed, so `pi` from inside it would find an empty ~/.pi. The launcher seeds the mounted pi config folder on the host
 # with the same absent-files-only copy, from the kit's templates.
 
 

@@ -15,6 +15,20 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Removed
+
+- **`MULTIPLAI_PI_VERSION` is gone, and `--pi` no longer installs pi.** The
+  bootstrap used to `npm install` a pinned pi into `~/.pi-cli` on launch. The
+  container entrypoint now installs pi with pi's own installer into
+  `~/.pi-cli/agent` and runs `pi update` every `MULTIPLAI_CLI_UPDATE_DAYS`
+  (default 7), the same way it keeps Claude Code current, with a pinned copy
+  baked into the image as the fallback. A `MULTIPLAI_PI_VERSION` left in `.env`
+  now does nothing; delete it. The old npm install's `bin/` and `lib/` folders
+  under `~/.claude-container/pi-cli/` sit unused beside the new `agent/` folder
+  and can be deleted once the new install works. If `pi` is missing from the
+  container, `--pi` now stops with a message saying to update the kit and
+  container.
+
 ### Changed
 
 - **The status line no longer draws `⟳` before reset times.** Many terminal

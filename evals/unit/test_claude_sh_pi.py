@@ -17,6 +17,7 @@ Same harness as `test_claude_sh_env`: a stub `docker` first on `PATH` records th
 final `docker run` argv, so no daemon and no image are needed.
 """
 
+import json
 import shutil
 import subprocess
 
@@ -300,3 +301,107 @@ def test_pi_profile_name_is_validated(kit, bad):
 def test_pi_refuses_driver_mode(kit):
     result = kit.launch("driver", "--pi")
     assert result.status != 0
+
+
+# --- the in-container bootstrap ----------------------------------------------
+#
+# `scripts/pi-bootstrap.sh` runs inside the container as `--pi`'s command. The
+# container entrypoint now owns installing and updating pi, so the bootstrap
+# only seeds the profile, installs its packages and execs the `pi` on PATH. It
+# is run here directly, against the real templates, with a stub `pi` and a stub
+# `npm` that fails the test if anything still calls it.
+
+PI_STUB = """\
+#!/bin/bash
+printf '%s\\n' "$*" >> "$PI_CALLS"
+exit 0
+"""
+
+NPM_STUB = """\
+#!/bin/bash
+echo "npm $*" >> "$NPM_CALLS"
+exit 1
+"""
+
+
+def _bootstrap(tmp_path, *args, with_pi=True, **env_extra):
+    stubs = tmp_path / "bootstrap-bin"
+    stubs.mkdir(exist_ok=True)
+    if with_pi:
+        (stubs / "pi").write_text(PI_STUB)
+        (stubs / "pi").chmod(0o755)
+    (stubs / "npm").write_text(NPM_STUB)
+    (stubs / "npm").chmod(0o755)
+    home = tmp_path / "agent-home"
+    home.mkdir(exist_ok=True)
+    pi_calls = tmp_path / "pi-calls.txt"
+    npm_calls = tmp_path / "npm-calls.txt"
+    env = {
+        "PATH": f"{stubs}:/usr/bin:/bin",
+        "HOME": str(home),
+        "CLAUDE_MULTIPLAI_HOME": str(KIT_ROOT),
+        "PI_CALLS": str(pi_calls),
+        "NPM_CALLS": str(npm_calls),
+    }
+    env.update({k: v for k, v in env_extra.items() if v is not None})
+    proc = subprocess.run(
+        ["bash", str(KIT_ROOT / "scripts" / "pi-bootstrap.sh"), *args],
+        env=env, capture_output=True, text=True,
+    )
+    calls = pi_calls.read_text().splitlines() if pi_calls.exists() else []
+    npm = npm_calls.read_text().splitlines() if npm_calls.exists() else []
+    return proc, home, calls, npm
+
+
+def test_missing_openrouter_key_warns_and_still_launches(tmp_path):
+    """(e) One config holds several providers; a missing key disables only its own."""
+    proc, home, calls, npm = _bootstrap(
+        tmp_path, "-p", "hello",
+        MULTIPLAI_PI_PROFILE="default", DEEPSEEK_API_KEY="sk-deepseek-secret",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "OPENROUTER_API_KEY" in proc.stderr
+    assert "DEEPSEEK_API_KEY" not in proc.stderr
+    assert "sk-deepseek-secret" not in proc.stdout + proc.stderr
+    # The last pi call is the exec, with the passthrough args intact.
+    assert calls and calls[-1] == "-p hello", calls
+    assert (home / ".pi" / "agent" / "models.json").is_file()
+
+
+def test_bootstrap_defaults_to_the_default_profile(tmp_path):
+    proc, home, calls, _ = _bootstrap(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    seeded = json.loads((home / ".pi" / "agent" / "models.json").read_text())
+    assert sorted(seeded["providers"]) == ["deepseek", "openrouter"]
+
+
+def test_bootstrap_no_longer_installs_pi(tmp_path):
+    """The entrypoint installs and updates pi; MULTIPLAI_PI_VERSION is gone."""
+    proc, home, calls, npm = _bootstrap(tmp_path, MULTIPLAI_PI_VERSION="0.84.2")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert npm == []
+    assert not (home / ".pi-cli").exists()
+    assert "MULTIPLAI_PI_VERSION" not in (KIT_ROOT / "scripts" / "pi-bootstrap.sh").read_text()
+
+
+def test_bootstrap_without_pi_on_path_names_the_cause(tmp_path):
+    proc, _, _, npm = _bootstrap(tmp_path, with_pi=False)
+    assert proc.returncode != 0
+    assert "pi is not installed" in proc.stderr
+    assert npm == []
+
+
+def test_bootstrap_keeps_user_edits(tmp_path):
+    """S8 in the bootstrap: only absent files are copied."""
+    home = tmp_path / "agent-home"
+    agent = home / ".pi" / "agent"
+    agent.mkdir(parents=True)
+    (agent / "settings.json").write_text('{"deviceId": "user-device"}\n')
+    (agent / "auth.json").write_text('{"openai": {"type": "oauth"}}\n')
+
+    proc, _, _, _ = _bootstrap(tmp_path)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (agent / "settings.json").read_text() == '{"deviceId": "user-device"}\n'
+    assert (agent / "auth.json").read_text() == '{"openai": {"type": "oauth"}}\n'
+    assert (agent / "models.json").is_file()

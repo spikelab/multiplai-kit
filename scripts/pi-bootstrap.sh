@@ -3,28 +3,27 @@
 #
 # claude.sh --pi runs this instead of `claude`. It lives in the kit (which is
 # bind-mounted into the container at its own absolute path) rather than in the
-# image, so pi can be added, pinned and upgraded without cutting a container
-# release. The image already ships Node 22 and npm, which is all pi needs.
+# image, so profile handling can change without cutting a container release.
+#
+# It does not install pi. The container entrypoint does that, the same way it
+# keeps Claude Code current: pi's own installer into ~/.pi-cli/agent, a weekly
+# `pi update`, and ~/.pi-cli/agent/bin first on PATH — with a pinned copy baked
+# into the image as the fallback. This script runs whichever `pi` is on PATH.
 #
 # What it does, in order:
-#   1. installs or re-installs pi into ~/.pi-cli at the pinned version
-#   2. seeds ~/.pi from the profile template, then shared defaults, no overwrite
-#   3. installs the shared + profile package lists when the list changes
+#   1. seeds ~/.pi from the profile template, then shared defaults, no overwrite
+#   2. installs the shared + profile package lists when the list changes
+#   3. warns about any provider key the profile names that is unset
 #   4. execs pi
 #
-# Everything after step 1 is per-profile. ~/.pi is a different host directory
-# for every profile, so profiles never share credentials, models or sessions —
-# which is why a capability wanted everywhere goes in _shared/packages.txt
-# rather than being installed once and hoped to be visible.
+# All of it is per-profile. ~/.pi is a different host directory for every
+# profile, so profiles never share credentials, models or sessions — which is
+# why a capability wanted everywhere goes in _shared/packages.txt rather than
+# being installed once and hoped to be visible.
 
 set -euo pipefail
 
-PROFILE="${MULTIPLAI_PI_PROFILE:-deepseek}"
-
-# Pin both pi and the packages. A floating `@latest` would change the agent
-# under you between two launches of the same profile, and the whole point of a
-# profile is that it is reproducible. Bump these deliberately.
-PI_VERSION="${MULTIPLAI_PI_VERSION:-0.84.2}"
+PROFILE="${MULTIPLAI_PI_PROFILE:-default}"
 
 KIT_HOME="${CLAUDE_MULTIPLAI_HOME:-}"
 if [ -z "$KIT_HOME" ] || [ ! -d "$KIT_HOME" ]; then
@@ -43,60 +42,22 @@ if [ ! -d "$TEMPLATE_DIR" ]; then
     exit 1
 fi
 
-PI_CLI_DIR="$HOME/.pi-cli"
 PI_HOME="$HOME/.pi"
 PI_AGENT_DIR="$PI_HOME/agent"
-PI_BIN="$PI_CLI_DIR/bin/pi"
 
-mkdir -p "$PI_CLI_DIR" "$PI_AGENT_DIR"
-
-# --- 1. pi itself -----------------------------------------------------------
-#
-# The install goes to a user-owned npm prefix because the image's global prefix
-# is /usr and this process is not root. Version is compared rather than
-# timestamped: a pinned version either matches or it does not, so there is no
-# "is it stale yet" question to get wrong.
-#
-# The lock keeps two containers sharing this mount from running npm over each
-# other. A loser waits rather than racing, and gives up rather than hanging.
-installed_version() {
-    [ -x "$PI_BIN" ] || return 1
-    "$PI_BIN" --version 2>/dev/null | head -1 | tr -d '[:space:]'
-}
-
-if [ "$(installed_version || echo none)" != "$PI_VERSION" ]; then
-    LOCK="$PI_CLI_DIR/.install-lock"
-    waited=0
-    while ! mkdir "$LOCK" 2>/dev/null; do
-        if [ "$waited" -ge 120 ]; then
-            echo "[pi] Error: another container has held the pi install lock for 120s." >&2
-            echo "[pi]        If nothing else is starting, remove $LOCK and retry." >&2
-            exit 1
-        fi
-        [ "$waited" -eq 0 ] && echo "[pi] Waiting for another container to finish installing pi..."
-        sleep 2
-        waited=$((waited + 2))
-    done
-    trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
-
-    # Re-check under the lock: the container we waited for may have just done it.
-    if [ "$(installed_version || echo none)" != "$PI_VERSION" ]; then
-        echo "[pi] Installing pi $PI_VERSION (one-off; cached in ~/.pi-cli for later runs)..."
-        if ! npm install -g --prefix "$PI_CLI_DIR" \
-                "@earendil-works/pi-coding-agent@$PI_VERSION" >/tmp/pi-install.log 2>&1; then
-            echo "[pi] Error: npm install failed. Last 20 lines:" >&2
-            tail -20 /tmp/pi-install.log >&2
-            exit 1
-        fi
-    fi
-
-    rmdir "$LOCK" 2>/dev/null || true
-    trap - EXIT
+# An image from before pi was baked in, with no ~/.pi-cli install either, has
+# no pi at all. Say so here rather than leave it to `exec`'s "not found".
+if ! command -v pi >/dev/null 2>&1; then
+    echo "[pi] Error: pi is not installed in this container." >&2
+    echo "[pi]        The container entrypoint installs it into ~/.pi-cli, and newer" >&2
+    echo "[pi]        images bake a fallback copy. Update the kit and container:" >&2
+    echo "[pi]        git pull && ./setup.sh" >&2
+    exit 1
 fi
 
-export PATH="$PI_CLI_DIR/bin:$PATH"
+mkdir -p "$PI_AGENT_DIR"
 
-# --- 2. seed the profile ----------------------------------------------------
+# --- 1. seed the profile ----------------------------------------------------
 #
 # Copy-if-absent, never overwrite: the template is the starting point, and
 # anything the user or pi itself has since written wins. That is what makes it
@@ -112,6 +73,9 @@ export PATH="$PI_CLI_DIR/bin:$PATH"
 # Profile first, then _shared: copy-if-absent means whoever writes a path first
 # owns it, so this order lets a profile override a shared default rather than
 # the other way round.
+#
+# claude.sh runs the same copy on the Mac before every container launch, so a
+# plain Claude session gets a seeded ~/.pi too. Keep the two in step.
 seeded_any=0
 
 seed_from() {
@@ -145,7 +109,7 @@ seed_from() {
 seed_from "$TEMPLATE_DIR" "the $PROFILE profile template"
 seed_from "$KIT_HOME/dotfiles/pi-profiles/_shared" "the shared defaults"
 
-# --- 3. packages ------------------------------------------------------------
+# --- 2. packages ------------------------------------------------------------
 #
 # `pi install` writes the package list into settings.json itself, so the
 # template does not hand-write that key — it would be a guess at a schema pi
@@ -192,11 +156,13 @@ if [ -n "$WANTED" ]; then
     fi
 fi
 
-# --- 4. readiness -------------------------------------------------------------
+# --- 3. readiness -------------------------------------------------------------
 #
-# A missing key is the single most likely reason a first launch fails, and pi's
-# own error for it arrives several screens later. Name it here instead. Only
-# the variable's presence is tested; the value is never printed.
+# A missing key is the single most likely reason a provider fails, and pi's own
+# error for it arrives several screens later. Name it here instead. It warns and
+# continues: one config can hold several providers, and a missing key disables
+# only the provider that reads it. Only the variable's presence is tested; the
+# value is never printed.
 if [ -f "$TEMPLATE_DIR/required-env.txt" ]; then
     missing=()
     while IFS= read -r var; do
@@ -206,8 +172,9 @@ if [ -f "$TEMPLATE_DIR/required-env.txt" ]; then
         [ -n "$(printenv "$var" 2>/dev/null)" ] || missing+=("$var")
     done < "$TEMPLATE_DIR/required-env.txt"
     if [ ${#missing[@]} -gt 0 ]; then
-        echo "[pi] Warning: the $PROFILE profile expects these to be set: ${missing[*]}" >&2
-        echo "[pi]          Add them to the kit's .env (or env.<profile>) — claude.sh" >&2
+        echo "[pi] Warning: these are unset, so the providers that read them are off: ${missing[*]}" >&2
+        echo "[pi]          The $PROFILE profile's other providers still work. To turn them on," >&2
+        echo "[pi]          add the keys to the kit's .env (or env.<profile>) — claude.sh" >&2
         echo "[pi]          forwards every non-empty variable named there into the container." >&2
         echo "[pi]          You can also authenticate interactively with /login." >&2
     fi

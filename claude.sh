@@ -744,10 +744,18 @@ fi
 
 # --- Container mode (default) ---
 
-CONTAINER_ARGS=("claude" "--dangerously-skip-permissions" "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}")
+# Every container command except --pi's runs behind the pi bootstrap's
+# packages-only mode, which installs pi's package lists into the mounted ~/.pi
+# when they changed and then execs the real command. `pi` called as a tool from
+# a plain, --shell or driver session needs those packages as much as `./pi.sh`
+# does, and the seeding above copies only files. A failed install warns and the
+# command runs anyway; --pi runs the whole bootstrap, packages included.
+PI_PACKAGES_STEP=("$SCRIPT_DIR/scripts/pi-bootstrap.sh" --packages-only --)
+
+CONTAINER_ARGS=("${PI_PACKAGES_STEP[@]}" "claude" "--dangerously-skip-permissions" "${MCP_ISOLATION[@]}" "${CLAUDE_ONLY_ARGS[@]+"${CLAUDE_ONLY_ARGS[@]}"}")
 if [[ "$MODE" == "shell" ]]; then
     # bash doesn't understand --plugin-dir / --add-dir — drop CLAUDE_ONLY_ARGS.
-    CONTAINER_ARGS=("bash")
+    CONTAINER_ARGS=("${PI_PACKAGES_STEP[@]}" "bash")
 fi
 if [ "$PI_MODE" -eq 1 ]; then
     # The bootstrap lives in the kit, which is bind-mounted at its own absolute
@@ -1266,7 +1274,7 @@ case "$PWD/" in "$WORKSPACE/"*) WORKDIR_ARG="$PWD" ;; esac
 # elsewhere (e.g. ~/.multiplai-runtimes/<name>) — no websockets, no SDK.
 # venv-sync (the entrypoint) creates/updates this venv before CMD runs.
 if [ "$DRIVER_MODE" -eq 1 ]; then
-    RUNNER_CMD=("$SCRIPT_DIR/.venv/bin/python3" "$DRV_RUNNER"
+    RUNNER_CMD=("${PI_PACKAGES_STEP[@]}" "$SCRIPT_DIR/.venv/bin/python3" "$DRV_RUNNER"
         --port "$DRV_PORT"
         --project-dir "$DRV_PROJECT_DIR"
         --permission-mode "$DRV_PERMISSION_MODE")

@@ -268,12 +268,23 @@ exit 1
 """
 
 
-def _bootstrap(tmp_path, *args, with_pi=True, **env_extra):
+SESSION_STUB = """\
+#!/bin/bash
+printf '%s\\n' "$*" >> "$SESSION_CALLS"
+exit "${SESSION_EXIT:-0}"
+"""
+
+
+def _bootstrap(tmp_path, *args, with_pi=True, pi_stub=PI_STUB, script=None, **env_extra):
     stubs = tmp_path / "bootstrap-bin"
     stubs.mkdir(exist_ok=True)
     if with_pi:
-        (stubs / "pi").write_text(PI_STUB)
+        (stubs / "pi").write_text(pi_stub)
         (stubs / "pi").chmod(0o755)
+    # Stands in for the session's own command (claude, bash, the driver runner).
+    for name in ("session-cmd", "claude"):
+        (stubs / name).write_text(SESSION_STUB)
+        (stubs / name).chmod(0o755)
     (stubs / "npm").write_text(NPM_STUB)
     (stubs / "npm").chmod(0o755)
     home = tmp_path / "agent-home"
@@ -286,10 +297,11 @@ def _bootstrap(tmp_path, *args, with_pi=True, **env_extra):
         "CLAUDE_MULTIPLAI_HOME": str(KIT_ROOT),
         "PI_CALLS": str(pi_calls),
         "NPM_CALLS": str(npm_calls),
+        "SESSION_CALLS": str(tmp_path / "session-calls.txt"),
     }
     env.update({k: v for k, v in env_extra.items() if v is not None})
     proc = subprocess.run(
-        ["bash", str(KIT_ROOT / "scripts" / "pi-bootstrap.sh"), *args],
+        ["bash", str(script or KIT_ROOT / "scripts" / "pi-bootstrap.sh"), *args],
         env=env, capture_output=True, text=True,
     )
     calls = pi_calls.read_text().splitlines() if pi_calls.exists() else []
@@ -355,6 +367,194 @@ def test_bootstrap_keeps_user_edits(tmp_path):
     assert (agent / "settings.json").read_text() == '{"deviceId": "user-device"}\n'
     assert (agent / "auth.json").read_text() == '{"openai": {"type": "oauth"}}\n'
     assert (agent / "models.json").is_file()
+
+
+# --- pi's packages in every container session --------------------------------
+#
+# `pi` called as a tool from a plain, `--shell` or driver session needs the
+# packages `--pi` installs: web search, and the DeepSeek cache fix. Without them
+# it runs anyway, with neither, and nothing says so. So every launch other than
+# `--pi` puts the bootstrap's packages-only mode in front of its own command.
+# That mode installs the lists when the marker says they changed, then execs
+# the command it was handed. `--pi` runs the whole bootstrap, packages included.
+
+PACKAGES_ONLY = ["--packages-only", "--"]
+MARKER = ".pi/agent/.multiplai-packages-installed"
+
+
+def _wanted_packages():
+    """Both lists, in install order, read the way the bootstrap reads them."""
+    wanted = []
+    for rel in ("_shared/packages.txt", "default/packages.txt"):
+        text = (KIT_ROOT / "dotfiles" / "pi-profiles" / rel).read_text()
+        for line in text.splitlines():
+            line = line.split("#", 1)[0].strip()
+            if line:
+                wanted.append(line)
+    return wanted
+
+
+def _command_after_packages_step(argv):
+    """What the container runs after the packages step, or None without one."""
+    for i, a in enumerate(argv):
+        if a.endswith("scripts/pi-bootstrap.sh") and argv[i + 1:i + 3] == PACKAGES_ONLY:
+            return argv[i + 3:]
+    return None
+
+
+def _session_calls(tmp_path):
+    f = tmp_path / "session-calls.txt"
+    return f.read_text().splitlines() if f.exists() else []
+
+
+@pytest.mark.parametrize("mode", ["plain", "shell", "driver"])
+def test_every_launch_but_pi_installs_pi_packages_first(kit, mode):
+    if mode == "plain":
+        result = kit.launch("-p", "hi")
+    elif mode == "shell":
+        result = kit.launch("--shell", "-c", "true")
+    else:
+        result = _driver_launch(kit)
+    assert result.status == 0, result.output
+
+    command = _command_after_packages_step(result.argv)
+    assert command is not None, result.argv
+    if mode == "plain":
+        assert command[:2] == ["claude", "--dangerously-skip-permissions"], command
+        assert command[-2:] == ["-p", "hi"], command
+    elif mode == "shell":
+        assert command == ["bash", "-c", "true"], command
+    else:
+        assert command[0].endswith(".venv/bin/python3"), command
+    # The kit is mounted into every container at its own path, so this resolves.
+    boot = next(a for a in result.argv if a.endswith("scripts/pi-bootstrap.sh"))
+    assert boot == str(kit.root / "scripts" / "pi-bootstrap.sh")
+
+
+def test_pi_launch_has_no_separate_packages_step(kit):
+    """`--pi` keeps its command: the bootstrap, then pi's own arguments."""
+    result = kit.launch("--pi", "-p", "hi")
+    assert result.status == 0, result.output
+    boots = [i for i, a in enumerate(result.argv) if a.endswith("scripts/pi-bootstrap.sh")]
+    assert len(boots) == 1, result.argv
+    assert result.argv[boots[0] + 1:] == ["-p", "hi"]
+
+
+def test_packages_only_installs_both_lists_then_runs_the_command(tmp_path):
+    proc, home, calls, npm = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", "--flag", "x")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls == [f"install {p}" for p in _wanted_packages()], calls
+    assert _session_calls(tmp_path) == ["--flag x"]
+    assert (home / MARKER).is_file()
+    assert npm == []
+    # Only the packages: claude.sh seeded on the Mac already, and this is not a
+    # pi session, so there is no key check and pi itself never runs.
+    assert not (home / ".pi" / "agent" / "models.json").exists()
+    assert "OPENROUTER_API_KEY" not in proc.stderr
+    # The session's stdout stays the session's.
+    assert proc.stdout == ""
+
+
+def test_packages_only_hands_over_the_commands_exit_status(tmp_path):
+    """The command is exec'd, not run as a child: its status is the container's."""
+    proc, _, _, _ = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", SESSION_EXIT="7")
+    assert proc.returncode == 7, proc.stdout + proc.stderr
+
+
+def test_packages_only_does_nothing_when_the_list_is_unchanged(tmp_path):
+    _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", "first")
+    (tmp_path / "pi-calls.txt").unlink()
+
+    proc, _, calls, _ = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", "second")
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls == []
+    assert proc.stdout + proc.stderr == ""
+    assert _session_calls(tmp_path) == ["first", "second"]
+
+
+def test_packages_only_reinstalls_when_the_list_changes(tmp_path):
+    """A marker from an older list is what a line added to packages.txt looks like."""
+    marker = tmp_path / "agent-home" / MARKER
+    marker.parent.mkdir(parents=True)
+    marker.write_text("hash-of-an-older-list")
+
+    proc, _, calls, _ = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd")
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert calls == [f"install {p}" for p in _wanted_packages()], calls
+    assert marker.read_text() != "hash-of-an-older-list"
+
+
+PI_INSTALL_FAILS_STUB = """\
+#!/bin/bash
+printf '%s\\n' "$*" >> "$PI_CALLS"
+if [ "$1" = install ]; then
+    echo "npm ERR! network request failed" >&2
+    exit 1
+fi
+exit 0
+"""
+
+
+@pytest.mark.parametrize("failure", ["npm error", "no pi yet", "no kit", "read-only config"])
+def test_packages_only_failure_warns_once_and_still_runs_the_command(tmp_path, failure):
+    kwargs = {}
+    if failure == "npm error":
+        kwargs["pi_stub"] = PI_INSTALL_FAILS_STUB
+    elif failure == "no pi yet":
+        kwargs["with_pi"] = False
+    elif failure == "no kit":
+        kwargs["CLAUDE_MULTIPLAI_HOME"] = ""
+    agent = tmp_path / "agent-home" / ".pi" / "agent"
+    if failure == "read-only config":
+        agent.mkdir(parents=True)
+        agent.chmod(0o555)
+    try:
+        proc, _, _, _ = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", "go", **kwargs)
+    finally:
+        if agent.exists():
+            agent.chmod(0o755)
+
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert _session_calls(tmp_path) == ["go"], output
+    warnings = [line for line in output.splitlines() if "Warning" in line]
+    assert len(warnings) == 1, output
+    assert "npm ERR!" not in output, "pi install's own output goes to the log"
+    # Nothing is marked done, so the next launch tries again.
+    assert not (tmp_path / "agent-home" / MARKER).exists()
+
+
+CHECK_STUB = """\
+#!/bin/bash
+printf '%s\\n' "$*" >> "$CHECK_CALLS"
+"""
+
+
+def test_packages_only_runs_the_entrypoints_hookspath_check_for_claude(tmp_path):
+    """The container entrypoint runs its git-hooks drift check only when its own
+    command is `claude`. With the packages step in front, that command is the
+    bootstrap, so the bootstrap runs the check before it execs claude.
+    """
+    check = tmp_path / "check-hookspath"
+    check.write_text(CHECK_STUB)
+    check.chmod(0o755)
+    real = "/usr/local/share/git-hooks/check-hookspath"
+    source = (KIT_ROOT / "scripts" / "pi-bootstrap.sh").read_text()
+    assert real in source
+    script = tmp_path / "pi-bootstrap.sh"
+    script.write_text(source.replace(real, str(check)))
+    check_calls = tmp_path / "check-calls.txt"
+
+    _bootstrap(tmp_path, *PACKAGES_ONLY, "claude", "--x", script=script,
+               CHECK_CALLS=str(check_calls), WORKSPACE="/ws")
+    assert check_calls.read_text().splitlines() == ["/ws"]
+    assert _session_calls(tmp_path) == ["--x"]
+
+    _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", script=script,
+               CHECK_CALLS=str(check_calls), WORKSPACE="/ws")
+    assert check_calls.read_text().splitlines() == ["/ws"], "only in front of claude"
 
 
 # --- seeding on the Mac, before the container starts -------------------------

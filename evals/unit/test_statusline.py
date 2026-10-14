@@ -102,14 +102,14 @@ def test_shows_both_usage_windows():
 
 def test_five_hour_reset_is_relative_and_seven_day_is_a_weekday():
     out = run(payload())
-    assert "⟳1h30m" in out
-    assert re.search(r"⟳(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d\d:\d\d", out)
+    assert "1h30m" in out
+    assert re.search(r"(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d\d:\d\d", out)
 
 
 def test_expired_reset_does_not_render_a_negative_countdown():
     data = payload()
     data["rate_limits"]["five_hour"]["resets_at"] = int(time.time()) - 60
-    assert "⟳0m" in run(data)
+    assert "0m" in run(data)
 
 
 def test_fits_in_eighty_columns():
@@ -129,7 +129,7 @@ def test_path_and_branch_go_on_the_second_line(tmp_path):
     out = run(payload(workspace={"current_dir": str(repo)}, cwd=str(repo)))
     assert out.count("\n") == 1
     assert top(out).startswith("Opus 5 1M med | 8% | 5h 72%")
-    assert top(out).endswith("cache 91% ⟳42m")
+    assert top(out).endswith("cache 91% 42m")
     assert bottom(out) == (
         ".../a-fairly-long-project-name/with-a-long-subdirectory"
         " | feat/some-long-branch-name"
@@ -265,7 +265,7 @@ def test_output_style_is_not_shown():
 
 def test_warm_cache_shows_hit_ratio_and_time_until_cold():
     out = run(payload())
-    assert top(out).endswith("cache 91% ⟳42m")
+    assert top(out).endswith("cache 91% 42m")
 
 
 def test_cold_cache_says_cold_instead_of_a_countdown():
@@ -273,20 +273,20 @@ def test_cold_cache_says_cold_instead_of_a_countdown():
     data["prompt_cache"].update(warm=False, expires_at=None)
     out = run(data)
     assert "cache 91% cold" in out
-    assert "⟳42m" not in out
+    assert "42m" not in out
 
 
 def test_cache_misses_show_only_when_there_are_some():
     assert "✗" not in run(payload())
     data = payload()
     data["prompt_cache"]["misses"] = 2
-    assert top(run(data)).endswith("⟳42m ✗2")
+    assert top(run(data)).endswith("42m ✗2")
 
 
 def test_null_hit_ratio_drops_only_the_percentage():
     data = payload()
     data["prompt_cache"]["hit_ratio"] = None
-    assert top(run(data)).endswith("cache ⟳42m")
+    assert top(run(data)).endswith("cache 42m")
 
 
 def test_caching_not_observed_says_off():

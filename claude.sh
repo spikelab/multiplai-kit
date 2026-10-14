@@ -1037,6 +1037,54 @@ MOUNTS+=(-v "$PI_CLI_DIR:/home/agent/.pi-cli")
 MOUNTS+=(-v "$PI_STATE_DIR:/home/agent/.pi")
 MOUNTS+=(-v "$CODEX_DIR:/home/agent/.codex")
 
+# Seed the pi config here, on the Mac, where the templates live: a plain Claude
+# session never runs scripts/pi-bootstrap.sh, and `pi` from inside it would
+# otherwise find an empty ~/.pi. The same copy as the bootstrap's — keep the two
+# in step: copy-if-absent, never overwrite, so a settings.json pi has written
+# (its deviceId) or an auth.json holding a login always wins. Profile template
+# first, then _shared, so a profile can override a shared default. A template
+# folder mirrors ~/.pi; its control files and docs are not pi config. A profile
+# with no template is mounted as it is. A failed copy warns and never costs the
+# session.
+_pi_seeded=0
+seed_pi_from() {
+    local root="$1" src base dest f d
+    [ -d "$root" ] || return 0
+    for src in "$root"/*; do
+        [ -e "$src" ] || continue
+        base="$(basename "$src")"
+        case "$base" in packages.txt | required-env.txt | README.md) continue ;; esac
+        dest="$PI_STATE_DIR/$base"
+        if [ -d "$src" ]; then
+            mkdir -p "$dest" || continue
+            for f in "$src"/*; do
+                [ -e "$f" ] || continue
+                d="$dest/$(basename "$f")"
+                [ -e "$d" ] && continue
+                if cp -R "$f" "$d"; then
+                    _pi_seeded=1
+                else
+                    echo "Warning: could not seed $d from the pi template." >&2
+                fi
+            done
+        else
+            [ -e "$dest" ] && continue
+            if cp -R "$src" "$dest"; then
+                _pi_seeded=1
+            else
+                echo "Warning: could not seed $dest from the pi template." >&2
+            fi
+        fi
+    done
+}
+if [ -d "$DOTFILES_DIR/pi-profiles/$PI_PROFILE" ]; then
+    seed_pi_from "$DOTFILES_DIR/pi-profiles/$PI_PROFILE"
+    seed_pi_from "$DOTFILES_DIR/pi-profiles/_shared"
+fi
+if [ "$_pi_seeded" -eq 1 ]; then
+    echo "[claude] Seeded pi profile '$PI_PROFILE' at $PI_STATE_DIR from the kit template."
+fi
+
 CREDS_FILE="${CLAUDE_CREDENTIALS_FILE:-$HOME/.claude-container/credentials.json}"
 mkdir -p "$(dirname "$CREDS_FILE")"
 touch "$CREDS_FILE"

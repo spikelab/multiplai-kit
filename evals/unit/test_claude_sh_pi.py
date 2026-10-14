@@ -405,3 +405,77 @@ def test_bootstrap_keeps_user_edits(tmp_path):
     assert (agent / "settings.json").read_text() == '{"deviceId": "user-device"}\n'
     assert (agent / "auth.json").read_text() == '{"openai": {"type": "oauth"}}\n'
     assert (agent / "models.json").is_file()
+
+
+# --- seeding on the Mac, before the container starts -------------------------
+#
+# A plain Claude session never runs the bootstrap, so `pi` from inside it would
+# find an empty ~/.pi. The launcher seeds the mounted profile folder on the host
+# with the same absent-files-only copy, from the kit's templates.
+
+
+def _with_templates(kit):
+    shutil.copytree(
+        KIT_ROOT / "dotfiles" / "pi-profiles", kit.root / "dotfiles" / "pi-profiles"
+    )
+    return kit.home / ".claude-container" / "pi"
+
+
+def test_plain_launch_seeds_the_default_profile(kit):
+    state = _with_templates(kit)
+    result = kit.launch()
+    assert result.status == 0, result.output
+
+    template = kit.root / "dotfiles" / "pi-profiles"
+    seeded = state / "default"
+    for rel in ("agent/models.json", "agent/settings.json"):
+        assert (seeded / rel).read_text() == (template / "default" / rel).read_text(), rel
+    # _shared lands at the ~/.pi root, mirroring the template tree.
+    assert (seeded / "web-search.json").read_text() == (
+        template / "_shared" / "web-search.json"
+    ).read_text()
+    # Control files and docs are read by the bootstrap, never copied.
+    for name in ("packages.txt", "required-env.txt", "README.md"):
+        assert not (seeded / name).exists(), name
+
+
+def test_seeding_never_overwrites_user_edits(kit):
+    """S8: settings.json (with pi's deviceId) and auth.json edited since the last launch."""
+    state = _with_templates(kit)
+    agent = state / "default" / "agent"
+    agent.mkdir(parents=True)
+    settings = '{"deviceId": "user-device", "defaultProvider": "openai"}\n'
+    auth = '{"openai": {"type": "oauth", "refresh": "kept"}}\n'
+    (agent / "settings.json").write_text(settings)
+    (agent / "auth.json").write_text(auth)
+
+    first = kit.launch()
+    assert first.status == 0, first.output
+    assert (agent / "settings.json").read_text() == settings
+    assert (agent / "auth.json").read_text() == auth
+    assert (agent / "models.json").is_file(), "an absent file is still seeded"
+
+    # A later edit to a seeded file survives the next launch too.
+    (agent / "models.json").write_text('{"providers": {}}\n')
+    second = kit.launch()
+    assert second.status == 0, second.output
+    assert (agent / "models.json").read_text() == '{"providers": {}}\n'
+    assert (agent / "settings.json").read_text() == settings
+    assert (agent / "auth.json").read_text() == auth
+
+
+def test_seeding_follows_the_selected_profile(kit):
+    state = _with_templates(kit)
+    result = kit.launch("--pi-profile", "openrouter")
+    assert result.status == 0, result.output
+    seeded = json.loads((state / "openrouter" / "agent" / "models.json").read_text())
+    assert sorted(seeded["providers"]) == ["openrouter"]
+    assert not (state / "default").exists()
+
+
+def test_profile_without_a_template_still_launches_unseeded(kit):
+    state = _with_templates(kit)
+    result = kit.launch(MULTIPLAI_PI_PROFILE="kimi")
+    assert result.status == 0, result.output
+    assert (state / "kimi").is_dir()
+    assert list((state / "kimi").iterdir()) == []

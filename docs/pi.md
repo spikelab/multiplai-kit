@@ -90,9 +90,10 @@ picks a pi config.
 ## What a pi profile is
 
 The whole `~/.pi` directory: `models.json`, credentials, installed packages,
-and session history. pi resolves its config from `homedir()/.pi/agent` with no
-environment-variable override (checked in 0.84.2), so a profile is implemented
-by mounting a *different host directory* at that one container path.
+and session history. pi reads its config from `~/.pi/agent` unless
+`PI_CODING_AGENT_DIR` is set (pi 1.2.0 `docs/environment-variables.md`), and the
+container does not set it for sessions, so a profile is implemented by mounting
+a *different host directory* at that one container path.
 
 The consequence is worth stating plainly: **profiles are fully isolated.**
 Different models, different API keys, different extensions, different session

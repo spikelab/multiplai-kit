@@ -1,10 +1,21 @@
-# Packages installed into this profile on its first launch, after
+# Packages installed into this config on its first launch, after
 # _shared/packages.txt. One source per line, in `pi install` syntax. Blank lines
 # and # are ignored.
 #
-# Deliberately empty: the default profile installs exactly the shared list.
-# The deepseek and openrouter profiles add @rohaquinlop/pi-deepseek-cache on top;
-# add its line here to get it in this profile too.
+# Pinned deliberately: an unpinned package changes the agent between two
+# launches.
 #
 # Delete ~/.claude-container/pi/default/agent/.multiplai-packages-installed
 # to make the next launch re-run the list.
+
+# Keeps DeepSeek's prefix cache intact across a session. pi's own system prompt
+# embeds the current date and working directory, which change between sessions
+# and invalidate the whole prefix; compaction rewrites history and invalidates
+# it again. This freezes the first and makes the second deterministic, and adds
+# /cache-stats, /cache-graph and /cache-reset. Passes through unchanged on
+# non-deepseek-* models.
+#
+# UNVERIFIED: it activates on `deepseek-*` model ids. Whether the OpenRouter
+# slugs (`deepseek/deepseek-v4-pro`) match has not been checked; if /cache-stats
+# reports nothing after a few turns there, it is not seeing that model.
+npm:@rohaquinlop/pi-deepseek-cache@0.5.1

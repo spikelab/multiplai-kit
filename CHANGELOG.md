@@ -15,6 +15,46 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **`pi` and `codex` in every container session, not only `./pi.sh`.** Every
+  container launch — plain claude, `--shell`, `--pi` and the hub driver — now
+  creates and mounts three folders from the Mac: `~/.claude-container/pi-cli`
+  at `~/.pi-cli` (the pi install), `~/.claude-container/pi/<profile>` at
+  `~/.pi` (one pi config) and `~/.claude-container/codex` at `~/.codex` (Codex
+  releases and login). The container entrypoint installs pi and Codex there and
+  updates them every `MULTIPLAI_CLI_UPDATE_DAYS` (default 7), so Claude can call
+  them as tools and a new release arrives without an image rebuild. This needs
+  the matching container release; on an older image `pi` and `codex` are
+  missing.
+- **A `default` pi profile with every provider in one config.**
+  `dotfiles/pi-profiles/default/` holds the `deepseek` and `openrouter`
+  provider entries from the existing templates, unchanged, plus `z-ai/glm-5.3`
+  on OpenRouter; pi's built-in `openai` provider (Sign in with ChatGPT) needs
+  only a one-time `/login openai`. A `pi:<model>@<provider>` spec picks the
+  provider per step — for example `[buildme.review] MODEL=pi:<model>@openai` or
+  `review_verifier_model=pi:deepseek-v4-pro@deepseek` in `multiplai.conf`. See
+  `docs/pi.md`. The `deepseek/` and `openrouter/` templates still work with
+  `--pi-profile`.
+- **The launcher seeds the pi config on the Mac before each launch**, from the
+  kit's template, copying only files that are absent — so `pi` works in a plain
+  Claude session without ever running `./pi.sh`, and a `settings.json` or
+  `auth.json` you or pi have changed is never overwritten.
+
+### Changed
+
+- **The default pi profile is `default`, not `deepseek`.** Which profile a
+  session mounts: `--pi-profile` for a `--pi` launch, otherwise
+  `MULTIPLAI_PI_PROFILE` from your shell or `.env`, otherwise `default`. A
+  `MULTIPLAI_PI_PROFILE` in an `env.<profile>` file is ignored, so `--profile`
+  never picks a pi config. The name is now checked for every container launch,
+  and `MULTIPLAI_PI_PROFILE` is no longer forwarded from `.env` — the container
+  gets the resolved name. To keep using the old profile, set
+  `MULTIPLAI_PI_PROFILE=deepseek` in `.env`.
+- **A missing provider key no longer reads as a broken profile.** The `--pi`
+  warning now says the providers that read the unset key are off and the
+  profile's other providers still work; the launch goes on as before.
+
 ### Removed
 
 - **`MULTIPLAI_PI_VERSION` is gone, and `--pi` no longer installs pi.** The

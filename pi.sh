@@ -8,9 +8,9 @@
 # watching them drift.
 #
 # Usage:
-#   ./pi.sh                          # pi on the default (deepseek) profile
+#   ./pi.sh                          # pi on the default profile
 #   ./pi.sh --pi-profile kimi        # a different model profile
-#   ./pi.sh --profile work           # work git identity, deepseek profile
+#   ./pi.sh --profile work           # work git identity, default pi profile
 #   ./pi.sh -p "summarise this repo" # pi flags pass straight through
 #
 # A pi profile is a whole ~/.pi directory: models.json, credentials, installed

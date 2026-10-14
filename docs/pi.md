@@ -1,16 +1,77 @@
 # Running pi in the multiplai container
 
-`./pi.sh` launches the [pi coding agent](https://pi.dev) inside the same
+`pi` and `codex` are on `PATH` in every container session, so a Claude session
+can call them as tools. `./pi.sh` also launches the
+[pi coding agent](https://pi.dev) as the session itself, inside the same
 container `./claude.sh` uses, with the same workspace mounts, git identity, GH
 token, env forwarding and SSH host bridge. It is a wrapper around
 `claude.sh --pi`, not a second launcher.
 
 ```bash
-./pi.sh                          # pi on the deepseek profile
+./pi.sh                          # pi on the default profile
 ./pi.sh --pi-profile kimi        # a different model profile
-./pi.sh --profile work           # work git identity, deepseek profile
+./pi.sh --profile work           # work git identity, default pi profile
 ./pi.sh -p "summarise this repo" # pi's own flags pass straight through
 ```
+
+## One config, every provider
+
+The `default` profile (`dotfiles/pi-profiles/default/`) holds every provider in
+one `~/.pi`, and it is what every session mounts unless you pick another. The
+model spec chooses the provider at run time, the way Claude Code chooses Opus or
+Sonnet — there is no per-call profile.
+
+| Provider | Models | Needs |
+|---|---|---|
+| `openai` (pi's built-in Sign in with ChatGPT) | your ChatGPT plan's models | a one-time `/login openai` |
+| `deepseek` | `deepseek-v4-flash`, `deepseek-v4-pro` | `DEEPSEEK_API_KEY` in `.env` |
+| `openrouter` | `deepseek/deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `z-ai/glm-5.3` | `OPENROUTER_API_KEY` in `.env` |
+
+```bash
+pi --provider openai --model <model> -p "…"
+pi --provider deepseek --model deepseek-v4-pro -p "…"
+pi --provider openrouter --model z-ai/glm-5.3 -p "…"
+```
+
+`pi --list-models` prints the exact model IDs each provider offers, including
+the ones your ChatGPT plan unlocks.
+
+The `deepseek` and `openrouter` provider entries are copied unchanged from the
+`deepseek/` and `openrouter/` templates. `z-ai/glm-5.3` is copied from the
+built-in OpenRouter catalog in `@earendil-works/pi-ai` 1.2.0, the version pi
+1.2.0 depends on. The default provider and model are DeepSeek V4 Flash.
+
+A missing key is a warning, not an error: it turns off the provider that reads
+it and leaves the others working.
+
+### Logging in to ChatGPT
+
+Once, from any session: run `! pi`, then `/login openai`, and choose Sign in
+with ChatGPT. The login is stored in the profile's `agent/auth.json`, which is
+`~/.claude-container/pi/default/agent/auth.json` on the Mac, so every later
+session has it. pi also writes a `deviceId` into `settings.json`; seeding never
+overwrites either file.
+
+### Picking a model per step
+
+buildme and `/multiplai-dev:review` take a `pi:<model>@<provider>` spec
+anywhere they take a model, from `multiplai.conf`:
+
+```ini
+# buildme: one section per step
+[buildme.review]
+MODEL=pi:<model>@openai
+
+[buildme.spec]
+MODEL=pi:z-ai/glm-5.3@openrouter
+
+# /multiplai-dev:review: top-level keys
+review_finder_model=pi:deepseek-v4-flash@deepseek
+review_verifier_model=pi:deepseek-v4-pro@deepseek
+```
+
+buildme reads `[buildme.spec]`, `[buildme.agent]`, `[buildme.plan_review]` and
+`[buildme.review]`. Replace `<model>` with an ID from `pi --list-models`.
 
 ## Two things are called "profile"
 
@@ -20,6 +81,11 @@ They are different axes and they compose.
 |---|---|---|
 | `--profile <name>` | git identity + GH token | `env.<name>` |
 | `--pi-profile <name>` | pi model configuration | `dotfiles/pi-profiles/<name>/` (template), `~/.claude-container/pi/<name>/` (live) |
+
+Which pi profile a session mounts: `--pi-profile` for a `--pi` launch;
+otherwise `MULTIPLAI_PI_PROFILE` from the shell or `.env`; otherwise `default`.
+`MULTIPLAI_PI_PROFILE` in an `env.<name>` file is ignored, so `--profile` never
+picks a pi config.
 
 ## What a pi profile is
 
@@ -33,23 +99,54 @@ Different models, different API keys, different extensions, different session
 history. Nothing leaks between them, and you cannot half-switch.
 
 The template under `dotfiles/pi-profiles/<name>/` is in git and is only ever
-copied into the live directory when a file is *absent*. Anything you or pi
-subsequently write — `/settings`, `pi install`, `pi auth` — wins over the
-template and survives the next launch.
+copied into the live directory when a file is *absent*. `claude.sh` does that
+copy on the Mac before every container launch, so a plain Claude session gets a
+ready `~/.pi`; `scripts/pi-bootstrap.sh` does it again under `--pi`. Anything
+you or pi subsequently write — `/settings`, `pi install`, `/login` — wins over
+the template and survives the next launch.
 
-## How pi gets into the container
+## How pi and Codex get into the container
 
-It is not in the image. The image already ships Node 22 and npm, which is all
-pi needs, so `scripts/pi-bootstrap.sh` installs it into a user-owned npm prefix
-at `~/.pi-cli` on first launch and caches it there across containers. That
-keeps pi upgradable without cutting a container release.
+The same way Claude Code does: a pinned copy baked into the image as the
+fallback, and a copy in a folder mounted from the Mac that the container
+entrypoint keeps current.
 
-The version is pinned in the bootstrap (`MULTIPLAI_PI_VERSION`, currently
-0.84.2) and compared on every launch, so a bump reinstalls and a match costs
-nothing. Two containers starting at once contend on a lock rather than running
-npm over each other.
+| | pi | Codex |
+|---|---|---|
+| Mac folder | `~/.claude-container/pi-cli` | `~/.claude-container/codex` |
+| Container path | `~/.pi-cli` | `~/.codex` (releases and login) |
+| Binary, first on `PATH` when present | `~/.pi-cli/agent/bin/pi` | `~/.codex/bin/codex` |
+| Installed by | `https://pi.dev/install.sh` | `https://chatgpt.com/codex/install.sh` |
+| Weekly update | `pi update` | the installer again |
+
+The entrypoint updates each one every `MULTIPLAI_CLI_UPDATE_DAYS` (default 7),
+the interval it already uses for Claude Code, so a new release reaches every
+session within a week with no image rebuild. If an install or update fails, the
+session starts anyway on the copy it already has, or on the baked one.
+`claude.sh` mounts all three folders (`pi-cli`, `pi/<profile>`, `codex`) in
+every container session: plain claude, `--shell`, `--pi` and the hub driver.
+
+The bootstrap no longer installs pi, and `MULTIPLAI_PI_VERSION` is gone.
+
+## Codex
+
+Codex is for ad hoc reviews through OpenAI's Claude Code plugin. Once, from any
+session:
+
+1. Run `codex login`. If the browser callback cannot reach the container, use
+   Codex's device-code login instead.
+2. In Claude Code, run `/plugin marketplace add openai/codex-plugin-cc`, then
+   `/plugin install codex@openai-codex`.
+
+The login lives in `~/.claude-container/codex` on the Mac, so later sessions
+keep it. Then `/codex:review` runs a review.
 
 ## The deepseek profile
+
+`./pi.sh --pi-profile deepseek`. The `default` profile carries the same
+`deepseek` provider entry, so the compat block below applies there too; the
+cache extension in section 2 is installed only in this profile and in
+`openrouter`.
 
 Two things make pi effective with DeepSeek, and they are independent.
 
@@ -120,7 +217,8 @@ window; long unattended runs are half price outside it.
 
 ## The openrouter profile
 
-`./pi.sh --pi-profile openrouter` reaches DeepSeek through one OpenRouter key,
+`./pi.sh --pi-profile openrouter` reaches DeepSeek through one OpenRouter key
+(the `default` profile carries the same `openrouter` entry, plus GLM 5.3),
 with each model pinned to a different host: **Flash → DigitalOcean**, **Pro →
 DeepSeek first-party**. Both carry `allow_fallbacks: false` and
 `require_parameters: true`, so a request either goes to the named host or fails
@@ -252,8 +350,9 @@ dotfiles/pi-profiles/<name>/
   required-env.txt       # optional — variable names to check for (values never printed)
 ```
 
-Everything under `agent/` is copied into `~/.pi/agent/` on first launch if
-absent. Then `./pi.sh --pi-profile <name>`.
+Everything under `agent/` is copied into `~/.pi/agent/` before each launch,
+wherever a file is absent. Then `./pi.sh --pi-profile <name>`, or set
+`MULTIPLAI_PI_PROFILE=<name>` in `.env` to mount it in every session.
 
 Add the profile's API key to the kit's `.env` (or `env.<profile>`) — `claude.sh`
 forwards every non-empty variable named there into the container. Never paste a

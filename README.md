@@ -180,11 +180,10 @@ bare mode.
 ./claude.sh --local                 # bare mode, host permissions
 ./claude.sh --shell                 # container bash shell
 ./claude.sh --profile work --shell  # work profile, bash shell
-./pi.sh                             # the pi coding agent, deepseek profile
-./pi.sh --pi-profile kimi           # pi on another model profile
+./pi.sh                             # the pi coding agent
 ```
 
-**`./pi.sh` runs [pi](https://pi.dev) in the same container**, with the same mounts, git identity, GH token and env forwarding — it wraps `claude.sh --pi` rather than forking it. A *pi profile* is the whole `~/.pi` directory (models, credentials, installed packages, sessions), mounted per profile from `~/.claude-container/pi/<name>/`, so profiles are fully isolated. Note that two different things are called "profile" here: `--profile` picks a git identity, `--pi-profile` picks a model configuration; they compose. pi is installed on first launch into `~/.pi-cli` rather than baked into the image, so bumping it needs no container release. Ships a `deepseek` profile tuned for prefix-cache hit rate — see [docs/pi.md](docs/pi.md).
+**`./pi.sh` runs [pi](https://pi.dev) in the same container**, with the same mounts, git identity, GH token and env forwarding — it wraps `claude.sh --pi` rather than forking it. pi runs on one config, the whole `~/.pi` directory (models, credentials, installed packages, sessions), mounted from `~/.claude-container/pi/default/`. Every container session, not only `./pi.sh`, has `pi` and `codex` on `PATH` and mounts the pi config, so Claude can call them as tools. The container entrypoint installs both into folders mounted from the Mac and updates them weekly, the same way it keeps Claude Code current, with a pinned copy baked into the image as the fallback. That config holds the ChatGPT login, DeepSeek and OpenRouter (including GLM 5.3), and buildme and `/multiplai-dev:review` pick a model per step with a `pi:<model>@<provider>` spec — see [docs/pi.md](docs/pi.md).
 
 **In tmux, the tab names itself.** Launching a container session from inside tmux renames the window to the container name — `cc-p-05212125`, i.e. `cc-<profile initial>-<DDHHMMSS>` — which is the same string the fleet view (`AGENTS.md`, `/multiplai-context:fleet-status`) uses to identify the session, so a tab and a fleet row match by eye. The original name comes back when the session exits. It is the *container* name and not the Claude session id on purpose: `/clear` starts a new session id, and a tab that renamed itself mid-work would be worse than no name at all. Container mode only; without tmux, nothing happens.
 

@@ -1,55 +1,139 @@
 # Running pi in the multiplai container
 
-`./pi.sh` launches the [pi coding agent](https://pi.dev) inside the same
+`pi` and `codex` are on `PATH` in every container session, so a Claude session
+can call them as tools. `./pi.sh` also launches the
+[pi coding agent](https://pi.dev) as the session itself, inside the same
 container `./claude.sh` uses, with the same workspace mounts, git identity, GH
 token, env forwarding and SSH host bridge. It is a wrapper around
 `claude.sh --pi`, not a second launcher.
 
 ```bash
-./pi.sh                          # pi on the deepseek profile
-./pi.sh --pi-profile kimi        # a different model profile
-./pi.sh --profile work           # work git identity, deepseek profile
+./pi.sh                          # pi, on the one pi config
+./pi.sh --profile work           # work git identity, same pi config
 ./pi.sh -p "summarise this repo" # pi's own flags pass straight through
 ```
 
-## Two things are called "profile"
+## One config, every provider
 
-They are different axes and they compose.
+Every session mounts one pi config, `~/.claude-container/pi/default` on the
+Mac, seeded from `dotfiles/pi-profiles/default/`, and it holds every provider.
+The model spec chooses the provider at run time, the way Claude Code chooses
+Opus or Sonnet, so there is no second config to switch to.
 
-| Flag | Selects | Lives in |
+| Provider | Models | Needs |
 |---|---|---|
-| `--profile <name>` | git identity + GH token | `env.<name>` |
-| `--pi-profile <name>` | pi model configuration | `dotfiles/pi-profiles/<name>/` (template), `~/.claude-container/pi/<name>/` (live) |
+| `openai` (pi's built-in Sign in with ChatGPT) | your ChatGPT plan's models | a one-time `/login openai` |
+| `deepseek` | `deepseek-v4-flash`, `deepseek-v4-pro` | `DEEPSEEK_API_KEY` in `.env` |
+| `openrouter` | `deepseek/deepseek-v4-flash`, `deepseek/deepseek-v4-pro`, `z-ai/glm-5.3` | `OPENROUTER_API_KEY` in `.env` |
 
-## What a pi profile is
+```bash
+pi --provider openai --model <model> -p "…"
+pi --provider deepseek --model deepseek-v4-pro -p "…"
+pi --provider openrouter --model z-ai/glm-5.3 -p "…"
+```
+
+`pi --list-models` prints the exact model IDs each provider offers, including
+the ones your ChatGPT plan unlocks.
+
+`z-ai/glm-5.3` is copied from the built-in OpenRouter catalog in
+`@earendil-works/pi-ai` 1.2.0, the version pi 1.2.0 depends on. The default
+provider and model are DeepSeek V4 Flash.
+
+A missing key is a warning, not an error: it turns off the provider that reads
+it and leaves the others working.
+
+### Logging in to ChatGPT
+
+Once, from any session: run `! pi`, then `/login openai`, and choose Sign in
+with ChatGPT. The login is stored in the pi config's `agent/auth.json`, which is
+`~/.claude-container/pi/default/agent/auth.json` on the Mac, so every later
+session has it. pi also writes a `deviceId` into `settings.json`; seeding never
+overwrites either file.
+
+### Picking a model per step
+
+buildme and `/multiplai-dev:review` take a `pi:<model>@<provider>` spec
+anywhere they take a model, from `multiplai.conf`:
+
+```ini
+# buildme: one section per step
+[buildme.review]
+MODEL=pi:<model>@openai
+
+[buildme.spec]
+MODEL=pi:z-ai/glm-5.3@openrouter
+
+# /multiplai-dev:review: top-level keys
+review_finder_model=pi:deepseek-v4-flash@deepseek
+review_verifier_model=pi:deepseek-v4-pro@deepseek
+```
+
+buildme reads `[buildme.spec]`, `[buildme.agent]`, `[buildme.plan_review]` and
+`[buildme.review]`. Replace `<model>` with an ID from `pi --list-models`.
+
+## What the pi config is
 
 The whole `~/.pi` directory: `models.json`, credentials, installed packages,
-and session history. pi resolves its config from `homedir()/.pi/agent` with no
-environment-variable override (checked in 0.84.2), so a profile is implemented
-by mounting a *different host directory* at that one container path.
+and session history, mounted from `~/.claude-container/pi/default` on the Mac.
+pi reads its config from `~/.pi/agent` unless `PI_CODING_AGENT_DIR` is set (pi
+1.2.0 `docs/environment-variables.md`), and the container does not set it for
+sessions. `--profile <name>` picks a git identity and GH token from
+`env.<name>`; it never changes the pi config.
 
-The consequence is worth stating plainly: **profiles are fully isolated.**
-Different models, different API keys, different extensions, different session
-history. Nothing leaks between them, and you cannot half-switch.
+The template under `dotfiles/pi-profiles/default/` is in git and is only ever
+copied into the live directory when a file is *absent*. `claude.sh` does that
+copy on the Mac before every container launch, so a plain Claude session gets a
+ready `~/.pi`; `scripts/pi-bootstrap.sh` does it again under `--pi`. Anything
+you or pi subsequently write — `/settings`, `pi install`, `/login` — wins over
+the template and survives the next launch.
 
-The template under `dotfiles/pi-profiles/<name>/` is in git and is only ever
-copied into the live directory when a file is *absent*. Anything you or pi
-subsequently write — `/settings`, `pi install`, `pi auth` — wins over the
-template and survives the next launch.
+The packages in `packages.txt` cannot be copied: `pi install` has to run inside
+the container, where pi is. So every container session installs them, not only
+`--pi`. A plain claude, `--shell` or driver launch starts its command behind
+`scripts/pi-bootstrap.sh --packages-only --`, which installs the lists when they
+changed (see [Web search](#web-search)) and then runs claude, bash or the
+driver runner as before; `--pi` runs the whole bootstrap, packages included. So
+`pi` called as a tool from a Claude session (`pi:<model>@<provider>` in a
+buildme or `/multiplai-dev:review` step) has web search and the DeepSeek cache
+fix too.
 
-## How pi gets into the container
+## How pi and Codex get into the container
 
-It is not in the image. The image already ships Node 22 and npm, which is all
-pi needs, so `scripts/pi-bootstrap.sh` installs it into a user-owned npm prefix
-at `~/.pi-cli` on first launch and caches it there across containers. That
-keeps pi upgradable without cutting a container release.
+The same way Claude Code does: a pinned copy baked into the image as the
+fallback, and a copy in a folder mounted from the Mac that the container
+entrypoint keeps current.
 
-The version is pinned in the bootstrap (`MULTIPLAI_PI_VERSION`, currently
-0.84.2) and compared on every launch, so a bump reinstalls and a match costs
-nothing. Two containers starting at once contend on a lock rather than running
-npm over each other.
+| | pi | Codex |
+|---|---|---|
+| Mac folder | `~/.claude-container/pi-cli` | `~/.claude-container/codex` |
+| Container path | `~/.pi-cli` | `~/.codex` (releases and login) |
+| Binary, first on `PATH` when present | `~/.pi-cli/agent/bin/pi` | `~/.codex/bin/codex` |
+| Installed by | `https://pi.dev/install.sh` | `https://chatgpt.com/codex/install.sh` |
+| Weekly update | `pi update` | the installer again |
 
-## The deepseek profile
+The entrypoint updates each one every `MULTIPLAI_CLI_UPDATE_DAYS` (default 7),
+the interval it already uses for Claude Code, so a new release reaches every
+session within a week with no image rebuild. If an install or update fails, the
+session starts anyway on the copy it already has, or on the baked one.
+`claude.sh` mounts all three folders (`pi-cli`, `pi/default`, `codex`) in
+every container session: plain claude, `--shell`, `--pi` and the hub driver.
+
+The bootstrap no longer installs pi, and `MULTIPLAI_PI_VERSION` is gone.
+
+## Codex
+
+Codex is for ad hoc reviews through OpenAI's Claude Code plugin. Once, from any
+session:
+
+1. Run `codex login`. If the browser callback cannot reach the container, use
+   Codex's device-code login instead.
+2. In Claude Code, run `/plugin marketplace add openai/codex-plugin-cc`, then
+   `/plugin install codex@openai-codex`.
+
+The login lives in `~/.claude-container/codex` on the Mac, so later sessions
+keep it. Then `/codex:review` runs a review.
+
+## The deepseek provider
 
 Two things make pi effective with DeepSeek, and they are independent.
 
@@ -85,11 +169,14 @@ on the same model traced the cost spread between harnesses to hit rate rather
 than token count.
 
 pi defeats its own cache in two places, and `@rohaquinlop/pi-deepseek-cache`
-(installed on first launch, see `packages.txt`) fixes both: it freezes the date
-and working directory that pi's system prompt embeds, and makes compaction
-deterministic so post-compaction turns still hit. `showCacheMissNotices` is on
-in this profile so a miss is visible rather than silent; `/cache-stats` and
-`/cache-graph` report the rate.
+(installed by the first container launch of any kind, see
+`default/packages.txt`) fixes both: it freezes
+the date and working directory that pi's system prompt embeds, and makes
+compaction deterministic so post-compaction turns still hit.
+`showCacheMissNotices` is on so a miss is visible rather than silent;
+`/cache-stats` and `/cache-graph` report the rate. It activates on `deepseek-*` model ids; whether it also matches
+the `openrouter` provider's `deepseek/…` ids is unverified, and `/cache-stats`
+reporting nothing there would mean it does not.
 
 **The corollary is a rule, not a tip: every tool you add costs cache.** The
 tool schema is a fixed block at the front of every request. Four tools is a
@@ -114,14 +201,15 @@ than the reverse.
 
 DeepSeek moved to time-of-day billing on 16 Aug 2026. Peak (01:00–04:00 and
 06:00–10:00 UTC) is exactly double off-peak, and pi cannot switch a rate by the
-clock, so the profile encodes **peak** — the readout over-reports off-peak
+clock, so `models.json` encodes **peak** — the readout over-reports off-peak
 rather than under-reporting peak. European working mornings sit inside the peak
 window; long unattended runs are half price outside it.
 
-## The openrouter profile
+## The openrouter provider
 
-`./pi.sh --pi-profile openrouter` reaches DeepSeek through one OpenRouter key,
-with each model pinned to a different host: **Flash → DigitalOcean**, **Pro →
+The `openrouter` provider reaches DeepSeek through one OpenRouter key (and
+GLM 5.3 through the same key), with each DeepSeek model pinned to a different
+host: **Flash → DigitalOcean**, **Pro →
 DeepSeek first-party**. Both carry `allow_fallbacks: false` and
 `require_parameters: true`, so a request either goes to the named host or fails
 loudly. Unpinned routing is not reproducible — the same slug can be served at a
@@ -171,21 +259,21 @@ not be checked. An earlier note in this workspace put DigitalOcean at ~5 tok/s
 against DeepSeek's ~74; if that still holds it disqualifies the route for
 interactive use regardless of price. Measure it on the first real session.
 
-### Thinking levels differ from the direct profile
+### Thinking levels differ from the direct provider
 
-OpenRouter takes `reasoning: { effort }`, so this profile exposes `low`,
+OpenRouter takes `reasoning: { effort }`, so this provider exposes `low`,
 `medium`, `high` and lets OpenRouter translate onto DeepSeek's off/high/max
-ladder. The direct `deepseek` profile addresses those provider levels itself and
+ladder. The direct `deepseek` provider addresses those provider levels itself and
 exposes `high`/`max` instead. Same models, different control surface.
 
-## Web search (every profile)
+## Web search
 
 pi ships **no web access at all** — no search, no URL fetch. That is the largest
 single gap against Claude Code, and it is not a setting you can turn on; it
 arrives as a package.
 
-`dotfiles/pi-profiles/_shared/packages.txt` is installed into every profile
-before the profile's own list, and web search is what it is there for. It brings
+`dotfiles/pi-profiles/_shared/packages.txt` is installed before
+`default/packages.txt`, and web search is what it is there for. It brings
 four tools — `web_search`, `fetch_content` (URL to markdown, also PDFs),
 `source_check` (claims with passage citations), `get_search_content` — plus
 `/websearch` and `/search`.
@@ -197,11 +285,22 @@ the first provider that answers. Without any key it can still reach Exa's hosted
 MCP endpoint — but note that queries then go to a third party under no account
 of yours, which is a reason to prefer your own key rather than a fallback.
 
-Adding a line to `_shared/packages.txt` reaches profiles that have **already**
-launched. The marker records a hash of the combined list rather than a bare
-"ran once" flag, so a changed list re-runs; `pi install` is idempotent. A
-package that fails to install leaves the marker unwritten, so a transient npm
-failure retries next launch instead of being silently marked done.
+Adding a line to either `packages.txt` reaches a config that has **already**
+launched. The marker, `~/.pi/agent/.multiplai-packages-installed`, records a
+hash of the combined list rather than a bare "ran once" flag, so a changed list
+re-runs on the next container launch of any kind; `pi install` is idempotent.
+While the hash matches, the launch only reads the marker. A package that fails
+to install leaves the marker unwritten, so a transient npm failure retries next
+launch instead of being silently marked done.
+
+Outside `--pi`, a failed install never stops the session. No network, no `pi`
+in the container yet, or an npm error prints one `[pi] Warning:` line naming
+the cause, and claude, bash or the driver runner starts anyway, with pi lacking
+those packages until a later launch installs them. `pi install`'s own output
+goes to `~/.pi/agent/.multiplai-packages.log`, since the terminal belongs to the
+session about to start. The session waits for the install while it runs, which
+happens only on a launch where the list changed. Under `--pi` the install
+prints each package and each failure in the terminal, as before.
 
 **Two cautions.** pi's own docs are blunt that packages run with full system
 access and extensions execute arbitrary code — the container is the only thing
@@ -213,7 +312,7 @@ without Docker. And several unrelated GitHub projects share the name
 ### GitHub cloning is off, deliberately
 
 `_shared/web-search.json` ships `{"githubClone": {"enabled": false}}`, seeded to
-`~/.pi/web-search.json` in every profile. That path is not decorative — the
+`~/.pi/web-search.json`. That path is not decorative — the
 extension resolves its config to `~/.pi/web-search.json` unless
 `PI_CODING_AGENT_DIR` or `XDG_CONFIG_HOME` is set, and neither is set in this
 container.
@@ -242,22 +341,17 @@ read, which is the whole difference.
 
 Re-enable only once upstream has fixed the traversal.
 
-## Adding a profile
+## Adding a provider
 
-```
-dotfiles/pi-profiles/<name>/
-  agent/models.json      # optional — provider + model definitions
-  agent/settings.json    # optional — defaults
-  packages.txt           # optional — pinned `pi install` sources, one per line
-  required-env.txt       # optional — variable names to check for (values never printed)
-```
+Add it to `models.json` in two places: `dotfiles/pi-profiles/default/agent/`
+for new installs, and `~/.claude-container/pi/default/agent/` on the Mac for
+yours. Seeding copies a file only when it is absent, so a template edit never
+reaches a config that already has a `models.json`. Name its key variable in
+`dotfiles/pi-profiles/default/required-env.txt` so a missing key is reported.
 
-Everything under `agent/` is copied into `~/.pi/agent/` on first launch if
-absent. Then `./pi.sh --pi-profile <name>`.
-
-Add the profile's API key to the kit's `.env` (or `env.<profile>`) — `claude.sh`
+Add the provider's API key to the kit's `.env` (or `env.<profile>`) — `claude.sh`
 forwards every non-empty variable named there into the container. Never paste a
-key into a session; `/login` also works and stores it in the profile.
+key into a session; `/login` also works and stores it in the pi config.
 
 ## Known gaps
 
@@ -269,7 +363,7 @@ key into a session; `/login` also works and stores it in the profile.
   mechanics; `--pi` exits straight out of the container like `--shell` does.
 - **Tool-call reliability with DeepSeek is unmeasured here.** The 400-error
   class is handled by the compat block. How often DeepSeek malforms a tool call
-  in normal use is not something this profile can claim either way.
+  in normal use is not something this config can claim either way.
 - **`tool_choice`.** oh-my-pi carries a `supportsToolChoice: false` flag for
   DeepSeek's thinking mode. pi 0.84.2's compat table has no such field, so it
   is not set here. If thinking-mode tool calls start returning 400, this is the

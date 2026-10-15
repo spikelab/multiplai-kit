@@ -1,0 +1,163 @@
+{
+  "providers": {
+    "deepseek": {
+      "name": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com",
+      "api": "openai-completions",
+      "apiKey": "$DEEPSEEK_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "maxTokensField": "max_tokens",
+        "supportsReasoningEffort": true,
+        "thinkingFormat": "deepseek",
+        "requiresReasoningContentOnAssistantMessages": true
+      },
+      "models": [
+        {
+          "id": "deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "cost": {
+            "input": 0.44,
+            "output": 1.32,
+            "cacheRead": 0.014,
+            "cacheWrite": 0
+          }
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": null,
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "cost": {
+            "input": 1.32,
+            "output": 3.96,
+            "cacheRead": 0.044,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "apiKey": "$OPENROUTER_API_KEY",
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "supportsReasoningEffort": true,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash (DigitalOcean)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
+          "cost": {
+            "input": 0.068,
+            "output": 0.168,
+            "cacheRead": 0.0168,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "openRouterRouting": {
+              "only": ["digitalocean"],
+              "allow_fallbacks": false,
+              "require_parameters": true
+            }
+          }
+        },
+        {
+          "id": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro (first-party)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
+          "cost": {
+            "input": 0.66,
+            "output": 1.98,
+            "cacheRead": 0.022,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "openRouterRouting": {
+              "only": ["deepseek"],
+              "allow_fallbacks": false,
+              "require_parameters": true
+            }
+          }
+        },
+        {
+          "id": "z-ai/glm-5.3",
+          "name": "Z.ai: GLM 5.3",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1048576,
+          "maxTokens": 943718,
+          "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "cost": {
+            "input": 0.079,
+            "output": 4.8,
+            "cacheRead": 0.059,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "supportsDeveloperRole": false,
+            "thinkingFormat": "openrouter",
+            "supportsStrictMode": true,
+            "sendSessionAffinityHeaders": true
+          }
+        }
+      ]
+    }
+  }
+}

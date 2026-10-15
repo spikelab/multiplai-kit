@@ -15,6 +15,70 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **`pi` and `codex` in every container session, not only `./pi.sh`.** Every
+  container launch — plain claude, `--shell`, `--pi` and the hub driver — now
+  creates and mounts three folders from the Mac: `~/.claude-container/pi-cli`
+  at `~/.pi-cli` (the pi install), `~/.claude-container/pi/default` at
+  `~/.pi` (the one pi config) and `~/.claude-container/codex` at `~/.codex` (Codex
+  releases and login). The container entrypoint installs pi and Codex there and
+  updates them every `MULTIPLAI_CLI_UPDATE_DAYS` (default 7), so Claude can call
+  them as tools and a new release arrives without an image rebuild. This needs
+  the matching container release; on an older image `pi` and `codex` are
+  missing.
+- **One pi config with every provider.** `dotfiles/pi-profiles/default/`
+  holds the `deepseek` and `openrouter` provider entries the old `deepseek` and
+  `openrouter` profiles shipped, plus `z-ai/glm-5.3` on OpenRouter, and installs
+  `@rohaquinlop/pi-deepseek-cache` on top of the shared packages; pi's built-in
+  `openai` provider (Sign in with ChatGPT) needs only a one-time
+  `/login openai`. A `pi:<model>@<provider>` spec picks the provider per step —
+  for example `[buildme.review] MODEL=pi:<model>@openai` or
+  `review_verifier_model=pi:deepseek-v4-pro@deepseek` in `multiplai.conf`. See
+  `docs/pi.md`.
+- **`pi` called from a plain Claude, `--shell` or driver session has the same
+  config and packages as `./pi.sh`**, without ever running it. The launcher
+  seeds the pi config on the Mac before each launch, from the kit's template,
+  copying only files that are absent, so a `settings.json` or `auth.json` you or
+  pi have changed is never overwritten. Each container session then installs
+  the `packages.txt` lists (web search and the DeepSeek cache fix) before its
+  command starts, when the list has changed since the last install; on other
+  launches it only reads a marker. A failed install prints one warning naming
+  the cause and the session starts anyway, with `pi install`'s output in
+  `~/.pi/agent/.multiplai-packages.log`.
+
+### Changed
+
+- **`./pi.sh` runs on `~/.claude-container/pi/default`, not `pi/deepseek`.**
+  It is the same config every session mounts. The old per-profile folders on
+  the Mac — `~/.claude-container/pi/deepseek`, `~/.claude-container/pi/openrouter`
+  and any other beside `default` — are no longer used and can be deleted; copy
+  out anything you want to keep from them first.
+- **A missing provider key no longer reads as a broken profile.** The `--pi`
+  warning now says the providers that read the unset key are off and the other
+  providers still work; the launch goes on as before.
+
+### Removed
+
+- **`--pi-profile` and `MULTIPLAI_PI_PROFILE` are gone: there is one pi
+  config.** Models are picked per call with `pi:<model>@<provider>`, so choosing
+  a whole config per launch is no longer needed. `--pi-profile` (on `./pi.sh` or
+  `claude.sh`) now exits with an error saying so; a `MULTIPLAI_PI_PROFILE` left
+  in `.env` or your shell changes nothing — delete it. The `deepseek/` and
+  `openrouter/` templates under `dotfiles/pi-profiles/` are gone too;
+  `default/` carries both providers and the DeepSeek cache package.
+- **`MULTIPLAI_PI_VERSION` is gone, and `--pi` no longer installs pi.** The
+  bootstrap used to `npm install` a pinned pi into `~/.pi-cli` on launch. The
+  container entrypoint now installs pi with pi's own installer into
+  `~/.pi-cli/agent` and runs `pi update` every `MULTIPLAI_CLI_UPDATE_DAYS`
+  (default 7), the same way it keeps Claude Code current, with a pinned copy
+  baked into the image as the fallback. A `MULTIPLAI_PI_VERSION` left in `.env`
+  now does nothing; delete it. The old npm install's `bin/` and `lib/` folders
+  under `~/.claude-container/pi-cli/` sit unused beside the new `agent/` folder
+  and can be deleted once the new install works. If `pi` is missing from the
+  container, `--pi` now stops with a message saying to update the kit and
+  container.
+
 ### Changed
 
 - **The status line no longer draws `⟳` before reset times.** Many terminal

@@ -85,7 +85,7 @@ The kit is responsible for:
 - **Launcher** (`claude.sh`) — container/local/shell modes, per-identity profiles (git, GitHub auth, GCP keys, image selection).
 - **Container** — a sandboxed Docker/OrbStack image (fetched from [`multiplai-container`](https://github.com/spikelab/multiplai-container) at setup) that runs Claude with `--dangerously-skip-permissions` safely. [Overlay images](#custom-environments-overlay-images) build any project- or task-specific environment on top of it.
 - **Reference docs** (20+ reference docs in `dotfiles/reference/dev/`, including the README index) — prescriptive engineering standards. Stack-specific ones load mechanically: the `multiplai-context` hook detects a project's stack from its manifests and points Claude at the matching docs, and buildme inlines them into spec generation. See `dotfiles/reference/dev/README.md` for the mechanisms and the renaming contract.
-- **Kit config** (`multiplai.conf`) — model/effort ceilings and per-skill overrides.
+- **Kit config** (`multiplai.conf`) — default model/effort for pipeline steps and per-skill overrides.
 - **Installing and configuring the Multiplai plugins** — the `multiplai-context` memory/lifecycle plugin and the themed skill packs (see `docs/SKILLS.md`).
 
 ## The Memory System (the `multiplai-context` plugin)
@@ -312,7 +312,7 @@ TAVILY_API_KEY=override-key ./claude.sh
 multiplai-kit/                          # = the "runtime" / kit repo
 ├── claude.sh              # Single entrypoint (container default, --local, --shell, --profile)
 ├── setup.sh               # One-time: prerequisite checks, workspace, memory templates, Docker build
-├── multiplai.conf         # Kit config (model/effort ceilings, per-skill overrides) — project root, NOT in dotfiles/
+├── multiplai.conf         # Kit config (default model/effort, per-skill overrides) — project root, NOT in dotfiles/
 ├── requirements.txt       # Kit venv deps
 ├── .env.example           # Base config template (becomes .env — workspace, secrets)
 ├── env.example            # Profile template (becomes env.<name> — per-identity overrides)
@@ -321,7 +321,7 @@ multiplai-kit/                          # = the "runtime" / kit repo
 ├── dotfiles/              # = CLAUDE_CONFIG_DIR (Claude Code reads everything from here)
 │   ├── CLAUDE.md          # Global instructions (personalized by setup.sh)
 │   ├── settings.json      # Registers validate-syntax + guard_destructive hooks; pluginConfigs["multiplai-context@multiplai"]; statusline; permissions
-│   ├── hooks/             # validate-syntax.sh, guard_destructive.py, run-hook-python, model_resolver.py, log_utils.py
+│   ├── hooks/             # validate-syntax.sh, guard_destructive.py, run-hook-python, log_utils.py
 │   ├── skills/            # Your own local skills (the skill library ships as marketplace plugins)
 │   ├── reference/dev/     # 20+ best-practice docs, incl. the README index
 │   ├── scripts/           # statusline.sh, file-suggestion.sh
@@ -354,7 +354,6 @@ The kit registers exactly two runtime hooks in `settings.json`; everything else 
 | `validate-syntax.sh` | PostToolUse (Write\|Edit) — validates YAML/JSON syntax. |
 | `guard_destructive.py` | PreToolUse (Bash) — denies a curated set of unrecoverable commands. Sessions run with permissions bypassed (the container is the sandbox), so this is the one layer that can still say no. |
 | `run-hook-python` | Wrapper that routes Python hook scripts to the kit venv |
-| `model_resolver.py` | Model-ceiling logic (caps a requested tier via `MULTIPLAI_MODEL`) |
 | `log_utils.py` | Shared logging helper used via PYTHONPATH by plugin skills (buildme, deep-research) |
 
 Memory routing, diary, learnings extraction, and the autodream gate now live in the **`multiplai-context` plugin**, not here. The old in-tree hooks and catalog generators have been removed along with the tests that targeted them.
@@ -532,21 +531,21 @@ The options you'll actually touch:
 
 ### Kit Configuration (`multiplai.conf`)
 
-Separate from the plugin. `multiplai.conf` (project root, **not** in `dotfiles/`) sets model/effort ceilings and per-skill overrides for the **in-tree skills**. Changes take effect on next invocation.
+Separate from the plugin. `multiplai.conf` (project root, **not** in `dotfiles/`) sets the default model and effort for plugin pipeline steps, per-skill overrides, and log settings. Changes take effect on next invocation.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `MULTIPLAI_DEBUG` | `false` | Verbose logging |
-| `MULTIPLAI_MODEL` | `claude-opus-4-6` | Model ceiling — caps the tier a skill/hook can request (`haiku < sonnet < opus`) |
-| `MULTIPLAI_EFFORT` | `high` | Effort ceiling (`low < medium < high < max`) |
+| `MULTIPLAI_MODEL` | unset | Model for any pipeline step no config names; unset means the step uses the Claude Code session's model. A family name (`haiku`, `sonnet`, `opus`, `fable`) or a full model ID. Not a cap |
+| `MULTIPLAI_EFFORT` | unset | Effort for any pipeline step no config names; unset means the session's effort (`low`, `medium`, `high`, `xhigh`, `max`). Not a cap |
 | `MULTIPLAI_LOG_LEVEL` | `INFO` | Component log verbosity |
-| `MULTIPLAI_LOG_RETENTION_DAYS` | `90` | Rotated-log retention in days — shipped default 90; `0` means keep forever (see [Data & retention](#data--retention)) |
+| `MULTIPLAI_LOG_RETENTION_DAYS` | `365` | Rotated-log retention in days, for hooks and plugin pipelines alike — shipped default 365; `0` means keep forever (see [Data & retention](#data--retention)) |
 
-These ceilings apply to hooks and to the buildme / deep-research SDK pipelines. They do **not** configure Claude Code skills — a skill's model and effort come from its `SKILL.md` frontmatter and nothing else. Retune a skill by editing its frontmatter in the `multiplai-cc-mktplace` repo.
+A pipeline step (one SDK call that buildme, deep-research, review, spec-extract, codebase-walkthrough or pr makes) takes its model from, in order: the config for that step or its stage, then `MULTIPLAI_MODEL` (environment, then `multiplai.conf`), then the session's model. Effort follows the same order with `MULTIPLAI_EFFORT`, and is resolved separately, so setting only `MULTIPLAI_MODEL` gives that model at the session's effort. Nothing caps a model or an effort. These two settings do not change the model the Claude Code session itself runs on, and background jobs (memory retrieval, catalogs, checkpoints, dream, learning extraction) keep their own defaults.
 
 ### Eval Suite
 
-Unit tests at `evals/` (project root) covering the kit's **own live code** — the model-ceiling resolver and `multiplai.conf` loading. Free, fast, no API key.
+Unit tests at `evals/` (project root) covering the kit's **own live code** — the hook helpers and `multiplai.conf` loading. Free, fast, no API key.
 
 ```bash
 .venv/bin/python -m pytest evals/ -q
@@ -737,8 +736,8 @@ part lives.
 
 | Surface | What's in it | Retention |
 |---|---|---|
-| `runtime/logs/*-YYYY-MM-DD.log` | Rotated hook/skill logs — routing decisions, prompt excerpts, errors | `MULTIPLAI_LOG_RETENTION_DAYS` (default **90**) |
-| `runtime/logs/hook-errors.log` | Shared error sink, append-only | Size-capped at ~100 KB, not by date |
+| `runtime/logs/*-YYYY-MM-DD.log` | Rotated hook/skill logs — routing decisions, prompt excerpts, errors | `MULTIPLAI_LOG_RETENTION_DAYS` (default **365**) |
+| `runtime/logs/hook-errors.log` | Shared error sink, append-only, never shortened | Moves to `hook-errors-YYYY-MM-DD.log` the next day; the dated files follow `MULTIPLAI_LOG_RETENTION_DAYS` |
 | `<workspace>/.multiplai/data/logs/` | Plugin logs, incl. `activity.log` | Same setting (the plugin reads it too) |
 | `<workspace>/.multiplai/cc-state/projects/<slug>/*.jsonl` | **Claude Code's own session transcripts** — the full text of every message and tool result, including per-request token usage | `cleanupPeriodDays` in `dotfiles/settings.json` (default **365**) |
 | `<workspace>/.multiplai/{memory,diary,learnings}/` | The knowledge corpus you deliberately accumulate | Never auto-deleted — it's the point of the system |

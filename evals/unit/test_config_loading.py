@@ -35,14 +35,23 @@ def _run(home: Path, conf: str | None, var: str) -> str:
 
 
 class TestConfigDefaults:
+    # Model and effort are exported empty when no conf sets them: empty means
+    # "not set", so steps follow the Claude Code session's model and effort.
     def test_default_model_without_conf(self, tmp_path):
-        assert _run(tmp_path, None, "MULTIPLAI_MODEL") == "claude-sonnet-4-6"
+        assert _run(tmp_path, None, "MULTIPLAI_MODEL") == ""
 
     def test_default_debug_without_conf(self, tmp_path):
         assert _run(tmp_path, None, "MULTIPLAI_DEBUG") == "false"
 
     def test_default_effort_without_conf(self, tmp_path):
-        assert _run(tmp_path, None, "MULTIPLAI_EFFORT") == "high"
+        assert _run(tmp_path, None, "MULTIPLAI_EFFORT") == ""
+
+    def test_shipped_conf_sets_no_model_or_effort(self, tmp_path):
+        # The template ships both commented out, so a new install follows
+        # the session instead of a fixed model.
+        shipped = (KIT_ROOT / "multiplai.conf").read_text()
+        assert _run(tmp_path, shipped, "MULTIPLAI_MODEL") == ""
+        assert _run(tmp_path, shipped, "MULTIPLAI_EFFORT") == ""
 
 
 class TestConfigOverrides:
@@ -65,10 +74,10 @@ class TestConfigOverrides:
 
 class TestConfMalformed:
     def test_empty_conf_uses_defaults(self, tmp_path):
-        assert _run(tmp_path, "", "MULTIPLAI_MODEL") == "claude-sonnet-4-6"
+        assert _run(tmp_path, "", "MULTIPLAI_MODEL") == ""
 
     def test_comments_only_conf(self, tmp_path):
-        assert _run(tmp_path, "# a comment\n# another\n", "MULTIPLAI_MODEL") == "claude-sonnet-4-6"
+        assert _run(tmp_path, "# a comment\n# another\n", "MULTIPLAI_MODEL") == ""
 
     def test_inline_comment_stripped(self, tmp_path):
         out = _run(tmp_path, "MULTIPLAI_EFFORT=medium  # trailing note\n", "MULTIPLAI_EFFORT")

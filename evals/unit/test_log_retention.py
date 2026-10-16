@@ -69,7 +69,7 @@ class TestCleanupOldLogs:
         assert stale.exists()
 
     def test_leaves_undated_logs_alone(self, logs):
-        """hook-errors.log is append-only and bounded by size, not by date."""
+        """hook-errors.log keeps its undated name; only its dated copies age out."""
         errors = logs / "hook-errors.log"
         errors.write_text("boom\n")
         _age(errors, 400)
@@ -152,6 +152,9 @@ class TestRetentionResolution:
     def test_default_applies_with_no_env_and_no_conf(self):
         assert _get_retention_days() == log_utils._DEFAULT_RETENTION_DAYS
 
+    def test_default_is_a_year_like_multiplai_core(self):
+        assert log_utils._DEFAULT_RETENTION_DAYS == 365
+
     def test_negative_never_moves_the_cutoff_into_the_future(self, monkeypatch):
         """A negative value would put the cutoff ahead of now and delete every
         rotated log — it must fall back, not be honoured."""
@@ -175,6 +178,67 @@ class TestRetentionResolution:
         self._write_conf(-5)
         assert _get_retention_days() == log_utils._DEFAULT_RETENTION_DAYS
 
+
+
+class TestHookErrorsLogMovesDaily:
+    """hook-errors.log is never shortened; an earlier day's file moves to its
+    dated name, where retention deletes it whole."""
+
+    def _teardown(self, name):
+        logger = logging.getLogger(name)
+        for h in list(logger.handlers):
+            logger.removeHandler(h)
+            h.close()
+
+    def test_an_earlier_days_file_moves_whole(self, logs):
+        errors = logs / "hook-errors.log"
+        big = "".join(f"line-{i:06d}\n" for i in range(30_000))  # ~390 KB
+        errors.write_text(big)
+        _age(errors, 2)
+        day = time.strftime("%Y-%m-%d", time.gmtime(errors.stat().st_mtime))
+
+        logger = setup_logging("rotate-test-1", log_dir=logs)
+        try:
+            logger.error("today's error")
+            for h in logger.handlers:
+                h.flush()
+            assert (logs / f"hook-errors-{day}.log").read_text() == big
+            assert "today's error" in errors.read_text()
+            assert "line-000000" not in errors.read_text()
+        finally:
+            self._teardown("rotate-test-1")
+
+    def test_todays_file_is_neither_moved_nor_shortened(self, logs):
+        errors = logs / "hook-errors.log"
+        big = "x" * 300_000 + "\n"
+        errors.write_text(big)
+
+        log_utils._rotate_previous_day(errors)
+
+        assert errors.read_text() == big
+        assert not list(logs.glob("hook-errors-*.log"))
+
+    def test_never_overwrites_a_dated_file(self, logs):
+        errors = logs / "hook-errors.log"
+        errors.write_text("second\n")
+        _age(errors, 2)
+        day = time.strftime("%Y-%m-%d", time.gmtime(errors.stat().st_mtime))
+        dated = logs / f"hook-errors-{day}.log"
+        dated.write_text("first\n")
+
+        log_utils._rotate_previous_day(errors)
+
+        assert dated.read_text() == "first\n"
+        assert errors.read_text() == "second\n"
+
+    def test_dated_files_follow_retention(self, logs):
+        old = logs / "hook-errors-2020-01-01.log"
+        old.write_text("x\n")
+        _age(old, 400)
+
+        cleanup_old_logs(logs, retention_days=365)
+
+        assert not old.exists()
 
 def test_import_survives_an_unwritable_home(tmp_path):
     """The module-scope mkdir is best-effort: an unwritable

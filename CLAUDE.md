@@ -98,7 +98,7 @@ uv pip install --python .venv/bin/python -r requirements.txt
 
 ## Running Evals
 
-Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's **own live code** only — model-ceiling resolver and `multiplai.conf` loading. Free, fast, no API key. See `evals/README.md`.
+Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's **own live code** only — the hook helpers and `multiplai.conf` loading. Free, fast, no API key. See `evals/README.md`.
 
 ```bash
 # From the repo root
@@ -107,7 +107,6 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 
 | File | Covers |
 |------|--------|
-| `evals/unit/test_model_resolver.py` | Model-ceiling logic (`dotfiles/hooks/model_resolver.py`) |
 | `evals/unit/test_config_loading.py` | `multiplai.conf` parsing |
 | `evals/unit/test_claude_sh_env.py` | `claude.sh` env forwarding + GitHub auth-mode selection (stub `docker`) |
 | `evals/unit/test_claude_sh_crossplatform.py` | The `--add-host host.docker.internal:host-gateway` alias on **both** container argv compositions — the interactive `docker run` and the hub driver's, which is a separate call site reached only via the `driver` subcommand — plus GitHub-warning silence when nothing is configured, the two distinct Keychain-unavailable messages (non-Mac vs a Mac with `security` off `PATH`), and the explicit-only Keychain probe — `security` never runs unless `GH_TOKEN_KEYCHAIN` names an item (stub `docker` + stub `security` + stub `uname`) |
@@ -135,7 +134,7 @@ Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's 
 
 **The memory/lifecycle hooks moved to the plugin.** Routing (`context_manager.py`), session lifecycle (`session_start.py`, `session_stop.py`, `session_end.py`, `pre_compact.py`), and learnings extraction (`extract_learnings.py`) now live in the marketplace repo (`multiplai-cc-mktplace`) under `plugins/multiplai-context/scripts/`, registered in that plugin's `hooks/hooks.json`. Edit and test them there.
 
-What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings.json` is **`validate-syntax.sh`** (PostToolUse on Write|Edit), **`guard_destructive.py`** (PreToolUse on Bash), and the two GitHub App hooks — **`gh-app-auth.sh`** (SessionStart) and **`gh-app-refresh.sh`** (PreToolUse on Bash). Everything else in `dotfiles/hooks/` is a live helper: `run-hook-python`, `model_resolver.py`, `log_utils.py`, `gh-tok`.
+What's left in this kit's `dotfiles/hooks/` and registered in `dotfiles/settings.json` is **`validate-syntax.sh`** (PostToolUse on Write|Edit), **`guard_destructive.py`** (PreToolUse on Bash), and the two GitHub App hooks — **`gh-app-auth.sh`** (SessionStart) and **`gh-app-refresh.sh`** (PreToolUse on Bash). Everything else in `dotfiles/hooks/` is a live helper: `run-hook-python`, `log_utils.py`, `gh-tok`.
 
 **The GitHub App hooks.** Both exit 0 on their first line unless `GH_TOKEN_APP` is set, so PAT-mode users pay one test. `gh-app-auth.sh` mints via `gh-tok` and stores the token in gh's own credential store (a *file*, which is the point — the Bash tool starts a fresh shell per call, so an exported variable is gone by the next one). `gh-app-refresh.sh` runs before **every** Bash call, so its guard is a handful of shell builtins reading bare-integer sidecars against `$EPOCHSECONDS` — no `jq`, no `date`, no subshell. Keep it that way; `evals/unit/test_gh_app_hooks.py` fails if a fork creeps into the hot path. A failed mint writes a 60-second backoff marker (`<app>.json.fail`) that the guard honours — without it, a dead bridge stalls every Bash call on the SSH connect timeout. `gh-tok` is the shared minting primitive: it runs `multiplai-gh-token` directly when it is on PATH (bare on the Mac) and over the SSH bridge otherwise (shipped by `multiplai-container`), and prints **nothing** on stdout when it fails. The hooks must test that stdout for emptiness *before* handing it to `gh` — never `gh-tok | gh auth login`: on empty stdin, `gh auth login --with-token` starts the interactive device flow and hangs forever (see the 2026-07-30 entry in CHANGELOG.md). Both hooks also run bare on a Mac: /bin/bash 3.2, no coreutils, BSD date — `evals/unit/test_gh_app_hooks.py` pins the portability along with everything else. It lives here rather than in the image so it can never be a container release behind the hooks that call it.
 
@@ -214,7 +213,7 @@ don't re-add the full list there.
 
 ## Configuration
 
-`multiplai.conf` (at the kit project root, NOT in dotfiles/) sets the model/effort ceilings for hooks and the buildme / deep-research SDK pipelines, plus log level/retention and per-task model tiers. Changes take effect on next invocation. See the file for documentation on each setting.
+`multiplai.conf` (at the kit project root, NOT in dotfiles/) sets `MULTIPLAI_MODEL` / `MULTIPLAI_EFFORT`, the default model and effort for any plugin pipeline step no config names (unset, the shipped default, means the step follows the Claude Code session; neither is a cap), plus log level/retention and per-task models and efforts. Changes take effect on next invocation. See the file for documentation on each setting.
 
 **It does not configure Claude Code skills.** A skill's `model` and `effort` come from its own `SKILL.md` frontmatter and nothing else — Claude Code offers no override (`skillOverrides` is on/off/user-invocable-only and short-circuits to "on" for plugin skills; `pluginConfigs.options` are handed to the plugin, never read to pick a model). To retune a skill, edit its frontmatter in `multiplai-cc-mktplace`.
 
@@ -240,14 +239,13 @@ Run the kit's unit tests after any change to live kit code:
 |------|---------|
 | `dotfiles/settings.json` | Registers the `validate-syntax` + `guard_destructive` hooks; selects the `Clear Writing` output style; `pluginConfigs["multiplai-context@multiplai"]`; statusline; permissions |
 | `dotfiles/output-styles/clear-writing.md` | The writing rules — in the core system prompt and re-stated every turn, which `dotfiles/CLAUDE.md` cannot do |
-| `multiplai.conf` | Kit config (model/effort ceiling for hooks + SDK pipelines, per-task tiers) — at project root, NOT in dotfiles/ |
+| `multiplai.conf` | Kit config (default model/effort for pipeline steps, per-task models and efforts, logging) — at project root, NOT in dotfiles/ |
 | `dotfiles/hooks/validate-syntax.sh` | Runtime hook (PostToolUse Write\|Edit) — YAML/JSON syntax validation |
 | `dotfiles/hooks/guard-destructive.sh` | The registered PreToolUse(Bash) entry point — runs the guard and denies if it could not run |
 | `dotfiles/hooks/guard_destructive.py` | The guard itself — denies unrecoverable commands; the only enforcement layer in bypass-permissions mode |
 | `dotfiles/hooks/gh-app-auth.sh` | Runtime hook (SessionStart) — mints a GitHub App token into gh's credential store; inert without `GH_TOKEN_APP` |
 | `dotfiles/hooks/gh-app-refresh.sh` | Runtime hook (PreToolUse Bash) — re-mints when the cached token has run out; zero-fork hot path |
 | `dotfiles/hooks/gh-tok` | Minting primitive both App hooks call — SSH bridge → host `multiplai-gh-token`; not a user-facing idiom |
-| `dotfiles/hooks/model_resolver.py` | Model-ceiling logic for in-tree skills |
 | `dotfiles/hooks/log_utils.py` | Shared logging helper (used via PYTHONPATH by plugin skills — buildme, deep-research) |
 | `multiplai-cc-mktplace` → `plugins/multiplai-context/` | The memory/context/learning plugin (marketplace repo) — routing, diary, learnings now live here |
 | `evals/conftest.py` | Test infra — `sys.path` wiring + LLM bypass for the kit unit tests |

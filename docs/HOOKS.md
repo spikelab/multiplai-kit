@@ -30,9 +30,8 @@ Wrapper that routes a Python hook invocation to the workspace venv's python
 It also parses `multiplai.conf` (without `eval`) and exports the
 `MULTIPLAI_*` config vars for the invoked script.
 
-### model_resolver.py, log_utils.py (helpers, not registered)
-`model_resolver.py` resolves the model/effort ceiling for the in-tree skills;
-`log_utils.py` is the shared logging helper. Neither is a hook itself.
+### log_utils.py (helper, not registered)
+`log_utils.py` is the shared logging helper. It is not a hook itself.
 
 ## Python dependencies
 

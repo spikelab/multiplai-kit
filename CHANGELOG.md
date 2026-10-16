@@ -17,6 +17,16 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The kit venv now requires `claude-agent-sdk>=0.2.168` (was `>=0.2.139`).**
+  0.2.168 bundles Claude CLI 2.1.301, so the plugin skills' nested model calls
+  run the same CLI generation as an interactive session. `./setup.sh`
+  reinstalls from `requirements.txt` on every run, and a container re-syncs its
+  venv volume on its next launch because the file's hash changed; the raised
+  floor makes both upgrade the SDK. multiplai-core#55 raises the `[sdk]` extra
+  and multiplai-gui#60 raises the hub's floor and runtime minimum
+  (`MIN_SDK_VERSION`) to match, so a hub run against a venv still on an older
+  SDK stops at start with "re-sync the kit venv".
+
 - **Logs are kept 365 days, by hooks and plugin pipelines alike, and nothing
   trims them.** `multiplai.conf` ships `MULTIPLAI_LOG_RETENTION_DAYS=365` (it
   was 90), and `dotfiles/hooks/log_utils.py` defaults to 365 when the line is

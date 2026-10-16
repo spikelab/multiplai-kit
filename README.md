@@ -539,7 +539,7 @@ Separate from the plugin. `multiplai.conf` (project root, **not** in `dotfiles/`
 | `MULTIPLAI_MODEL` | unset | Model for any pipeline step no config names; unset means the step uses the Claude Code session's model. A family name (`haiku`, `sonnet`, `opus`, `fable`) or a full model ID. Not a cap |
 | `MULTIPLAI_EFFORT` | unset | Effort for any pipeline step no config names; unset means the session's effort (`low`, `medium`, `high`, `xhigh`, `max`). Not a cap |
 | `MULTIPLAI_LOG_LEVEL` | `INFO` | Component log verbosity |
-| `MULTIPLAI_LOG_RETENTION_DAYS` | `90` | Rotated-log retention in days — shipped default 90; `0` means keep forever (see [Data & retention](#data--retention)) |
+| `MULTIPLAI_LOG_RETENTION_DAYS` | `365` | Rotated-log retention in days, for hooks and plugin pipelines alike — shipped default 365; `0` means keep forever (see [Data & retention](#data--retention)) |
 
 A pipeline step (one SDK call that buildme, deep-research, review, spec-extract, codebase-walkthrough or pr makes) takes its model from, in order: the config for that step or its stage, then `MULTIPLAI_MODEL` (environment, then `multiplai.conf`), then the session's model. Effort follows the same order with `MULTIPLAI_EFFORT`, and is resolved separately, so setting only `MULTIPLAI_MODEL` gives that model at the session's effort. Nothing caps a model or an effort. These two settings do not change the model the Claude Code session itself runs on, and background jobs (memory retrieval, catalogs, checkpoints, dream, learning extraction) keep their own defaults.
 
@@ -736,8 +736,8 @@ part lives.
 
 | Surface | What's in it | Retention |
 |---|---|---|
-| `runtime/logs/*-YYYY-MM-DD.log` | Rotated hook/skill logs — routing decisions, prompt excerpts, errors | `MULTIPLAI_LOG_RETENTION_DAYS` (default **90**) |
-| `runtime/logs/hook-errors.log` | Shared error sink, append-only | Size-capped at ~100 KB, not by date |
+| `runtime/logs/*-YYYY-MM-DD.log` | Rotated hook/skill logs — routing decisions, prompt excerpts, errors | `MULTIPLAI_LOG_RETENTION_DAYS` (default **365**) |
+| `runtime/logs/hook-errors.log` | Shared error sink, append-only, never shortened | Moves to `hook-errors-YYYY-MM-DD.log` the next day; the dated files follow `MULTIPLAI_LOG_RETENTION_DAYS` |
 | `<workspace>/.multiplai/data/logs/` | Plugin logs, incl. `activity.log` | Same setting (the plugin reads it too) |
 | `<workspace>/.multiplai/cc-state/projects/<slug>/*.jsonl` | **Claude Code's own session transcripts** — the full text of every message and tool result, including per-request token usage | `cleanupPeriodDays` in `dotfiles/settings.json` (default **365**) |
 | `<workspace>/.multiplai/{memory,diary,learnings}/` | The knowledge corpus you deliberately accumulate | Never auto-deleted — it's the point of the system |

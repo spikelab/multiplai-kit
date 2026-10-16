@@ -17,6 +17,15 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **Logs are kept 365 days, by hooks and plugin pipelines alike, and nothing
+  trims them.** `multiplai.conf` ships `MULTIPLAI_LOG_RETENTION_DAYS=365` (it
+  was 90), and `dotfiles/hooks/log_utils.py` defaults to 365 when the line is
+  missing (it was 7). multiplai-core 0.22 reads the same line, so a pipeline
+  started with `uv run` now prunes at the same age as a hook. `hook-errors.log`
+  is no longer cut to its newest half past 100 KB: the first hook to log on a
+  new UTC day moves the earlier day's file to `hook-errors-YYYY-MM-DD.log`,
+  and that file is deleted whole once it passes the retention.
+
 - **`MULTIPLAI_MODEL` and `MULTIPLAI_EFFORT` are defaults, not ceilings, and
   ship unset.** Each is now the model or effort for any plugin pipeline step
   that no config names. When unset, the step uses the Claude Code session's

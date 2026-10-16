@@ -36,12 +36,9 @@ try:
 except OSError:
     pass
 
-# Default retention — overridden by MULTIPLAI_LOG_RETENTION_DAYS in multiplai.conf
-_DEFAULT_RETENTION_DAYS = 7
-
-# Size limit for append-only logs (hook-errors.log), per the logging
-# standard: "truncated to ~100KB when oversized".
-_ERROR_LOG_MAX_BYTES = 100 * 1024
+# Default retention — overridden by MULTIPLAI_LOG_RETENTION_DAYS in multiplai.conf.
+# Matches multiplai-core's default, so hooks and pipelines keep logs alike.
+_DEFAULT_RETENTION_DAYS = 365
 
 # Retention runs once per process, on first setup_logging() call. Hooks are
 # short-lived processes fired many times a session, so sweeping on every
@@ -49,33 +46,33 @@ _ERROR_LOG_MAX_BYTES = 100 * 1024
 _swept = False
 
 
-def _truncate_oversized(path: Path, max_bytes: int = _ERROR_LOG_MAX_BYTES) -> None:
-    """Truncate an append-only log to its most recent tail when oversized.
+def _rotate_previous_day(path: Path) -> None:
+    """Move an earlier day's append-only log to ``<stem>-<day>.log``.
 
-    Keeps roughly half of *max_bytes* so truncation runs infrequently.
-    Rewrites in place (same inode) so concurrent O_APPEND writers keep
-    working; a few lines may interleave during the rewrite — acceptable
-    for a best-effort error sink. Never raises.
+    *day* is the UTC date of the file's last write. Nothing is shortened:
+    the whole file moves to the dated name, which ``cleanup_old_logs`` then
+    prunes like any other dated log. Shell hooks append to the undated name,
+    so it stays the file to read for today's errors. multiplai-core rotates
+    the same file the same way.
+
+    The move is a hard link to the dated name, then an unlink of the old
+    one. ``os.link`` refuses an existing target, so two processes rotating
+    at once can never overwrite a dated file. A writer that still holds the
+    old file open keeps appending to the dated file. Never raises.
     """
     try:
-        if not path.exists() or path.stat().st_size <= max_bytes:
+        mtime = path.stat().st_mtime
+        day = datetime.fromtimestamp(mtime, timezone.utc).strftime("%Y-%m-%d")
+        if day >= datetime.now(timezone.utc).strftime("%Y-%m-%d"):
             return
-        keep = max_bytes // 2
-        with path.open("r+b") as f:
-            f.seek(-keep, os.SEEK_END)
-            tail = f.read()
-            nl = tail.find(b"\n")
-            if nl != -1:
-                tail = tail[nl + 1:]
-            f.seek(0)
-            f.write(b"[truncated: exceeded %d bytes]\n" % max_bytes + tail)
-            f.truncate()
+        os.link(path, path.with_name(f"{path.stem}-{day}{path.suffix}"))
+        path.unlink()
     except OSError:
         pass
 
 
 def _get_retention_days() -> int:
-    """Read log retention from multiplai.conf. 0 = keep forever. Default 7.
+    """Read log retention from multiplai.conf. 0 = keep forever. Default 365.
 
     A negative value falls back to the default rather than being honoured: it
     would put the cutoff in the future and delete every rotated log.
@@ -249,9 +246,9 @@ def setup_logging(
     logger.addHandler(handler)
 
     # Error handler — also write ERROR+ to shared hook-errors.log.
-    # Enforce the size limit before binding — nothing else ever
-    # truncates this file.
-    _truncate_oversized(log_dir / "hook-errors.log")
+    # Move an earlier day's file to its dated name before binding, so this
+    # one holds today's errors. Nothing shortens it.
+    _rotate_previous_day(log_dir / "hook-errors.log")
     err_handler = logging.FileHandler(log_dir / "hook-errors.log")
     err_handler.setLevel(logging.ERROR)
     err_handler.setFormatter(formatter)

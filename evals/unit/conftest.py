@@ -13,7 +13,8 @@ Three directories, and each has a reason:
   * ``evals/`` — ``_kitpaths``, which carries ``KIT_ROOT``. It is a plain
     module and not this conftest because importing names *from* a conftest
     only resolves under pytest's legacy ``prepend`` import mode.
-  * ``dotfiles/hooks/`` — the live hook modules under test (``model_resolver``).
+  * ``dotfiles/hooks/`` — the live hook modules under test (``guard_destructive``,
+    ``log_utils``).
 """
 
 import sys

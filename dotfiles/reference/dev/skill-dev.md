@@ -151,9 +151,9 @@ Code's own native tools rather than designing a new one.
 Skills are prompts, and a prompt tuned against one model is not automatically
 correct against the next. A model bump can silently change output format,
 verbosity, refusal behaviour, or how literally an instruction is followed —
-none of which raises an error. Run this whenever the `MULTIPLAI_MODEL` ceiling
-changes, a skill's `model:`/`effort:` frontmatter changes, or Claude Code's
-default model moves under you.
+none of which raises an error. Run this whenever `MULTIPLAI_MODEL` changes,
+a skill's `model:`/`effort:` frontmatter changes, or Claude Code's default
+model moves under you.
 
 1. **Smoke-invoke every skill.** Each bundled script runs with `--help` and with
    its documented minimal invocation. Anything that traces back is broken now,

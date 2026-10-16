@@ -39,7 +39,7 @@ except OSError:
 # Default retention — overridden by MULTIPLAI_LOG_RETENTION_DAYS in multiplai.conf
 _DEFAULT_RETENTION_DAYS = 7
 
-# Oversize ceiling for append-only logs (hook-errors.log), per the logging
+# Size limit for append-only logs (hook-errors.log), per the logging
 # standard: "truncated to ~100KB when oversized".
 _ERROR_LOG_MAX_BYTES = 100 * 1024
 
@@ -249,7 +249,7 @@ def setup_logging(
     logger.addHandler(handler)
 
     # Error handler — also write ERROR+ to shared hook-errors.log.
-    # Enforce the oversize ceiling before binding — nothing else ever
+    # Enforce the size limit before binding — nothing else ever
     # truncates this file.
     _truncate_oversized(log_dir / "hook-errors.log")
     err_handler = logging.FileHandler(log_dir / "hook-errors.log")

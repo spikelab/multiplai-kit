@@ -15,6 +15,31 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Changed
+
+- **`MULTIPLAI_MODEL` and `MULTIPLAI_EFFORT` are defaults, not ceilings, and
+  ship unset.** Each is now the model or effort for any plugin pipeline step
+  that no config names. When unset, the step uses the Claude Code session's
+  model or effort. Nothing caps a model or an effort any more. The
+  `multiplai.conf` template ships both lines commented out, so a new install
+  follows the session. The new behaviour comes from multiplai-core and the
+  marketplace plugins; this kit change only updates the template, the docs and
+  the hook launcher. An existing `multiplai.conf` that still sets
+  `MULTIPLAI_MODEL="claude-opus-4-6"` / `MULTIPLAI_EFFORT="high"` makes those
+  the default for every unconfigured step, and the dated ID is no longer
+  rewritten to a newer model. Comment both lines out to follow the session.
+- **`run-hook-python` presets `MULTIPLAI_MODEL` and `MULTIPLAI_EFFORT` to an
+  empty string**, not `claude-sonnet-4-6` / `high`, so a hook sees a value
+  only when the conf sets one. It still exports both.
+- **The log retention comment in `multiplai.conf` notes that multiplai-core
+  keeps logs forever** unless `MULTIPLAI_LOG_RETENTION_DAYS` is a positive
+  number. The shipped value is still `90`.
+
+### Removed
+
+- **`dotfiles/hooks/model_resolver.py` and its tests.** Nothing imported it;
+  it was a copy of the model ceiling that multiplai-core no longer applies.
+
 ### Added
 
 - **`pi` and `codex` in every container session, not only `./pi.sh`.** Every

@@ -26,10 +26,12 @@ if [ -w "$LOGS_DIR" ]; then
   exec 2>>"$LOGS_DIR/hook-errors.log"
 fi
 
-# Load config (debug flag, model, effort, etc.) and export for Python hooks
+# Load config (debug flag, model, effort, etc.) and export for Python hooks.
+# Model and effort start empty, so a hook sees a value only when the conf sets
+# one; empty means "not set", and multiplai-core then uses the session's.
 MULTIPLAI_DEBUG=false
-MULTIPLAI_MODEL="claude-sonnet-4-6"
-MULTIPLAI_EFFORT="high"
+MULTIPLAI_MODEL=""
+MULTIPLAI_EFFORT=""
 # multiplai.conf lives at the kit project root, not in dotfiles/
 CONF_FILE="$MULTIPLAI_HOME/multiplai.conf"
 # Parse KEY=value WITHOUT eval. A committed conf (or a tampered one via a

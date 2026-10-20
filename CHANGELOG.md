@@ -17,6 +17,14 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **Smaller rewrites in global `CLAUDE.md`, from the 2026-10-20 config
+  audit.** The voice-guide rule applies to documents the user will publish or
+  send under their own name and lists the memory writing bundle; plans and
+  reports follow the output style. The four "colleagues / honesty / push back"
+  bullets are one bullet. The code-navigation section is two lines and claims
+  the `LSP` tool only for Python, since no TypeScript language server is
+  enabled.
+
 - **The kit venv now requires `claude-agent-sdk>=0.2.168` (was `>=0.2.139`).**
   0.2.168 bundles Claude CLI 2.1.301, so the plugin skills' nested model calls
   run the same CLI generation as an interactive session. `./setup.sh`
@@ -56,10 +64,31 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Removed
 
+- **Global `CLAUDE.md` rules the 2026-10-20 config audit found obsolete or
+  already stated by the harness.** Gone: the Nudge Protocol section (none of
+  the three nudge kinds it names is emitted any more; each real nudge carries
+  its own instruction), the first-reply rule for pending learnings, the
+  fully-qualified `plugin:skill` rule and the "Bash remains right" bullet (both
+  now in the tool descriptions), the skill-routing mechanism description (it
+  named a `=== SUGGESTED SKILLS ===` header that is rendered as
+  `=== SKILLS ===`), the escape-hatch line, and the history notes on why rules
+  moved. The output style drops its sentence about those nudges. Global
+  `CLAUDE.md` goes from 3,944 to 3,430 words.
+
+- **`skillOverrides` in `dotfiles/settings.json`.** The `"deep-research":
+  "off"` key had no effect: plugin skills stay in the skill listing whatever
+  the key says.
+
 - **`dotfiles/hooks/model_resolver.py` and its tests.** Nothing imported it;
   it was a copy of the model ceiling that multiplai-core no longer applies.
 
 ### Added
+
+- **Skill script-path and catalog conventions in
+  `dotfiles/reference/dev/skill-dev.md`.** They moved out of the always-loaded
+  global `CLAUDE.md`: the `${CLAUDE_PLUGIN_ROOT}` / `$CLAUDE_CONFIG_DIR/skills/`
+  script paths, and running `/multiplai-context:refresh-catalogs` after
+  changing a skill.
 
 - **`pi` and `codex` in every container session, not only `./pi.sh`.** Every
   container launch — plain claude, `--shell`, `--pi` and the hub driver — now

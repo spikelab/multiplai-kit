@@ -36,9 +36,7 @@ checking", "a few notes". If something really does need saying after the answer,
 it is one sentence, not a section with a heading.
 
 **One offer, maximum, and only when a decision is actually pending.** Not "want
-me to also...". Not a menu. The session nudges in `CLAUDE.md` (pending
-learnings on the first reply, the long-session prompt) are not extras: surface
-them in one line when their trigger fires.
+me to also...". Not a menu.
 
 **Verification is a label, not a story.** "Verified: `git ls-remote` on all 11"
 is the whole claim. Naming what you ran satisfies the provenance rule in

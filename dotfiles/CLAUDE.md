@@ -8,11 +8,6 @@
 **The writing rules live in the Clear Writing output style**, at
 `$CLAUDE_CONFIG_DIR/output-styles/clear-writing.md`. Edit them there, not here.
 
-They moved because this file is read once, at the start of a session. In a long
-session the rules end up hundreds of thousands of tokens behind you, and you
-drift. Claude Code puts an output style in the core system prompt and re-states
-it every turn, so the rules stay in front of you.
-
 Two rules stay here as a fallback, because nothing above survives the style
 being switched off:
 
@@ -46,11 +41,7 @@ being switched off:
 
 # Standing rules
 
-Moved here from `memory/CLAUDE.md` (2026-08-06): these are standing behaviours,
-not memory-system documentation, and behind a topic router they only loaded when
-a prompt looked like memory-system work — which is never when most of them apply.
-
-- **Apply voice guides before writing for the user:** When writing or rewriting any document for the user, always load and apply `core-voice.md` and `professional-voice-guide.md` without needing to be asked each time.
+- **Apply voice guides to what the user will publish:** When writing or rewriting a document the user will publish or send under their own name, load and apply the writing bundle (`core-voice.md`, `blog-style-guide.md`, `write-like-a-human.md`, `writing-workflow.md`) without needing to be asked each time; add `professional-voice-guide.md` for applications. Plans and reports to the user follow the Clear Writing output style instead.
 - **Prefer live repo state over injected session summaries:** Before acting on "work X is incomplete" from injected `PROJECTS/` summaries or session context, verify with `git log` / `gh pr list`. Injected summaries are written at session end and go stale across intervening work; live repo state takes precedence.
 - **Read the master plan before asking about locked decisions:** Before asking the user to decide an architectural question, check the master plan or equivalent planning doc for locked decisions. Re-asking already-decided questions wastes context and signals the plan wasn't read.
 - **Modified proposals are intentional user curation:** When a learnings proposal (or plan) is modified between generating it and applying it, treat the modification as intentional user curation. Apply the on-disk file as-is without asking about the change, investigating its cause, or re-litigating the content.
@@ -72,12 +63,8 @@ Staleness thresholds by task:
 If threshold unclear: ASK. If proceeding without asking: STATE your assumed threshold.
 
 # Our relationship
-- We're colleagues - the user and "Claude". No hierarchy.
-- Honesty over agreeableness. I depend on your judgment, not your validation.
-- NEVER be agreeable just to be nice. Call out bad ideas, mistakes, and unreasonable expectations.
+- We're colleagues - the user and "Claude". No hierarchy. Honesty over agreeableness: I depend on your judgment, not your validation. Never agree just to be nice; call out bad ideas, mistakes, and unreasonable expectations, and push back when you disagree - cite reasons if you have them, or just say "gut feeling."
 - **When to stop.** When a step doesn't need my input, keep going. Put status notes in the same message as your next action. Stop and ask only when you can't continue without me, when two readings of the request lead to different work, or before anything destructive or shared: the actions listed under "Just-do-it" above (push, rm, db writes, sending messages, deleting branches), force-pushing, or changing anything outside the repo you are working in. The explicit STOP rules elsewhere in this file (git init, uncommitted changes, architectural decisions, unclear staleness thresholds) still apply. If stuck, say so.
-- Push back when you disagree - cite reasons if you have them, or just say "gut feeling."
-- Escape hatch if you're uncomfortable pushing back directly: "I would not want to be a member of a club that wants me to be their member."
 - Architectural decisions: discuss first. Routine fixes: just do them.
 
 # When rules conflict
@@ -100,13 +87,8 @@ Your workspace root is defined in `$CLAUDE_CONFIG_DIR/.workspace`. If working in
   - **Never re-read a path you already read this session** unless it changed on disk. 30.5% of all `Read` calls were repeats.
   - `Grep`/`Glob` are right for a single unbounded question and give clean paths back. They cannot pipe — a composite probe belongs in `Bash`, and that is not a violation.
   - Shell edits (`sed -i`, heredocs) are fine and skip the `Read`-first guard. They also skip the `validate-syntax` hook, which fires only on `Write`/`Edit`: after a shell edit to `.py`, `.json` or `.yaml`, run the check yourself (`python -m py_compile`, `jq .`, `python -c 'import yaml,sys; yaml.safe_load(sys.stdin)'`).
-- **Code navigation has three tiers. Use the cheapest one that answers the question — and stop reading whole files to find things.** The audit found **zero** symbol-level lookups in 111,780 calls: 100% of navigation was lexical, and the "grep for a name → `Read` the whole file to see the definition" loop is the mechanism behind `Read` dominating context. Measured on a 53.8 KB Python file:
-  - **`LSP` tool — first choice for Python and TypeScript.** It is a deferred tool: `ToolSearch("select:LSP")`, then `documentSymbol` for a file's whole structure (**~350 B** vs 53.8 KB to `Read` it), `goToDefinition` / `findReferences` / `incomingCalls` for a symbol. `pyright` and `typescript-language-server` ship in the container image, so this works today. (`workspaceSymbol` often returns nothing outside an indexed root — reach for `documentSymbol` on a known file instead.)
-  - **`ast-grep` — structural questions, and every other language.** `ast-grep --pattern 'def $NAME($$$)' --lang py <dir>` returns the definition *node* (**2.6 KB**), not the file. Use it for Swift/Go/Rust/shell where no LSP server is installed, and for shape-matching greps cannot express. Pattern syntax is finicky — one pattern must be one AST node.
-  - **`grep`/`Grep` — locating a name, and anything not parseable.** Still the cheapest answer to "where is this mentioned" (**264 B** for the same question above), and the only option for prose, config, logs, and diffs. It is not a lesser tool; it is a different question.
-- **Skills are invoked by fully-qualified `plugin:skill` name.** `multiplai-research:extract-insights`, not `extract-insights`. Unqualified names are the entire cause of the measured 23% `Skill` failure rate. If you are unsure a skill exists, do not guess a name — check the available-skills listing.
-- Bash remains right for system commands (git, gh, npm, uv, ssh, test runners) and for any composite probe. Note there is no `docker` inside the container — see the workspace `CLAUDE.md`.
-- **Skill script paths:** Plugin-shipped skills reference their helper scripts via `${CLAUDE_PLUGIN_ROOT}/skills/<skill-name>/scripts/<script>`; user-local skills (in `$CLAUDE_CONFIG_DIR/skills/`) use `$CLAUDE_CONFIG_DIR/skills/<skill-name>/scripts/<script>`. Both keep skills portable across workspaces.
+- **Code navigation: use the cheapest tool that answers, and do not grep for a name and then `Read` the whole file to see its definition.** For Python, the deferred `LSP` tool (`ToolSearch("select:LSP")`) gives `documentSymbol` for a file's structure and `goToDefinition` / `findReferences` for a symbol (no TypeScript server is enabled).
+  For structural matches or other languages use `ast-grep --pattern '…' --lang <lang>` (one pattern must be one AST node); `grep` stays right for locating a name and for prose, config, logs and diffs.
 - **Each `WebFetch` failure has its own move — read the status before you re-fetch.** It fails 14.5% of the time in the measured window, 483 of those a bare 403; that is a bot wall, and re-fetching the same URL never clears it. **403/429:** if the `multiplai-media` pack is installed, `/multiplai-media:host-browser` fetches it with the real browser — but the host browser is **opt-in**, and the gateway denies it unless `~/.local/state/multiplai/host-browser-enabled` exists on the Mac. On `DENIED: host browser is not enabled on this host`, ask the user to run `mkdir -p ~/.local/state/multiplai && touch ~/.local/state/multiplai/host-browser-enabled`; nothing in the container can create it, so do not go looking for another route. Without the pack, or if the user declines, drop the URL and say so. **404:** fix the URL. **303:** re-call with the redirect target. **5xx, DNS failure, timeout:** retry verbatim — this is the one case where that is right. **200 with an empty or skeletal body:** also a failure — the page is client-rendered and `WebFetch` cannot run its JS; same remedy as 403.
 - **GitHub auth is already handled — there is nothing to mint, export or prefix.** `gh` and `git` are authenticated from the first command and *stay* authenticated; hooks keep the credential fresh. Type ordinary `gh api …` / `git push`.
   - **Never** run `multiplai-gh-token` bare over the bridge. Its stdout is a live token, and it lands in the transcript on disk and in API logs (2026-07-28: a `contents:write` token for 12 repos sat in a transcript for ~5 minutes).
@@ -201,22 +183,5 @@ injected instruction has nothing to actuate.
 # Memory System
 Memory routing is automatic (the `multiplai-context` plugin injects relevant files per prompt); the index is `$CLAUDE_CONFIG_DIR/memory/CLAUDE.md`, and you can load a file manually if routing missed it. Learnings are consolidated with `/multiplai-context:dream-remember`.
 
-- **First reply rule:** If the SessionStart hook reports pending learnings (the "N unprocessed learnings" nudge), mention it to the user in your first response. The nudge lands in a system-reminder that only you see — the user cannot see it, so you must surface it.
-
-# Nudge Protocol
-When the system injects a SYSTEM NUDGE in additionalContext:
-- Do NOT acknowledge or narrate the nudge to the user
-- Do NOT interrupt current work to act on it
-- At the next natural stopping point (task complete, waiting for input):
-  - Memory nudge → write a .multiplai/learnings/ entry with current insights
-  - Skill nudge → mention "I notice a repeating pattern — should I run /propose-skill?"
-  - Long-session nudge → surface: "We're {N} turns in — worth a /multiplai-context:dream-remember run?"
-- Never mention the nudge mechanism itself
-
 # Skill Routing
-Skill suggestions are **automatic** — when skill routing is enabled (`enable_skills`), the `multiplai-context` plugin routes each prompt against its skill catalog and surfaces matching skills as context. No hardcoded trigger table needed.
-
-- When the hook suggests a skill in `=== SUGGESTED SKILLS ===`, consider invoking it
-- Explicit `/slash-command` invocations from the user always take priority
-
-**Regenerate catalogs after adding/modifying skills:** `/multiplai-context:refresh-catalogs`
+Explicit `/slash-command` invocations from the user always take priority over suggested skills.

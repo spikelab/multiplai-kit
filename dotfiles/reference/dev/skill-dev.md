@@ -103,6 +103,11 @@ cd "$CLAUDE_CONFIG_DIR/skills/<skill>/scripts" && python3 -m <package> \
 
 Always pass `--session-id` for log correlation.
 
+## Script Paths and Catalogs
+
+- Plugin-shipped skills reference their helper scripts via `${CLAUDE_PLUGIN_ROOT}/skills/<skill-name>/scripts/<script>`; user-local skills (in `$CLAUDE_CONFIG_DIR/skills/`) use `$CLAUDE_CONFIG_DIR/skills/<skill-name>/scripts/<script>`. Both keep skills portable across workspaces.
+- Run `/multiplai-context:refresh-catalogs` after adding or changing a skill, so skill routing sees it.
+
 ## Testing
 
 - All tests mock LLM/API calls — no API keys needed, runs in milliseconds

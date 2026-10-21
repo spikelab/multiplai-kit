@@ -38,10 +38,8 @@ import json
 import subprocess
 
 import pytest
-
-from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
-
 from _kitpaths import KIT_ROOT
+from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
 # Serves `docker ps` from a counter-indexed script so the pre-run and post-exit
 # observations can be told apart — the point of the second write is that it sees

@@ -58,8 +58,8 @@ import signal
 import subprocess
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 HOOKS_DIR = KIT_ROOT / "dotfiles" / "hooks"
 AUTH_HOOK = HOOKS_DIR / "gh-app-auth.sh"
 REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"

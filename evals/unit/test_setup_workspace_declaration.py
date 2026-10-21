@@ -45,8 +45,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 SETUP_SH = KIT_ROOT / "setup.sh"
 
 # Matching on source text is deliberate: a rewrite should make these tests fail
@@ -75,7 +75,7 @@ def _extract_function(name: str) -> str:
         if lines[end] == indent + "}":
             body = lines[start:end + 1]
             return "\n".join(
-                ln[len(indent):] if ln.startswith(indent) else ln for ln in body
+                ln.removeprefix(indent) for ln in body
             )
     raise AssertionError(f"could not find the closing brace of {name}()")
 

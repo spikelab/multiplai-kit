@@ -52,8 +52,8 @@ import termios
 import time
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-watch"
 
 # Records the arguments it was handed, then exits — one redraw, no loop, because

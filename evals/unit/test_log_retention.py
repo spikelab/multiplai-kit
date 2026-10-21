@@ -10,9 +10,8 @@ import logging
 import os
 import time
 
-import pytest
-
 import log_utils
+import pytest
 from log_utils import _get_retention_days, cleanup_old_logs, setup_logging
 
 

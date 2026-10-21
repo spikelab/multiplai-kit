@@ -33,8 +33,8 @@ A tab name is cosmetic. It must never cost a session.
 """
 
 import re
-import pytest
 
+import pytest
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
 # Logs every invocation and answers the two queries the launcher makes.

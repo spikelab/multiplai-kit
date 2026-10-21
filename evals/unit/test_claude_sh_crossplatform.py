@@ -32,7 +32,6 @@ close a cycle, since this file already imports the fixture from there.
 import platform
 
 import pytest
-
 from _platform_stubs import _pretend_linux, _pretend_macos
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 

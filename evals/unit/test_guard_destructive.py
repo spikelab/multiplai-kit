@@ -9,7 +9,6 @@ import io
 import json
 
 import pytest
-
 from guard_destructive import check, main
 
 

@@ -32,10 +32,9 @@ import subprocess
 import textwrap
 
 import pytest
-
+from _kitpaths import KIT_ROOT
 from _platform_stubs import _pretend_linux, _pretend_macos
 
-from _kitpaths import KIT_ROOT
 LAUNCHER = KIT_ROOT / "claude.sh"
 
 # Two contracts live in here — `image` exits 0, and a `run` carrying

@@ -33,14 +33,14 @@ import importlib.util
 import json
 import re
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 RENDERER = KIT_ROOT / "dotfiles" / "scripts" / "fleet-render.py"
 
-NOW = datetime(2026, 8, 7, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC)
 
 
 def _load():

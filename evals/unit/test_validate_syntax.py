@@ -23,8 +23,8 @@ import subprocess
 import sys
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 HOOK = KIT_ROOT / "dotfiles" / "hooks" / "validate-syntax.sh"
 
 

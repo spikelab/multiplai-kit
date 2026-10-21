@@ -18,7 +18,6 @@ import subprocess
 import time
 
 import pytest
-
 from _kitpaths import KIT_ROOT
 
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "statusline.sh"

@@ -33,8 +33,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 SETTINGS = KIT_ROOT / "dotfiles" / "settings.json"
 HOOKS = KIT_ROOT / "dotfiles" / "hooks"
 WRAPPER = HOOKS / "guard-destructive.sh"

@@ -54,7 +54,6 @@ import shutil
 import subprocess
 
 import pytest
-
 from _kitpaths import KIT_ROOT
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 

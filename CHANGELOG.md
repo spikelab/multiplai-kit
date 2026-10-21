@@ -17,6 +17,17 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ### Changed
 
+- **The kit's Python is linted and formatted with ruff 0.17.1, and the eval
+  suite runs in parallel.** `ruff.toml` pins ruff 0.17.1 with its default rule
+  set (`dotfiles/**` targets Python 3.9, since those scripts can run under the
+  host's system `python3`); violations already present are listed per file under
+  `[lint.per-file-ignores]`, so new code gets every rule. A new CI job runs
+  `ruff check` and `ruff format --check`. `requirements.txt` gains
+  `pytest-xdist`, so the next `./setup.sh` re-syncs the shared venv, and CI and
+  the documented test commands pass `-n auto`. The safe autofixes and the
+  reformat (including Python code blocks in `dotfiles/reference/dev/*.md`) are
+  listed in `.git-blame-ignore-revs`.
+
 - **Smaller rewrites in global `CLAUDE.md`, from the 2026-10-20 config
   audit.** The voice-guide rule applies to documents the user will publish or
   send under their own name and lists the memory writing bundle; plans and

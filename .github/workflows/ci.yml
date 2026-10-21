@@ -39,7 +39,7 @@ jobs:
           uv pip install --python .venv/bin/python -r requirements.txt
 
       - name: Run evals
-        run: .venv/bin/python -m pytest evals/ -q
+        run: .venv/bin/python -m pytest evals/ -q -n auto
 
   lint:
     name: ruff (check + format)

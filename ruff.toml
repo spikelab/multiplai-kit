@@ -8,3 +8,25 @@ target-version = "py312"
 per-file-target-version = { "dotfiles/**" = "py39" }
 extend-exclude = []
 # no line-length (88 default), no select/extend-select
+
+# Violations present when ruff was adopted (2026-10). Remove an entry by fixing it; never add one for new code.
+[lint.per-file-ignores]
+"dotfiles/hooks/guard_destructive.py" = ["EXE001", "SIM102"]
+"evals/unit/test_claude_sh_crossplatform.py" = ["F811"]
+"evals/unit/test_claude_sh_docker_state.py" = ["F811"]
+"evals/unit/test_claude_sh_drain.py" = ["F811", "PLW1510"]
+"evals/unit/test_claude_sh_env.py" = ["PLW1510"]
+"evals/unit/test_claude_sh_keychain.py" = ["F811"]
+"evals/unit/test_claude_sh_network.py" = ["F811"]
+"evals/unit/test_claude_sh_overlay_staleness.py" = ["F811"]
+"evals/unit/test_claude_sh_panes.py" = ["PLW1510"]
+"evals/unit/test_claude_sh_pi.py" = ["F811", "PLW1510", "RUF059"]
+"evals/unit/test_claude_sh_roster.py" = ["PLW1510"]
+"evals/unit/test_config_loading.py" = ["PLW1510"]
+"evals/unit/test_fleet_panes.py" = ["PLW1510"]
+"evals/unit/test_fleet_viewed.py" = ["PLW1510"]
+"evals/unit/test_fleet_watch.py" = ["BLE001", "PLW1510", "S110"]
+"evals/unit/test_gh_app_hooks.py" = ["PLW1510"]
+"evals/unit/test_guard_hook_wiring.py" = ["PLW1510"]
+"evals/unit/test_setup_workspace_declaration.py" = ["PLW1510"]
+"evals/unit/test_validate_syntax.py" = ["PLW1510"]

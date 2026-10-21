@@ -1,0 +1,10 @@
+required-version = "==0.17.1"
+target-version = "py312"
+# dotfiles/hooks and dotfiles/scripts can run under the host's system python3
+# (dotfiles/scripts/fleet-watch calls bare python3; dotfiles/hooks/run-hook-python
+# falls back to it), which on a stock macOS is Apple's 3.9 (recalled, not
+# verified on a host). py39 stops pyupgrade from rewriting them into syntax or
+# APIs that need a newer Python, such as datetime.UTC (3.11+).
+per-file-target-version = { "dotfiles/**" = "py39" }
+extend-exclude = []
+# no line-length (88 default), no select/extend-select

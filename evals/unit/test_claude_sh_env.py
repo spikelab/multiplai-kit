@@ -172,8 +172,13 @@ class Kit:
                     out[key] = value
             return out
 
-        return Launch(argv, _as_env(self.env_out), proc.returncode,
-                      proc.stdout + proc.stderr, _as_env(self.bare_env_out))
+        return Launch(
+            argv,
+            _as_env(self.env_out),
+            proc.returncode,
+            proc.stdout + proc.stderr,
+            _as_env(self.bare_env_out),
+        )
 
 
 def _patched_launcher():
@@ -216,7 +221,9 @@ def test_patch_touches_only_container_detection():
     """
     original = LAUNCHER.read_text().splitlines()
     patched = _patched_launcher().splitlines()
-    assert original != patched, "container-detection literal not found — fixture is stale"
+    assert original != patched, (
+        "container-detection literal not found — fixture is stale"
+    )
 
     rewritten = [
         (before, after)
@@ -361,7 +368,9 @@ def test_ssh_socket_is_remapped_not_passed_through(kit):
     """The mount block forwards the socket at its container path; the host path
     must not also be emitted, or argv order decides which wins."""
     result = kit.launch("--shell", "-c", "true", SSH_AUTH_SOCK="/tmp/real-agent.sock")
-    assert result.forwarded_with_value("SSH_AUTH_SOCK") == "SSH_AUTH_SOCK=/ssh-agent.sock"
+    assert (
+        result.forwarded_with_value("SSH_AUTH_SOCK") == "SSH_AUTH_SOCK=/ssh-agent.sock"
+    )
 
 
 def test_network_profile_is_launcher_only(kit):
@@ -538,7 +547,9 @@ def test_unknown_profile_errors_and_lists_real_ones(kit):
     result = kit.launch("--profile", "nope", "--shell", "-c", "true")
     assert result.status != 0
     assert "work" in result.output
-    assert "example" not in result.output, "listed the env.example template as a profile"
+    assert "example" not in result.output, (
+        "listed the env.example template as a profile"
+    )
 
 
 # --- GitHub auth mode selection ----------------------------------------------
@@ -603,14 +614,18 @@ def test_app_mode_forwards_the_app_name_and_no_token(kit):
     assert not result.mentions("GH_TOKEN")
 
 
-@pytest.mark.parametrize("pat_line", ['GH_TOKEN="pat-token"', 'GH_TOKEN_KEYCHAIN="gh-acme"'])
+@pytest.mark.parametrize(
+    "pat_line", ['GH_TOKEN="pat-token"', 'GH_TOKEN_KEYCHAIN="gh-acme"']
+)
 def test_both_identities_declared_in_files_is_a_hard_error(kit, pat_line):
     """Not a precedence rule. The message must name both variables and the file
     each came from — "both are set" is useless advice to someone with three env
     files."""
     _pretend_macos(kit)
     _install_host_minter(kit)
-    kit.write_env(APP_ENV_FILE.format(ws=kit.workspace).replace('GH_TOKEN_APP="acme"', pat_line))
+    kit.write_env(
+        APP_ENV_FILE.format(ws=kit.workspace).replace('GH_TOKEN_APP="acme"', pat_line)
+    )
     kit.write_profile("acme", 'GH_TOKEN_APP="acme"\n')
 
     result = kit.launch("--profile", "acme", "--shell", "-c", "true")
@@ -711,6 +726,7 @@ def test_launcher_parses():
 # These pin the block's effects on the bare path specifically. The container
 # path is already covered above; what must not regress is that the two agree.
 
+
 def test_local_mode_still_forwards_the_pat(kit):
     """The baseline: a bare launch is authenticated at all."""
     result = kit.launch("--local")
@@ -767,7 +783,9 @@ def test_local_mode_mints_from_the_keychain(kit):
     security.chmod(0o755)
     kit.write_env(
         APP_ENV_FILE.format(ws=kit.workspace).replace(
-            'GH_TOKEN_APP="acme"', 'GH_TOKEN_KEYCHAIN="gh-acme"'))
+            'GH_TOKEN_APP="acme"', 'GH_TOKEN_KEYCHAIN="gh-acme"'
+        )
+    )
 
     result = kit.launch("--local")
     assert result.status == 0, result.output

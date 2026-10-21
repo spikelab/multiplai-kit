@@ -46,6 +46,7 @@ In modules that just need a logger (don't call setup_logging again):
 
 ```python
 import logging
+
 log = logging.getLogger(__name__)
 ```
 

@@ -75,10 +75,15 @@ class TestSettingsWiring:
 
     @pytest.mark.parametrize(
         "event,matcher",
-        [("SessionStart", None), ("PreToolUse", "Bash"),
-         ("PostToolUse", "Write|Edit|NotebookEdit")],
+        [
+            ("SessionStart", None),
+            ("PreToolUse", "Bash"),
+            ("PostToolUse", "Write|Edit|NotebookEdit"),
+        ],
     )
-    def test_every_redirecting_command_creates_the_directory_first(self, event, matcher):
+    def test_every_redirecting_command_creates_the_directory_first(
+        self, event, matcher
+    ):
         """Any command that still redirects must make its own sink first.
 
         The guard is immune now, but a hook that dies on the redirect is a
@@ -154,7 +159,8 @@ class TestWrapperFailsClosed:
         result = self._run(config)
 
         reason = json.loads(result.stdout)["hookSpecificOutput"][
-            "permissionDecisionReason"]
+            "permissionDecisionReason"
+        ]
         assert "guard-destructive.log" in reason
 
     def test_child_sessions_are_still_guarded(self, tmp_path):
@@ -199,9 +205,7 @@ class TestWrapperFailsClosed:
         """The guard reads the command off stdin — a wrapper that eats it
         would turn every call into a no-op verdict."""
         seen = tmp_path / "seen.json"
-        config = self._config_dir(
-            tmp_path, f"#!/bin/bash\ncat > {seen}\nexit 0\n"
-        )
+        config = self._config_dir(tmp_path, f"#!/bin/bash\ncat > {seen}\nexit 0\n")
         self._run(config)
 
         assert json.loads(seen.read_text()) == json.loads(BASH_PAYLOAD)

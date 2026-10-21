@@ -39,6 +39,7 @@ async def bad_example():
     time.sleep(5)  # Blocks everything!
     result = sync_db_query()  # Also blocks!
 
+
 # GOOD: Non-blocking
 async def good_example():
     await asyncio.sleep(5)  # Yields control
@@ -482,7 +483,9 @@ async def robust_call(prompt: str) -> str | None:
         raise
 
     except RateLimitError as e:
-        logger.warning(f"Rate limited, retry after: {e.response.headers.get('retry-after')}")
+        logger.warning(
+            f"Rate limited, retry after: {e.response.headers.get('retry-after')}"
+        )
         raise
 
     except BadRequestError as e:

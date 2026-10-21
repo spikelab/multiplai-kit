@@ -72,11 +72,13 @@ def _docker(kit, *, labels, base_present=True, current_base_id=""):
     """Configure the stub: `labels` is the combined `id|name` line the
     launcher's label read returns ('' for an image with no labels map)."""
     stub = kit.stub_dir / "docker"
-    stub.write_text(DOCKER_STUB_TEMPLATE.format(
-        labels=labels,
-        base_present="1" if base_present else "0",
-        current_base_id=current_base_id,
-    ))
+    stub.write_text(
+        DOCKER_STUB_TEMPLATE.format(
+            labels=labels,
+            base_present="1" if base_present else "0",
+            current_base_id=current_base_id,
+        )
+    )
     stub.chmod(0o755)
 
 
@@ -90,8 +92,9 @@ def _launch_overlay(kit):
 
 def test_stale_overlay_warns_and_still_launches(kit):
     """Behind-the-base is a nudge, not an error: the overlay still works."""
-    _docker(kit, labels="sha256:old|claude-multiplai:local",
-            current_base_id="sha256:new")
+    _docker(
+        kit, labels="sha256:old|claude-multiplai:local", current_base_id="sha256:new"
+    )
 
     result, _ = _launch_overlay(kit)
 
@@ -103,8 +106,9 @@ def test_stale_overlay_warns_and_still_launches(kit):
 def test_warning_names_the_overlay_and_the_remediation(kit):
     """The reader needs which image is behind and the one command that fixes
     every registered overlay at once."""
-    _docker(kit, labels="sha256:old|claude-multiplai:local",
-            current_base_id="sha256:new")
+    _docker(
+        kit, labels="sha256:old|claude-multiplai:local", current_base_id="sha256:new"
+    )
 
     result, _ = _launch_overlay(kit)
 
@@ -114,14 +118,16 @@ def test_warning_names_the_overlay_and_the_remediation(kit):
 
 
 def test_current_overlay_stays_silent(kit):
-    _docker(kit, labels="sha256:same|claude-multiplai:local",
-            current_base_id="sha256:same")
+    _docker(
+        kit, labels="sha256:same|claude-multiplai:local", current_base_id="sha256:same"
+    )
 
     result, lookups = _launch_overlay(kit)
 
     assert "WARNING" not in result.output
-    assert lookups == ["claude-multiplai:local"], \
+    assert lookups == ["claude-multiplai:local"], (
         "the current-base lookup must use the recorded name, exactly once"
+    )
 
 
 def test_label_less_base_image_is_skipped(kit):
@@ -163,8 +169,7 @@ def test_missing_name_label_skips_instead_of_guessing(kit):
 def test_deleted_base_image_stays_silent(kit):
     """The recorded base no longer exists locally: nothing to compare, and
     warn-only means this can never block or noise up a launch."""
-    _docker(kit, labels="sha256:old|claude-multiplai:renamed",
-            base_present=False)
+    _docker(kit, labels="sha256:old|claude-multiplai:renamed", base_present=False)
 
     result, lookups = _launch_overlay(kit)
 

@@ -140,6 +140,7 @@ def _calls(kit, verb=""):  # noqa: F811
 
 # --- what the tab gets called -------------------------------------------------
 
+
 def test_a_launch_renames_the_window_to_the_container_name(tmuxkit):
     _launch(tmuxkit)
 
@@ -187,6 +188,7 @@ def test_the_rename_targets_this_pane_not_the_active_window(tmuxkit):
 
 # --- putting it back ----------------------------------------------------------
 
+
 def test_an_automatic_name_is_handed_back_to_tmux(tmuxkit):
     """`rename-window` silently turns `automatic-rename` off. Restoring the
     captured string would pin the shell's name from launch time forever; the
@@ -233,8 +235,9 @@ def test_a_globally_pinned_name_is_left_alone_too(tmuxkit):
     Reproduced on tmux 3.4: with a global `off`, `-v` returns empty while both
     `-gv` and `-Av` return `off`.
     """
-    _launch(tmuxkit, TMUX_AUTO_STUB="off", TMUX_AUTO_SCOPE="global",
-            TMUX_NAME_STUB="notes")
+    _launch(
+        tmuxkit, TMUX_AUTO_STUB="off", TMUX_AUTO_SCOPE="global", TMUX_NAME_STUB="notes"
+    )
 
     assert _calls(tmuxkit, "rename-window") == []
     assert _calls(tmuxkit, "set-window-option") == []
@@ -256,8 +259,13 @@ def test_a_window_that_opts_back_in_is_renamed_despite_the_global(tmuxkit):
     Verified on tmux 3.4 with a global `off` and a window-local `on`:
     `-v` → `on`, `-gv` → `off`, `show-options -w -Av` → `on`.
     """
-    _launch(tmuxkit, TMUX_AUTO_STUB="off", TMUX_AUTO_SCOPE="global",
-            TMUX_AUTO_LOCAL="on", TMUX_NAME_STUB="scratch")
+    _launch(
+        tmuxkit,
+        TMUX_AUTO_STUB="off",
+        TMUX_AUTO_SCOPE="global",
+        TMUX_AUTO_LOCAL="on",
+        TMUX_NAME_STUB="scratch",
+    )
 
     assert _calls(tmuxkit, "rename-window"), "the window opted back in"
 
@@ -284,11 +292,13 @@ def test_the_original_is_read_before_the_first_rename(tmuxkit):
     _launch(tmuxkit)
 
     calls = _calls(tmuxkit)
-    assert calls.index(next(c for c in calls if c.startswith("display-message"))) < \
-        calls.index(next(c for c in calls if c.startswith("rename-window")))
+    assert calls.index(
+        next(c for c in calls if c.startswith("display-message"))
+    ) < calls.index(next(c for c in calls if c.startswith("rename-window")))
 
 
 # --- when it must not act -----------------------------------------------------
+
 
 def test_outside_tmux_nothing_is_called(tmuxkit):
     launch = _launch(tmuxkit, inside=False)
@@ -300,9 +310,13 @@ def test_outside_tmux_nothing_is_called(tmuxkit):
 def test_a_tmux_without_a_pane_is_not_guessed_at(tmuxkit):
     """`$TMUX` without `$TMUX_PANE` means we cannot say which window is ours.
     Renaming the active one would hit a bystander tab."""
-    launch = tmuxkit.launch("--shell", "-c", "true",
-                            TMUX="/tmp/tmux-501/default,1234,0",
-                            TMUX_LOG=str(tmuxkit.tmux_log))
+    launch = tmuxkit.launch(
+        "--shell",
+        "-c",
+        "true",
+        TMUX="/tmp/tmux-501/default,1234,0",
+        TMUX_LOG=str(tmuxkit.tmux_log),
+    )
 
     assert _calls(tmuxkit) == []
     assert launch.status == 0
@@ -319,11 +333,13 @@ def test_local_mode_never_renames(tmuxkit):
 
 # --- when it cannot act -------------------------------------------------------
 
+
 def test_no_tmux_binary_is_a_silent_no_op(kit):  # noqa: F811
     """`$TMUX` is inherited by anything the pane spawns, so it can be set with
     no tmux on PATH — a container shell being the everyday case."""
-    launch = kit.launch("--shell", "-c", "true",
-                        TMUX="/tmp/tmux-501/default,1234,0", TMUX_PANE="%1")
+    launch = kit.launch(
+        "--shell", "-c", "true", TMUX="/tmp/tmux-501/default,1234,0", TMUX_PANE="%1"
+    )
 
     assert launch.status == 0
 

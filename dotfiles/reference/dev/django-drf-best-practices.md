@@ -65,6 +65,7 @@ objection), and it never scatters multi-model logic across views and serializers
 # app/models.py — single-model logic belongs here
 class Booking(models.Model):
     ...
+
     @property
     def is_cancellable(self) -> bool:
         return self.status == Status.CONFIRMED and self.check_in > timezone.localdate()
@@ -237,19 +238,21 @@ hooks silently misbehaves. Per-action `get_serializer_class()` / `get_permission
 are fine.
 
 ```python
-class BookingViewSet(GenericViewSet, ListModelMixin, RetrieveModelMixin, CreateModelMixin):
+class BookingViewSet(
+    GenericViewSet, ListModelMixin, RetrieveModelMixin, CreateModelMixin
+):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         # Tenant scoping belongs HERE — see §10.
-        return (
-            Booking.objects
-            .filter(property__organisation=self.request.user.organisation)
-            .select_related("property", "guest")
-        )
+        return Booking.objects.filter(
+            property__organisation=self.request.user.organisation
+        ).select_related("property", "guest")
 
     def get_serializer_class(self):
-        return BookingWriteSerializer if self.action == "create" else BookingReadSerializer
+        return (
+            BookingWriteSerializer if self.action == "create" else BookingReadSerializer
+        )
 
     def perform_create(self, serializer):
         # Request-implicit data belongs here, not in the serializer.
@@ -359,7 +362,7 @@ bookings = (
             queryset=Guest.objects.select_related("nationality"),  # avoid N+1 inside the prefetch
         )
     )
-)
+)  # fmt: skip
 ```
 
 ### The traps
@@ -383,9 +386,9 @@ bookings = (
 ### Reaching for the right tool
 
 ```python
-Booking.objects.values_list("id", flat=True)          # ids only — no model instantiation
-Booking.objects.aggregate(total=Sum("amount"))        # aggregate in SQL, never in Python
-Booking.objects.iterator(chunk_size=2000)             # large scans, bounded memory
+Booking.objects.values_list("id", flat=True)  # ids only — no model instantiation
+Booking.objects.aggregate(total=Sum("amount"))  # aggregate in SQL, never in Python
+Booking.objects.iterator(chunk_size=2000)  # large scans, bounded memory
 ```
 
 Aggregate in the database. Summing a queryset in a Python loop is the single most
@@ -530,6 +533,7 @@ The ORM is synchronous. From an async consumer:
 ```python
 from channels.db import database_sync_to_async
 
+
 @database_sync_to_async
 def get_booking(pk):
     return Booking.objects.select_related("property").get(pk=pk)
@@ -552,10 +556,12 @@ Never set `DJANGO_ALLOW_ASYNC_UNSAFE` in production — it disables the
 
 ```python
 # asgi.py
-application = ProtocolTypeRouter({
-    "http": django_asgi_app,
-    "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
-})
+application = ProtocolTypeRouter(
+    {
+        "http": django_asgi_app,
+        "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+    }
+)
 ```
 
 Routing happens at connection/scope level only; URL kwargs arrive at
@@ -631,14 +637,15 @@ old nullable-then-backfill dance purely for defaults are now stale.
 
 ```python
 def backfill(apps, schema_editor):
-    Booking = apps.get_model("bookings", "Booking")   # NOT a direct import
+    Booking = apps.get_model("bookings", "Booking")  # NOT a direct import
     db = schema_editor.connection.alias
     qs = Booking.objects.using(db).filter(reference="")
     for chunk in chunked(qs.iterator(chunk_size=1000), 1000):
         Booking.objects.using(db).bulk_update(chunk, ["reference"])
 
+
 class Migration(migrations.Migration):
-    atomic = False        # don't hold one transaction across a long backfill
+    atomic = False  # don't hold one transaction across a long backfill
     operations = [migrations.RunPython(backfill, migrations.RunPython.noop)]
 ```
 
@@ -726,13 +733,13 @@ environment**, with the differences between environments expressed as
 import environ
 
 env = environ.Env(DEBUG=(bool, False))
-environ.Env.read_env(BASE_DIR / ".env")     # local dev only; absent in prod
+environ.Env.read_env(BASE_DIR / ".env")  # local dev only; absent in prod
 
-SECRET_KEY   = env("SECRET_KEY")             # no default → fails fast if unset
-DEBUG        = env("DEBUG")
+SECRET_KEY = env("SECRET_KEY")  # no default → fails fast if unset
+DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
-DATABASES    = {"default": env.db("DATABASE_URL")}
-CACHES       = {"default": env.cache("REDIS_URL")}
+DATABASES = {"default": env.db("DATABASE_URL")}
+CACHES = {"default": env.cache("REDIS_URL")}
 ```
 
 `django-environ` gives you the URL parsers (`env.db()`, `env.cache()`) that turn a
@@ -843,6 +850,7 @@ class ReportViewSet(ViewSet):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "reports"
 
+
 # settings.py
 REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle"],
@@ -919,7 +927,7 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": env("REDIS_URL"),
-        "KEY_PREFIX": "dolce",     # namespace — lets you share one Redis
+        "KEY_PREFIX": "dolce",  # namespace — lets you share one Redis
         "TIMEOUT": 300,
     }
 }
@@ -1004,8 +1012,8 @@ what turns "an error happened" into "here is the entire causal chain".
 
 ```python
 MIDDLEWARE = [
-    "django_structlog.middlewares.RequestMiddleware",   # early in the list
-    ...
+    "django_structlog.middlewares.RequestMiddleware",  # early in the list
+    ...,
 ]
 ```
 
@@ -1104,7 +1112,8 @@ Django's own docs recommend **data migrations, not fixtures, for initial data**.
 ```python
 class BookingFactory(DjangoModelFactory):
     class Meta:
-        model = "bookings.Booking"       # string ref dodges circular imports
+        model = "bookings.Booking"  # string ref dodges circular imports
+
     property = factory.SubFactory(PropertyFactory)
     check_in = factory.Faker("future_date")
 ```

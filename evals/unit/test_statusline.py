@@ -153,8 +153,14 @@ def test_deep_path_keeps_the_last_two_components():
 @pytest.mark.parametrize(
     "path,shown",
     [
-        ("/host/home/someone/workspace/.worktrees/statusline-cache", "wt:statusline-cache"),
-        ("/host/home/someone/workspace/.worktrees/statusline-cache/evals", "wt:statusline-cache/evals"),
+        (
+            "/host/home/someone/workspace/.worktrees/statusline-cache",
+            "wt:statusline-cache",
+        ),
+        (
+            "/host/home/someone/workspace/.worktrees/statusline-cache/evals",
+            "wt:statusline-cache/evals",
+        ),
         ("/repo/.claude/worktrees/fix-worktree-bug", "wt:fix-worktree-bug"),
         (
             "/host/home/someone/workspace/.worktrees/statusline-cache/dotfiles/scripts/lib",
@@ -211,7 +217,14 @@ def test_missing_effort_drops_the_segment():
 
 
 @pytest.mark.parametrize(
-    "level,shown", [("low", "lo"), ("medium", "med"), ("high", "hi"), ("xhigh", "xhi"), ("max", "max")]
+    "level,shown",
+    [
+        ("low", "lo"),
+        ("medium", "med"),
+        ("high", "hi"),
+        ("xhigh", "xhi"),
+        ("max", "max"),
+    ],
 )
 def test_effort_is_abbreviated(level, shown):
     out = run(payload(effort={"level": level}))
@@ -244,7 +257,11 @@ def test_percentages_are_color_coded_by_severity():
             input=json.dumps(data),
             capture_output=True,
             text=True,
-            env={"PATH": "/usr/bin:/bin", "HOME": "/home/agent", "STATUSLINE_TZ": "UTC"},
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": "/home/agent",
+                "STATUSLINE_TZ": "UTC",
+            },
             check=True,
         ).stdout
         match = re.search(r"5h (\033\[\d+m)", raw)
@@ -311,7 +328,11 @@ def test_cache_hit_ratio_is_color_coded_with_high_as_good():
             input=json.dumps(data),
             capture_output=True,
             text=True,
-            env={"PATH": "/usr/bin:/bin", "HOME": "/home/agent", "STATUSLINE_TZ": "UTC"},
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": "/home/agent",
+                "STATUSLINE_TZ": "UTC",
+            },
             check=True,
         ).stdout
         match = re.search(r"cache (\033\[\d+m)", raw)

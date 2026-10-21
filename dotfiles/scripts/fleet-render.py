@@ -83,10 +83,10 @@ MIN_TEXT = 12
 
 # Markers carry the signal instead of colour — they survive a pipe, a `less`,
 # and a terminal with no colour, and they cost nothing to emit.
-M_NEEDS = "✋"       # ✋ stopped to ask you something
-M_LIVE = "●"        # ● working
-M_SEEN = "\U0001f440"    # 👀 you have looked at it since it last acted
-M_WARN = "⚠"        # ⚠ collision, or stale data
+M_NEEDS = "✋"  # ✋ stopped to ask you something
+M_LIVE = "●"  # ● working
+M_SEEN = "\U0001f440"  # 👀 you have looked at it since it last acted
+M_WARN = "⚠"  # ⚠ collision, or stale data
 
 # The marker is a *column*, not a prefix, and it has to be padded to one.
 # `✋` and `👀` are East_Asian_Wide and occupy two columns; `●` and `⚠` are
@@ -337,13 +337,21 @@ def _agent_line(agent, now, generated, width, windows=None):
         shown = age(timedelta(seconds=seconds))
     else:
         shown = "?"
-    bits = [ljust(mark, MARKER_COLS), ljust(label, MAX_LABEL),
-            ljust(project, MAX_PROJECT), shown.rjust(4)]
+    bits = [
+        ljust(mark, MARKER_COLS),
+        ljust(label, MAX_LABEL),
+        ljust(project, MAX_PROJECT),
+        shown.rjust(4),
+    ]
     prefix = " ".join(bits)
     # Two columns rather than one, because the text is prose butting against a
     # right-aligned number and a single space reads as a run-on.
     budget = width - cols(prefix) - 2
-    what = clean(agent.get("next_action") or agent.get("intent"), budget) if budget >= MIN_TEXT else ""
+    what = (
+        clean(agent.get("next_action") or agent.get("intent"), budget)
+        if budget >= MIN_TEXT
+        else ""
+    )
     if what:
         bits.append(f" {what}")
     return fit(" ".join(bits).rstrip(), width)
@@ -422,7 +430,9 @@ def _tail(doc, agents, shown, now, width):
     if isinstance(collisions, list) and collisions:
         first = clean(str(collisions[0].get("path", "")).split("/")[-1], 18)
         bits.append(f"{M_WARN}{first}")
-    stamps = doc.get("collected_at") if isinstance(doc.get("collected_at"), dict) else {}
+    stamps = (
+        doc.get("collected_at") if isinstance(doc.get("collected_at"), dict) else {}
+    )
     bits.append(_section("PRs", doc.get("prs"), stamps.get("prs"), now))
     return fit(" · ".join(bits), width)
 

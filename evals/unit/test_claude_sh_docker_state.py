@@ -57,10 +57,12 @@ exit 0
 
 def _docker(kit, *, daemon_up=True, image_present=True):
     stub = kit.stub_dir / "docker"
-    stub.write_text(DOCKER_STUB_TEMPLATE.format(
-        info_status=0 if daemon_up else 1,
-        image_status=0 if image_present else 1,
-    ))
+    stub.write_text(
+        DOCKER_STUB_TEMPLATE.format(
+            info_status=0 if daemon_up else 1,
+            image_status=0 if image_present else 1,
+        )
+    )
     stub.chmod(0o755)
 
 
@@ -116,7 +118,9 @@ def test_a_stopped_daemon_offers_both_ways_out(kit):
     result = kit.launch("--shell", "-c", "true")
 
     assert "--local" in result.output
-    assert "systemctl start docker" in result.output or "Docker Desktop" in result.output
+    assert (
+        "systemctl start docker" in result.output or "Docker Desktop" in result.output
+    )
 
 
 def test_a_stopped_daemon_does_not_fall_back_to_bare_mode(kit):
@@ -157,7 +161,9 @@ def test_a_healthy_launch_never_asks_docker_info(kit, tmp_path):
     result = kit.launch("--shell", "-c", "true")
 
     assert result.status == 0, result.output
-    assert "info" not in log.read_text().split(), "paid a daemon round-trip to diagnose nothing"
+    assert "info" not in log.read_text().split(), (
+        "paid a daemon round-trip to diagnose nothing"
+    )
 
 
 # --- bare mode --------------------------------------------------------------

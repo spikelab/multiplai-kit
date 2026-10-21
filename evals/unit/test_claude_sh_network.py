@@ -107,8 +107,11 @@ def test_a_lost_create_race_still_launches(kit):
     marker = kit.root / "network.exists"
     # First inspect fails; create fails; by the second inspect it exists.
     stub = kit.stub_dir / "docker"
-    stub.write_text(stub.read_text().replace(
-        "create) exit 1 ;;", f'create) touch "{marker}"; exit 1 ;;'))
+    stub.write_text(
+        stub.read_text().replace(
+            "create) exit 1 ;;", f'create) touch "{marker}"; exit 1 ;;'
+        )
+    )
 
     result = kit.launch("--shell", "-c", "true")
 

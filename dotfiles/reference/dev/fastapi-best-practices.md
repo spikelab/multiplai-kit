@@ -231,8 +231,7 @@ async def get_document(
     # Query: filtering/options
     include_chunks: Annotated[bool, Query()] = False,
     format: Annotated[str | None, Query()] = None,
-):
-    ...
+): ...
 ```
 
 ---
@@ -327,17 +326,20 @@ class DocumentBase(BaseModel):
 
 class DocumentCreate(DocumentBase):
     """Create request - all required fields."""
+
     pass
 
 
 class DocumentUpdate(BaseModel):
     """Update request - all optional."""
+
     title: str | None = Field(None, min_length=1, max_length=200)
     content: str | None = None
 
 
 class DocumentResponse(DocumentBase):
     """Response - includes DB fields."""
+
     id: str
     created_at: datetime
     updated_at: datetime
@@ -725,6 +727,7 @@ def db_session():
 @pytest.fixture
 def client(db_session):
     """Test client with overridden DB."""
+
     def override_get_db():
         yield db_session
 
@@ -814,6 +817,7 @@ async def bad():
     result = sync_db_call()  # Blocks!
     return result
 
+
 # GOOD: Proper async
 @router.post("/good")
 async def good():
@@ -826,6 +830,7 @@ async def good():
 @router.get("/users/{id}")
 async def get_user(id: str, db: Session = Depends(get_db)):
     return db.query(User).get(id)  # Exposes ORM object
+
 
 # GOOD: With response model
 @router.get("/users/{id}", response_model=UserResponse)
@@ -853,6 +858,7 @@ app = FastAPI(lifespan=lifespan)
 # Add router
 app.include_router(router, prefix="/api")
 
+
 # Dependency
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
@@ -861,6 +867,7 @@ def get_db() -> Generator[Session, None, None]:
     finally:
         db.close()
 
+
 # Endpoint
 @router.post("/items", response_model=ItemResponse, status_code=201)
 async def create_item(
@@ -868,6 +875,7 @@ async def create_item(
     db: Session = Depends(get_db),
 ):
     return service.create(db, item)
+
 
 # Streaming
 return StreamingResponse(generator(), media_type="text/event-stream")

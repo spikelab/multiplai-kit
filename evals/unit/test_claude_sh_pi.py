@@ -196,7 +196,9 @@ def test_pi_and_git_profile_compose(kit):
     kit.write_profile("work", 'GIT_AUTHOR_NAME="Work Name"\n')
     result = kit.launch("--profile", "work", "--pi")
     assert result.status == 0, result.output
-    assert _mount_for(result.argv, PI_HOME) == str(kit.home / ".claude-container/pi/default")
+    assert _mount_for(result.argv, PI_HOME) == str(
+        kit.home / ".claude-container/pi/default"
+    )
     assert result.resolved("GIT_AUTHOR_NAME") == "Work Name"
 
 
@@ -273,7 +275,9 @@ exit "${SESSION_EXIT:-0}"
 """
 
 
-def _bootstrap(tmp_path, *args, with_pi=True, pi_stub=PI_STUB, script=None, **env_extra):
+def _bootstrap(
+    tmp_path, *args, with_pi=True, pi_stub=PI_STUB, script=None, **env_extra
+):
     stubs = tmp_path / "bootstrap-bin"
     stubs.mkdir(exist_ok=True)
     if with_pi:
@@ -300,7 +304,9 @@ def _bootstrap(tmp_path, *args, with_pi=True, pi_stub=PI_STUB, script=None, **en
     env.update({k: v for k, v in env_extra.items() if v is not None})
     proc = subprocess.run(
         ["bash", str(script or KIT_ROOT / "scripts" / "pi-bootstrap.sh"), *args],
-        env=env, capture_output=True, text=True,
+        env=env,
+        capture_output=True,
+        text=True,
     )
     calls = pi_calls.read_text().splitlines() if pi_calls.exists() else []
     npm = npm_calls.read_text().splitlines() if npm_calls.exists() else []
@@ -341,7 +347,10 @@ def test_bootstrap_no_longer_installs_pi(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert npm == []
     assert not (home / ".pi-cli").exists()
-    assert "MULTIPLAI_PI_VERSION" not in (KIT_ROOT / "scripts" / "pi-bootstrap.sh").read_text()
+    assert (
+        "MULTIPLAI_PI_VERSION"
+        not in (KIT_ROOT / "scripts" / "pi-bootstrap.sh").read_text()
+    )
 
 
 def test_bootstrap_without_pi_on_path_names_the_cause(tmp_path):
@@ -395,8 +404,11 @@ def _wanted_packages():
 def _command_after_packages_step(argv):
     """What the container runs after the packages step, or None without one."""
     for i, a in enumerate(argv):
-        if a.endswith("scripts/pi-bootstrap.sh") and argv[i + 1:i + 3] == PACKAGES_ONLY:
-            return argv[i + 3:]
+        if (
+            a.endswith("scripts/pi-bootstrap.sh")
+            and argv[i + 1 : i + 3] == PACKAGES_ONLY
+        ):
+            return argv[i + 3 :]
     return None
 
 
@@ -433,13 +445,17 @@ def test_pi_launch_has_no_separate_packages_step(kit):
     """`--pi` keeps its command: the bootstrap, then pi's own arguments."""
     result = kit.launch("--pi", "-p", "hi")
     assert result.status == 0, result.output
-    boots = [i for i, a in enumerate(result.argv) if a.endswith("scripts/pi-bootstrap.sh")]
+    boots = [
+        i for i, a in enumerate(result.argv) if a.endswith("scripts/pi-bootstrap.sh")
+    ]
     assert len(boots) == 1, result.argv
-    assert result.argv[boots[0] + 1:] == ["-p", "hi"]
+    assert result.argv[boots[0] + 1 :] == ["-p", "hi"]
 
 
 def test_packages_only_installs_both_lists_then_runs_the_command(tmp_path):
-    proc, home, calls, npm = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", "--flag", "x")
+    proc, home, calls, npm = _bootstrap(
+        tmp_path, *PACKAGES_ONLY, "session-cmd", "--flag", "x"
+    )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert calls == [f"install {p}" for p in _wanted_packages()], calls
     assert _session_calls(tmp_path) == ["--flag x"]
@@ -455,7 +471,9 @@ def test_packages_only_installs_both_lists_then_runs_the_command(tmp_path):
 
 def test_packages_only_hands_over_the_commands_exit_status(tmp_path):
     """The command is exec'd, not run as a child: its status is the container's."""
-    proc, _, _, _ = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", SESSION_EXIT="7")
+    proc, _, _, _ = _bootstrap(
+        tmp_path, *PACKAGES_ONLY, "session-cmd", SESSION_EXIT="7"
+    )
     assert proc.returncode == 7, proc.stdout + proc.stderr
 
 
@@ -495,7 +513,9 @@ exit 0
 """
 
 
-@pytest.mark.parametrize("failure", ["npm error", "no pi yet", "no kit", "read-only config"])
+@pytest.mark.parametrize(
+    "failure", ["npm error", "no pi yet", "no kit", "read-only config"]
+)
 def test_packages_only_failure_warns_once_and_still_runs_the_command(tmp_path, failure):
     kwargs = {}
     if failure == "npm error":
@@ -509,7 +529,9 @@ def test_packages_only_failure_warns_once_and_still_runs_the_command(tmp_path, f
         agent.mkdir(parents=True)
         agent.chmod(0o555)
     try:
-        proc, _, _, _ = _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", "go", **kwargs)
+        proc, _, _, _ = _bootstrap(
+            tmp_path, *PACKAGES_ONLY, "session-cmd", "go", **kwargs
+        )
     finally:
         if agent.exists():
             agent.chmod(0o755)
@@ -545,13 +567,26 @@ def test_packages_only_runs_the_entrypoints_hookspath_check_for_claude(tmp_path)
     script.write_text(source.replace(real, str(check)))
     check_calls = tmp_path / "check-calls.txt"
 
-    _bootstrap(tmp_path, *PACKAGES_ONLY, "claude", "--x", script=script,
-               CHECK_CALLS=str(check_calls), WORKSPACE="/ws")
+    _bootstrap(
+        tmp_path,
+        *PACKAGES_ONLY,
+        "claude",
+        "--x",
+        script=script,
+        CHECK_CALLS=str(check_calls),
+        WORKSPACE="/ws",
+    )
     assert check_calls.read_text().splitlines() == ["/ws"]
     assert _session_calls(tmp_path) == ["--x"]
 
-    _bootstrap(tmp_path, *PACKAGES_ONLY, "session-cmd", script=script,
-               CHECK_CALLS=str(check_calls), WORKSPACE="/ws")
+    _bootstrap(
+        tmp_path,
+        *PACKAGES_ONLY,
+        "session-cmd",
+        script=script,
+        CHECK_CALLS=str(check_calls),
+        WORKSPACE="/ws",
+    )
     assert check_calls.read_text().splitlines() == ["/ws"], "only in front of claude"
 
 
@@ -577,7 +612,9 @@ def test_plain_launch_seeds_the_default_config(kit):
     template = kit.root / "dotfiles" / "pi-profiles"
     seeded = state / "default"
     for rel in ("agent/models.json", "agent/settings.json"):
-        assert (seeded / rel).read_text() == (template / "default" / rel).read_text(), rel
+        assert (seeded / rel).read_text() == (template / "default" / rel).read_text(), (
+            rel
+        )
     # _shared lands at the ~/.pi root, mirroring the template tree.
     assert (seeded / "web-search.json").read_text() == (
         template / "_shared" / "web-search.json"
@@ -670,7 +707,11 @@ def _nested_launch(kit, *args, **env):
     if kit.bootstrap_out.exists():
         kit.bootstrap_out.unlink()
     result = kit.launch(*args, BOOTSTRAP_OUT=str(kit.bootstrap_out), **env)
-    ran = kit.bootstrap_out.read_text().splitlines() if kit.bootstrap_out.exists() else None
+    ran = (
+        kit.bootstrap_out.read_text().splitlines()
+        if kit.bootstrap_out.exists()
+        else None
+    )
     return result, ran
 
 
@@ -714,10 +755,13 @@ def test_launch_with_openrouter_key_unset_warns_and_still_launches(kit, tmp_path
     assert forwarded.get("DEEPSEEK_API_KEY") == "sk-deepseek-secret"
     assert "OPENROUTER_API_KEY" not in forwarded, "an empty key is never forwarded"
 
-    boot = next(i for i, a in enumerate(result.argv) if a.endswith("scripts/pi-bootstrap.sh"))
-    passthrough = result.argv[boot + 1:]
+    boot = next(
+        i for i, a in enumerate(result.argv) if a.endswith("scripts/pi-bootstrap.sh")
+    )
+    passthrough = result.argv[boot + 1 :]
     proc, _, calls, _ = _bootstrap(
-        tmp_path, *passthrough,
+        tmp_path,
+        *passthrough,
         DEEPSEEK_API_KEY=forwarded["DEEPSEEK_API_KEY"],
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr

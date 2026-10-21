@@ -105,6 +105,7 @@ def _roster(kit):  # noqa: F811
 
 # --- the shape of the file ----------------------------------------------------
 
+
 def test_a_launch_writes_the_running_container_names(rosterkit):
     _launch(rosterkit, "claude-personal-01\nclaude-work-02")
 
@@ -148,6 +149,7 @@ def test_a_name_that_could_break_the_json_is_dropped(rosterkit):
 
 # --- when it is written -------------------------------------------------------
 
+
 def test_it_is_written_before_the_session_container_starts(rosterkit):
     """The load-bearing one. Every hook-path render of AGENTS.md happens at
     SessionStart, inside a container this launcher started seconds earlier — so
@@ -181,6 +183,7 @@ def test_the_roster_never_changes_the_exit_status(rosterkit):
 
 # --- when it cannot be written ------------------------------------------------
 
+
 def test_no_data_dir_means_no_roster_and_no_complaint(kit):  # noqa: F811
     """No plugin, no registry, nothing to judge — so nothing to observe. The
     workspace here has no `.multiplai/data`."""
@@ -195,8 +198,10 @@ def test_a_failing_daemon_leaves_no_partial_file(rosterkit):
     reading — never a truncated one. The reader treats a parse failure as "no
     roster", so a half-written file silently disables the whole feature."""
     (rosterkit.stub_dir / "docker").write_text(
-        ROSTER_DOCKER_STUB.replace("        exit 0\n        ;;\n    run)",
-                                   "        exit 1\n        ;;\n    run)")
+        ROSTER_DOCKER_STUB.replace(
+            "        exit 0\n        ;;\n    run)",
+            "        exit 1\n        ;;\n    run)",
+        )
     )
     (rosterkit.stub_dir / "docker").chmod(0o755)
 
@@ -212,11 +217,13 @@ def test_the_write_is_atomic():
     """A reader in another container must never see a half-written file, so the
     roster is built in a scratch file and renamed into place."""
     src = (KIT_ROOT / "claude.sh").read_text()
-    body = src.split("write_container_roster() {", 1)[1].split("\npost_exit_drain()", 1)[0]
+    body = src.split("write_container_roster() {", 1)[1].split(
+        "\npost_exit_drain()", 1
+    )[0]
 
     assert "mv -f" in body
     assert '> "$tmp"' in body
-    assert "> \"$data_dir/live_containers.json\"" not in body
+    assert '> "$data_dir/live_containers.json"' not in body
 
 
 def test_the_docker_guard_is_present_for_a_host_without_it(rosterkit):
@@ -225,13 +232,21 @@ def test_the_docker_guard_is_present_for_a_host_without_it(rosterkit):
     path too, and a daemon can be uninstalled mid-session. Extracted and run
     under a PATH that genuinely lacks docker."""
     src = (KIT_ROOT / "claude.sh").read_text()
-    fn = "write_container_roster() {" + src.split("write_container_roster() {", 1)[1] \
-        .split("\npost_exit_drain()", 1)[0]
+    fn = (
+        "write_container_roster() {"
+        + src.split("write_container_roster() {", 1)[1].split("\npost_exit_drain()", 1)[
+            0
+        ]
+    )
 
-    script = f'WORKSPACE="{rosterkit.workspace}"\n{fn}\nwrite_container_roster\necho "rc=$?"'
+    script = (
+        f'WORKSPACE="{rosterkit.workspace}"\n{fn}\nwrite_container_roster\necho "rc=$?"'
+    )
     proc = subprocess.run(
         ["/bin/bash", "-c", script],
-        env={"PATH": "/nonexistent"}, capture_output=True, text=True,
+        env={"PATH": "/nonexistent"},
+        capture_output=True,
+        text=True,
     )
 
     assert "rc=0" in proc.stdout

@@ -132,7 +132,7 @@ def chunk_by_sentences(
 ) -> list[str]:
     """Split text by sentences, grouping into chunks."""
     # Split into sentences
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = re.split(r"(?<=[.!?])\s+", text)
 
     chunks = []
     current_chunk = []
@@ -181,7 +181,7 @@ class SemanticChunker:
         min_chunk_size: int = 100,
     ) -> list[str]:
         # Split into sentences
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
         if len(sentences) < 2:
             return [text]
 
@@ -194,8 +194,8 @@ class SemanticChunker:
 
         for i in range(1, len(sentences)):
             # Cosine similarity between consecutive sentences
-            sim = np.dot(embeddings[i-1], embeddings[i]) / (
-                np.linalg.norm(embeddings[i-1]) * np.linalg.norm(embeddings[i])
+            sim = np.dot(embeddings[i - 1], embeddings[i]) / (
+                np.linalg.norm(embeddings[i - 1]) * np.linalg.norm(embeddings[i])
             )
 
             if sim < similarity_threshold:
@@ -225,34 +225,40 @@ def chunk_markdown(text: str, max_chunk_size: int = 1500) -> list[dict]:
     chunks = []
 
     # Split by headers
-    sections = re.split(r'\n(#{1,6}\s+[^\n]+)\n', text)
+    sections = re.split(r"\n(#{1,6}\s+[^\n]+)\n", text)
 
     current_chunk = ""
     current_header = ""
 
     for i, section in enumerate(sections):
-        if re.match(r'^#{1,6}\s+', section):
+        if re.match(r"^#{1,6}\s+", section):
             current_header = section.strip()
             continue
 
         # Add header to section
-        section_with_header = f"{current_header}\n\n{section}" if current_header else section
+        section_with_header = (
+            f"{current_header}\n\n{section}" if current_header else section
+        )
 
         if len(current_chunk) + len(section_with_header) > max_chunk_size:
             if current_chunk:
-                chunks.append({
-                    "content": current_chunk.strip(),
-                    "header": current_header,
-                })
+                chunks.append(
+                    {
+                        "content": current_chunk.strip(),
+                        "header": current_header,
+                    }
+                )
             current_chunk = section_with_header
         else:
             current_chunk += "\n\n" + section_with_header
 
     if current_chunk.strip():
-        chunks.append({
-            "content": current_chunk.strip(),
-            "header": current_header,
-        })
+        chunks.append(
+            {
+                "content": current_chunk.strip(),
+                "header": current_header,
+            }
+        )
 
     return chunks
 ```
@@ -281,7 +287,9 @@ import numpy as np
 client = OpenAI()
 
 
-def embed_texts(texts: list[str], model: str = "text-embedding-3-small") -> list[list[float]]:
+def embed_texts(
+    texts: list[str], model: str = "text-embedding-3-small"
+) -> list[list[float]]:
     """Generate embeddings for a list of texts."""
     response = client.embeddings.create(
         model=model,
@@ -444,8 +452,7 @@ def process_parallel(
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_idx = {
-            executor.submit(process_fn, item): i
-            for i, item in enumerate(items)
+            executor.submit(process_fn, item): i for i, item in enumerate(items)
         }
 
         for future in as_completed(future_to_idx):
@@ -658,6 +665,7 @@ def retry_with_backoff(
     exponential_base: float = 2.0,
 ):
     """Decorator for retry with exponential backoff."""
+
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -670,7 +678,8 @@ def retry_with_backoff(
                     last_exception = e
                     if attempt < max_retries - 1:
                         delay = min(
-                            base_delay * (exponential_base ** attempt) + random.uniform(0, 1),
+                            base_delay * (exponential_base**attempt)
+                            + random.uniform(0, 1),
                             max_delay,
                         )
                         logger.warning(
@@ -682,13 +691,13 @@ def retry_with_backoff(
             raise last_exception
 
         return wrapper
+
     return decorator
 
 
 # Usage
 @retry_with_backoff(max_retries=5)
-async def call_api(data):
-    ...
+async def call_api(data): ...
 ```
 
 ### Dead Letter Queue Pattern
@@ -757,7 +766,13 @@ class DeadLetterQueue:
 ### Progress Bar with Rich
 
 ```python
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+)
 
 
 def process_with_progress(items: list, process_fn):

@@ -73,17 +73,14 @@ def _extract_function(name: str) -> str:
     indent = " " * (len(lines[start]) - len(lines[start].lstrip()))
     for end in range(start + 1, len(lines)):
         if lines[end] == indent + "}":
-            body = lines[start:end + 1]
-            return "\n".join(
-                ln.removeprefix(indent) for ln in body
-            )
+            body = lines[start : end + 1]
+            return "\n".join(ln.removeprefix(indent) for ln in body)
     raise AssertionError(f"could not find the closing brace of {name}()")
 
 
 def _normalization() -> str:
     return "\n\n".join(
-        _extract_function(n)
-        for n in ("normalize_workspace", "canonicalize_workspace")
+        _extract_function(n) for n in ("normalize_workspace", "canonicalize_workspace")
     )
 
 
@@ -114,7 +111,8 @@ def _run(
     ]
     return subprocess.run(
         ["bash", "-c", "\n".join(script)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         env={"PATH": "/usr/bin:/bin", "HOME": str(home)},
     )
 
@@ -133,7 +131,9 @@ def _run_setup_sh(tmp_path: Path, env_body: str) -> subprocess.CompletedProcess:
     (root / ".env").write_text(env_body)
     return subprocess.run(
         [str(root / "setup.sh")],
-        capture_output=True, text=True, cwd=str(root),
+        capture_output=True,
+        text=True,
+        cwd=str(root),
         env={**os.environ, "HOME": str(tmp_path / "home")},
     )
 
@@ -145,6 +145,7 @@ def _decl(home: Path) -> Path:
 # --------------------------------------------------------------------------
 # The code is still where these tests think it is
 # --------------------------------------------------------------------------
+
 
 def test_the_functions_are_still_where_the_test_thinks_they_are():
     decl = _extract_function("declare_workspace_to_host_bridge")
@@ -164,6 +165,7 @@ def test_the_functions_are_still_where_the_test_thinks_they_are():
 # --------------------------------------------------------------------------
 # The declaration itself
 # --------------------------------------------------------------------------
+
 
 def test_declares_an_existing_workspace(tmp_path):
     ws = tmp_path / "knowhere"
@@ -218,6 +220,7 @@ def test_a_rewrite_to_the_same_path_says_nothing_alarming(tmp_path):
 # --------------------------------------------------------------------------
 # Normalization — the value that reaches the declaration (and sandbox-exec)
 # --------------------------------------------------------------------------
+
 
 def test_a_comment_character_is_rejected_rather_than_truncating_the_path(tmp_path):
     """`eval echo "/tmp/Work #2"` returned `/tmp/Work`, exit 0, no warning — the
@@ -320,6 +323,7 @@ def test_a_bare_tilde_is_the_home_directory(tmp_path):
 # Canonicalization — SBPL `(subpath …)` is matched against kernel paths
 # --------------------------------------------------------------------------
 
+
 def test_trailing_and_doubled_slashes_are_canonicalized(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -365,6 +369,7 @@ def test_a_symlinked_parent_is_resolved_to_the_real_path(tmp_path):
 # --------------------------------------------------------------------------
 # The write itself: permissions, atomicity
 # --------------------------------------------------------------------------
+
 
 def test_the_declaration_is_not_group_or_world_writable(tmp_path):
     """A world-writable declaration would let any local process retarget the
@@ -432,6 +437,7 @@ def test_the_declaration_is_published_by_rename():
 # When it runs
 # --------------------------------------------------------------------------
 
+
 def test_the_declaration_is_not_gated_on_the_docker_daemon():
     """`HAS_DOCKER` comes from `docker info` — it says whether the daemon is up
     *right now*, which is why setup.sh keeps it apart from the durable
@@ -441,8 +447,11 @@ def test_the_declaration_is_not_gated_on_the_docker_daemon():
     own remedy text is "Re-run ./setup.sh on the Mac to rewrite it".
     """
     lines = SETUP_SH.read_text().splitlines()
-    calls = [i for i, ln in enumerate(lines)
-             if ln.strip() == "declare_workspace_to_host_bridge"]
+    calls = [
+        i
+        for i, ln in enumerate(lines)
+        if ln.strip() == "declare_workspace_to_host_bridge"
+    ]
     assert len(calls) == 1, "expected exactly one call site"
     call = calls[0]
 
@@ -484,12 +493,13 @@ def test_setup_sh_itself_refuses_the_comment_path(tmp_path):
 # The sandbox profile that reads the declaration
 # --------------------------------------------------------------------------
 
+
 def test_confine_profile_is_installed_alongside_the_gateway():
     """The gateway references `confine.sb`; a release where the gateway ships
     and the profile does not is the version skew install_host_state exists to
     prevent."""
     text = SETUP_SH.read_text()
-    darwin = text[text.find('if [ "$(uname -s)" = "Darwin" ]'):]
+    darwin = text[text.find('if [ "$(uname -s)" = "Darwin" ]') :]
     assert "install_host_tool container-build-gateway.sh" in darwin
     assert "install_host_state confine.sb" in darwin
 
@@ -509,7 +519,8 @@ def _run_install_host_state(
     ]
     return subprocess.run(
         ["bash", "-c", "\n".join(script)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         env={"PATH": "/usr/bin:/bin", "HOME": str(home)},
     )
 
@@ -544,7 +555,7 @@ def test_a_profile_dropped_by_a_later_tag_is_removed(tmp_path):
 
 
 def test_an_unverified_checkout_never_removes_an_installed_profile(tmp_path):
-    """"container/ failed to fetch" and "this release dropped the file" look
+    """ "container/ failed to fetch" and "this release dropped the file" look
     identical from the filesystem; only one of them may delete."""
     kit = tmp_path / "kit"
     kit.mkdir()

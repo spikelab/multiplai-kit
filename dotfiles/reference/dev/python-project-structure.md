@@ -262,15 +262,14 @@ Type hints should improve code clarity without hurting readability. Be pragmatic
 
 ```python
 # Use | instead of Union
-def process(data: str | None) -> dict | None:
-    ...
+def process(data: str | None) -> dict | None: ...
+
 
 # Use list, dict directly (no List, Dict)
-def get_items() -> list[str]:
-    ...
+def get_items() -> list[str]: ...
 
-def get_mapping() -> dict[str, int]:
-    ...
+
+def get_mapping() -> dict[str, int]: ...
 ```
 
 ### Common Patterns
@@ -279,28 +278,34 @@ def get_mapping() -> dict[str, int]:
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any, TypeVar
 
+
 # Optional values (can be None)
 def find_user(user_id: int) -> User | None:
     """Returns None if not found."""
     ...
+
 
 # Default None parameter
 def search(query: str, limit: int | None = None) -> list[Result]:
     """Limit defaults to 100 if not specified."""
     ...
 
+
 # Callable types
-def retry(func: Callable[..., Any], max_attempts: int = 3) -> Any:
-    ...
+def retry(func: Callable[..., Any], max_attempts: int = 3) -> Any: ...
+
 
 # TypeVar for generics
 T = TypeVar("T")
 
+
 def first(items: Sequence[T]) -> T | None:
     return items[0] if items else None
 
+
 # Self-referential types
 from typing import Self
+
 
 class Node:
     def add_child(self, data: str) -> Self:
@@ -312,16 +317,16 @@ class Node:
 
 ```python
 # Skip obvious assignments
-name = "Alice"           # Clearly a string
-count = 0               # Clearly an int
-items = []              # Type when appending matters
+name = "Alice"  # Clearly a string
+count = 0  # Clearly an int
+items = []  # Type when appending matters
 
 # Skip simple lambdas
 sorted(items, key=lambda x: x.name)
 
+
 # Skip test functions (usually)
-def test_user_creation():
-    ...
+def test_user_creation(): ...
 ```
 
 ### Type Hints for AI/LLM Code
@@ -329,21 +334,26 @@ def test_user_creation():
 ```python
 from typing import Literal, TypedDict
 
+
 # Structured responses
 class LLMResponse(TypedDict):
     content: str
     model: str
     usage: dict[str, int]
 
+
 # Literal for constrained values
 Role = Literal["user", "assistant", "system"]
+
 
 class Message(TypedDict):
     role: Role
     content: str
 
+
 # Async generators for streaming
 from collections.abc import AsyncGenerator
+
 
 async def stream_response(prompt: str) -> AsyncGenerator[str, None]:
     async for chunk in client.stream(prompt):
@@ -489,6 +499,7 @@ def configure_logging(json_format: bool = False, level: str = "INFO"):
 # Auto-detect environment
 def setup_logging():
     import os
+
     use_json = (
         os.getenv("LOG_JSON", "false").lower() == "true"
         or os.getenv("CI", "false").lower() == "true"

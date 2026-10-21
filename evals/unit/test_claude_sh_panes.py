@@ -200,6 +200,7 @@ def _launched_name(kit):  # noqa: F811
 
 # --- the stamp ----------------------------------------------------------------
 
+
 def test_the_launch_stamps_its_container_name_onto_its_pane(panekit):
     """The load-bearing one, and the whole reason the map can be a live query.
 
@@ -222,11 +223,13 @@ def test_the_stamp_is_set_before_the_map_is_written():
     """Order matters, because the map reads the stamp back. A map written first
     would miss the pane it was launched from on every first launch in a pane."""
     src = (KIT_ROOT / "claude.sh").read_text()
-    body = src.split("\n    write_container_roster || true\n", 1)[1] \
-              .split("docker run", 1)[0]
+    body = src.split("\n    write_container_roster || true\n", 1)[1].split(
+        "docker run", 1
+    )[0]
 
-    assert body.index('tmux_stamp_pane "$CONTAINER_NAME"') \
-        < body.index('write_pane_map "$CONTAINER_NAME"')
+    assert body.index('tmux_stamp_pane "$CONTAINER_NAME"') < body.index(
+        'write_pane_map "$CONTAINER_NAME"'
+    )
 
 
 def test_the_stamp_is_pane_scoped(panekit):
@@ -263,6 +266,7 @@ def test_a_tmux_that_cannot_stamp_never_reaches_the_user(panekit):
 
 # --- the map, through the launcher's own call path ----------------------------
 
+
 def test_a_launch_records_its_own_pane(panekit):
     """End to end: the launcher resolves `fleet-panes.sh` beside its dotfiles,
     runs it, and this launch is in the map the session is about to read.
@@ -292,16 +296,21 @@ def test_the_key_is_the_name_docker_was_actually_given(panekit):
     given = argv[argv.index("--name") + 1]
 
     assert _launched_name(panekit) == given
-    assert argv[argv.index("--hostname") + 1] == given, \
+    assert argv[argv.index("--hostname") + 1] == given, (
         "the hostname is what the plugin records; it must be the same string"
+    )
 
 
 def test_another_tab_survives_this_tab_launching(panekit):
     """The file is a map of the whole fleet. A launch that overwrote it would
     leave the board able to label exactly one session — the one you just
     started, which is the one you least need labelled."""
-    _launch(panekit, "cc-other-01", "cc-other-01",
-            TMUX_PANES_STUB="%3|cc-other-01|off|kit|work\n%12||off||work")
+    _launch(
+        panekit,
+        "cc-other-01",
+        "cc-other-01",
+        TMUX_PANES_STUB="%3|cc-other-01|off|kit|work\n%12||off||work",
+    )
 
     at_run = _at_run(panekit)["panes"]
 
@@ -336,8 +345,9 @@ def test_it_is_written_at_both_of_the_roster_s_call_points():
     # of the same moment. A map observed at a different instant from the roster
     # would let the board label a container the roster has already retired.
     after_pre_roster = src.split("\n    write_container_roster || true\n", 1)[1]
-    assert 'write_pane_map "$CONTAINER_NAME"' in after_pre_roster.split(
-        "docker run", 1)[0]
+    assert (
+        'write_pane_map "$CONTAINER_NAME"' in after_pre_roster.split("docker run", 1)[0]
+    )
     after_post_roster = src.split("\nwrite_container_roster || true\n")[-1]
     assert "write_pane_map || true" in after_post_roster.split("exit ", 1)[0]
 
@@ -356,6 +366,7 @@ def test_the_map_is_one_shared_script_and_not_a_second_copy():
 
 # --- when it must not act -----------------------------------------------------
 
+
 def test_outside_tmux_nothing_is_written(panekit):
     """No file at all, so a reader sees "no map" rather than an empty one it
     would have to interpret."""
@@ -373,9 +384,14 @@ def test_no_data_dir_means_no_map_and_no_complaint(kit, tmp_path):  # noqa: F811
     (scripts / "lib").mkdir(parents=True, exist_ok=True)
     shutil.copy(PANES_SCRIPT, scripts / "fleet-panes.sh")
     shutil.copy(WS_LIB, scripts / "lib" / "resolve-workspace.sh")
-    launch = kit.launch("--shell", "-c", "true",
-                        TMUX_LOG=str(tmp_path / "t.log"),
-                        TMUX="/tmp/tmux-501/default,1234,0", TMUX_PANE="%12")
+    launch = kit.launch(
+        "--shell",
+        "-c",
+        "true",
+        TMUX_LOG=str(tmp_path / "t.log"),
+        TMUX="/tmp/tmux-501/default,1234,0",
+        TMUX_PANE="%12",
+    )
 
     assert not (kit.workspace / ".multiplai" / "data" / "tmux").exists()
     assert launch.status == 0
@@ -428,9 +444,14 @@ def test_the_docker_guard_is_present_for_a_host_without_it(panekit):
     script = panekit.root / "dotfiles" / "scripts" / "fleet-panes.sh"
     proc = subprocess.run(
         ["/bin/bash", str(script), "cc-x"],
-        env={"PATH": "/nonexistent", "WORKSPACE": str(panekit.workspace),
-             "TMUX": "/tmp/tmux-501/default,1234,0", "TMUX_PANE": "%12"},
-        capture_output=True, text=True,
+        env={
+            "PATH": "/nonexistent",
+            "WORKSPACE": str(panekit.workspace),
+            "TMUX": "/tmp/tmux-501/default,1234,0",
+            "TMUX_PANE": "%12",
+        },
+        capture_output=True,
+        text=True,
     )
 
     assert proc.returncode == 0

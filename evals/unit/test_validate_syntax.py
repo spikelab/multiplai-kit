@@ -157,11 +157,14 @@ class TestNeverWedgesTheSession:
         assert result.returncode == 0
 
     def test_missing_file_path_exits_zero(self, home):
-        result = run_hook(home, {
-            "hook_event_name": "PostToolUse",
-            "tool_name": "Write",
-            "tool_input": {},
-        })
+        result = run_hook(
+            home,
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Write",
+                "tool_input": {},
+            },
+        )
         assert result.returncode == 0
 
     def test_malformed_stdin_exits_zero(self, home):

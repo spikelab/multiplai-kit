@@ -109,9 +109,12 @@ def _driver_launch(kit, *extra):
     runner.write_text("# stands in for the hub's driver_runner.py\n")
     return kit.launch(
         "driver",
-        "--sid", "new",
-        "--port", "8123",
-        "--runner", str(runner),
+        "--sid",
+        "new",
+        "--port",
+        "8123",
+        "--runner",
+        str(runner),
         *extra,
         MULTIPLAI_DRIVER_TOKEN="driver-token-for-tests",
     )
@@ -169,8 +172,12 @@ def test_keychain_is_not_probed_when_no_item_is_named(kit, tmp_path):
     result = kit.launch("--local")
     assert result.status == 0, result.output
     assert not log.exists(), "`security` ran with no GH_TOKEN_KEYCHAIN naming an item"
-    assert "GH_TOKEN" not in result.bare_env, "an unnamed Keychain item authenticated the session"
-    assert "GH_TOKEN" not in result.output, "absence is not a misconfiguration — it stays silent"
+    assert "GH_TOKEN" not in result.bare_env, (
+        "an unnamed Keychain item authenticated the session"
+    )
+    assert "GH_TOKEN" not in result.output, (
+        "absence is not a misconfiguration — it stays silent"
+    )
 
 
 # --- half-configured states keep their noise ---------------------------------
@@ -212,7 +219,7 @@ def test_keychain_name_on_a_non_mac_warns_and_launches(kit):
 @pytest.mark.skipif(
     platform.system() == "Darwin",
     reason="needs a host where `security` is absent; trimming it off PATH would "
-           "take every other tool the launcher needs with it",
+    "take every other tool the launcher needs with it",
 )
 def test_a_mac_without_security_on_path_is_not_told_it_is_not_a_mac(kit):
     """These two failures shared a branch (`Darwin` AND `security`), so a Mac
@@ -227,7 +234,9 @@ def test_a_mac_without_security_on_path_is_not_told_it_is_not_a_mac(kit):
     assert result.status == 0, result.output
     assert "gh-somewhere" in result.output
     lowered = result.output.lower()
-    assert "'security' is not on path" in lowered, "the message must name the actual cause"
+    assert "'security' is not on path" in lowered, (
+        "the message must name the actual cause"
+    )
     assert "needs macos" not in lowered, "told a Mac that Keychain lookups need macOS"
 
 

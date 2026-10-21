@@ -38,6 +38,7 @@ from pathlib import Path
 # explanation matters as much as the block: the agent is told to ask the user,
 # which turns a denied call into a conversation instead of a retry loop.
 
+
 def _rule(name: str, pattern: str, why: str) -> tuple[str, re.Pattern, str]:
     return name, re.compile(pattern, re.IGNORECASE), why
 
@@ -221,9 +222,7 @@ def _is_allowlisted(segment: str) -> bool:
     # workspace, and this allowance must not defeat the rule protecting it).
     ws = _workspace()
     if ws and _RM_RECURSIVE_RE.search(segment):
-        if targets and all(
-            t.startswith(ws) and ".multiplai" not in t for t in targets
-        ):
+        if targets and all(t.startswith(ws) and ".multiplai" not in t for t in targets):
             return True
     return False
 

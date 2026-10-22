@@ -15,6 +15,15 @@ public repo has shipped without in-tree memory hooks from day one (see the
 
 ## [Unreleased]
 
+### Added
+
+- **A setting for the design system HTML pages use.** `multiplai.conf` has two
+  commented-out lines, `MULTIPLAI_DESIGN_SYSTEMS` (the folder of design
+  systems) and `MULTIPLAI_DESIGN_SYSTEM` (the default one). The multiplai-dev
+  `design-system` skill reads them (multiplai-dev 0.100.0). The global
+  `CLAUDE.md` tells sessions to load that skill before building an HTML page.
+  With nothing set, pages use the skill's neutral theme.
+
 ### Changed
 
 - **The kit's Python is linted and formatted with ruff 0.17.1, and the eval

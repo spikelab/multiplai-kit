@@ -8,6 +8,7 @@ pyyaml                  # JSON/YAML validation in validate-syntax.sh
 
 # Eval suite (see evals/README.md — `python -m pytest evals/`)
 pytest
+pytest-xdist            # parallel runs: `pytest evals/ -n auto`
 
 # Model access for the plugin skills (host-injected inside Claude Code; pinned
 # here so the skills also run from the plain venv). >=0.2.168: it bundles

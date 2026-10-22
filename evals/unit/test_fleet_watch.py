@@ -52,8 +52,8 @@ import termios
 import time
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-watch"
 
 # Records the arguments it was handed, then exits — one redraw, no loop, because
@@ -100,8 +100,10 @@ class Watch:
         # own path, so leaving it behind would silently test the real checkout.
         lib = self.scripts / "lib"
         lib.mkdir()
-        shutil.copy(KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh",
-                    lib / "resolve-workspace.sh")
+        shutil.copy(
+            KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh",
+            lib / "resolve-workspace.sh",
+        )
 
         render = self.scripts / "fleet-render.py"
         render.write_text(RENDER_STUB)
@@ -143,7 +145,10 @@ class Watch:
         # and a `> board.txt` redirect wants.
         return subprocess.run(
             ["bash", str(self.scripts / "fleet-watch"), *args],
-            capture_output=True, text=True, env=environ, stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            env=environ,
+            stdin=subprocess.DEVNULL,
             timeout=20,
         )
 
@@ -188,14 +193,19 @@ class Watch:
             environ.pop("LINES", None)
             environ.pop("COLUMNS", None)
         pid, fd = pty.fork()
-        if pid == 0:                                    # pragma: no cover
+        if pid == 0:  # pragma: no cover
             try:
                 if winsize is not None:
-                    fcntl.ioctl(1, termios.TIOCSWINSZ,
-                                struct.pack("HHHH", winsize[0], winsize[1], 0, 0))
-                os.execve("/bin/bash",
-                          ["bash", str(self.scripts / "fleet-watch"), *args],
-                          environ)
+                    fcntl.ioctl(
+                        1,
+                        termios.TIOCSWINSZ,
+                        struct.pack("HHHH", winsize[0], winsize[1], 0, 0),
+                    )
+                os.execve(
+                    "/bin/bash",
+                    ["bash", str(self.scripts / "fleet-watch"), *args],
+                    environ,
+                )
             except BaseException:
                 pass
             os._exit(127)
@@ -242,6 +252,7 @@ def test_the_config_dir_marker_also_resolves_the_workspace(watch, tmp_path):
 
 
 # --- the pane map, refreshed per frame ----------------------------------------
+
 
 def test_every_draw_refreshes_the_pane_map_first(watch, tmp_path):
     """The change that makes a tab rename visible without a relaunch.
@@ -313,8 +324,9 @@ def test_the_board_does_not_reimplement_the_join():
     `fleet-panes.sh` does and why, and prose about a `tmux list-panes` is not a
     `tmux list-panes`.
     """
-    code = "\n".join(ln for ln in SCRIPT.read_text().splitlines()
-                     if not ln.lstrip().startswith("#"))
+    code = "\n".join(
+        ln for ln in SCRIPT.read_text().splitlines() if not ln.lstrip().startswith("#")
+    )
 
     assert "fleet-panes.sh" in code
     assert "list-panes" not in code
@@ -397,7 +409,7 @@ def test_off_a_terminal_it_draws_once_and_leaves(watch, tmp_path):
     assert result.returncode == 0, result.stderr
     assert len(watch.renders()) == 1
     assert "FLEET" in result.stdout
-    assert "\033[2J" not in result.stdout   # no screen-clear into a pipe
+    assert "\033[2J" not in result.stdout  # no screen-clear into a pipe
 
 
 @pytest.mark.parametrize("given", ["", "abc", "-1", "5s", "0"])
@@ -458,7 +470,7 @@ def _drain(fd, seconds, until=None):
             continue
         try:
             chunk = os.read(fd, 65536)
-        except OSError:                 # the child exited; the pty is gone
+        except OSError:  # the child exited; the pty is gone
             break
         if not chunk:
             break
@@ -517,10 +529,11 @@ class TestOnARealTerminal:
         pins the fix. It does not pin the macOS reproduction, and no test in
         this container can.
         """
-        pid, fd = watch.spawn_on_a_tty("30",
-                                       env={"WORKSPACE": str(tmp_path / "ws"),
-                                            "TERM": "no-such-terminal"},
-                                       winsize=(30, 165))
+        pid, fd = watch.spawn_on_a_tty(
+            "30",
+            env={"WORKSPACE": str(tmp_path / "ws"), "TERM": "no-such-terminal"},
+            winsize=(30, 165),
+        )
 
         _drain(fd, seconds=5, until=b"FLEET")
         os.write(fd, b"q")
@@ -528,8 +541,9 @@ class TestOnARealTerminal:
 
         assert watch.renders(), "the renderer was never called"
         _, lines, width = watch.renders()[0]
-        assert (lines, width) == ("29", "165"), \
+        assert (lines, width) == ("29", "165"), (
             "the board was sized from a fallback constant, not from the terminal"
+        )
 
     def test_a_single_keystroke_quits(self, watch, tmp_path):
         """The documented contract is *any key*, and a bare `read` does not

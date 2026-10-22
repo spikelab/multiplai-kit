@@ -154,7 +154,9 @@ class _DailyFileHandler(logging.FileHandler):
         super().emit(record)
 
 
-def cleanup_old_logs(log_dir: Path | None = None, retention_days: int | None = None) -> None:
+def cleanup_old_logs(
+    log_dir: Path | None = None, retention_days: int | None = None
+) -> None:
     """Delete rotated log files older than retention_days.
 
     If retention_days is 0, no files are deleted (keep forever).
@@ -167,8 +169,7 @@ def cleanup_old_logs(log_dir: Path | None = None, retention_days: int | None = N
     if retention_days == 0:
         return  # Keep forever
 
-    cutoff_ts = (datetime.now(timezone.utc).timestamp()
-                 - retention_days * 86400)
+    cutoff_ts = datetime.now(timezone.utc).timestamp() - retention_days * 86400
 
     # Standard format (name-YYYY-MM-DD.log) and legacy
     # TimedRotatingFileHandler format (name.log.YYYY-MM-DD).
@@ -215,9 +216,7 @@ def setup_logging(
         for handler in logger.handlers:
             if isinstance(handler.formatter, _SessionFormatter):
                 handler.formatter.session_id = sid
-                handler.formatter._fmt = (
-                    f"[%(asctime)s] [%(name)s] [session:{sid}] %(levelname)s: %(message)s"
-                )
+                handler.formatter._fmt = f"[%(asctime)s] [%(name)s] [session:{sid}] %(levelname)s: %(message)s"
         return logger
 
     if log_dir is None:

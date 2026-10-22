@@ -10,9 +10,8 @@ import logging
 import os
 import time
 
-import pytest
-
 import log_utils
+import pytest
 from log_utils import _get_retention_days, cleanup_old_logs, setup_logging
 
 
@@ -105,8 +104,9 @@ class TestRetentionIsWiredIntoSetup:
         directory on every logger construction."""
         monkeypatch.setenv("MULTIPLAI_LOG_RETENTION_DAYS", "7")
         calls = []
-        monkeypatch.setattr(log_utils, "cleanup_old_logs",
-                            lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(
+            log_utils, "cleanup_old_logs", lambda *a, **k: calls.append(a)
+        )
 
         for name in ("sweep-test-2", "sweep-test-3"):
             logger = setup_logging(name, log_dir=logs)
@@ -133,7 +133,8 @@ class TestRetentionResolution:
 
     def _write_conf(self, value):
         (self.home / "multiplai.conf").write_text(
-            f"MULTIPLAI_LOG_LEVEL=INFO\nMULTIPLAI_LOG_RETENTION_DAYS={value}\n")
+            f"MULTIPLAI_LOG_LEVEL=INFO\nMULTIPLAI_LOG_RETENTION_DAYS={value}\n"
+        )
 
     def test_env_overrides_conf(self, monkeypatch):
         self._write_conf(30)
@@ -177,7 +178,6 @@ class TestRetentionResolution:
         from the conf would put the cutoff in the future too."""
         self._write_conf(-5)
         assert _get_retention_days() == log_utils._DEFAULT_RETENTION_DAYS
-
 
 
 class TestHookErrorsLogMovesDaily:
@@ -239,6 +239,7 @@ class TestHookErrorsLogMovesDaily:
         cleanup_old_logs(logs, retention_days=365)
 
         assert not old.exists()
+
 
 def test_import_survives_an_unwritable_home(tmp_path):
     """The module-scope mkdir is best-effort: an unwritable

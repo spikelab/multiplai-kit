@@ -64,6 +64,7 @@ uv tool install mlx-lm
 Verify installation:
 ```python
 import mlx.core as mx
+
 print(mx.default_device())  # Should show 'gpu' on Apple Silicon
 ```
 
@@ -173,10 +174,10 @@ response = generate(
     model,
     tokenizer,
     prompt=prompt,
-    max_tokens=512,        # Maximum tokens to generate
-    temp=0.7,              # Temperature (0 = deterministic)
-    top_p=0.9,             # Nucleus sampling
-    repetition_penalty=1.1, # Penalize repetition
+    max_tokens=512,  # Maximum tokens to generate
+    temp=0.7,  # Temperature (0 = deterministic)
+    top_p=0.9,  # Nucleus sampling
+    repetition_penalty=1.1,  # Penalize repetition
     repetition_context_size=20,  # Context for repetition check
 )
 ```
@@ -224,6 +225,7 @@ async def async_stream(
     max_tokens: int = 512,
 ) -> AsyncGenerator[str, None]:
     """Async wrapper for MLX streaming."""
+
     # Run in thread to not block event loop
     def sync_stream():
         for response in stream_generate(
@@ -318,9 +320,9 @@ def estimate_memory(model_params: int, bits: int = 16) -> float:
 
 
 # Examples
-print(f"7B at 16-bit: {estimate_memory(7e9, 16):.1f} GB")   # ~13 GB
-print(f"7B at 4-bit: {estimate_memory(7e9, 4):.1f} GB")     # ~3.3 GB
-print(f"70B at 4-bit: {estimate_memory(70e9, 4):.1f} GB")   # ~33 GB
+print(f"7B at 16-bit: {estimate_memory(7e9, 16):.1f} GB")  # ~13 GB
+print(f"7B at 4-bit: {estimate_memory(7e9, 4):.1f} GB")  # ~3.3 GB
+print(f"70B at 4-bit: {estimate_memory(70e9, 4):.1f} GB")  # ~33 GB
 ```
 
 ### KV Cache Management
@@ -403,8 +405,7 @@ def batch_generate(
     # Note: MLX doesn't have native batching yet
     # Process sequentially but benefit from warm cache
     return [
-        generate(model, tokenizer, prompt=p, max_tokens=max_tokens)
-        for p in prompts
+        generate(model, tokenizer, prompt=p, max_tokens=max_tokens) for p in prompts
     ]
 ```
 
@@ -552,7 +553,9 @@ def safe_generate(model, tokenizer, prompt: str, **kwargs) -> str:
     try:
         return generate(model, tokenizer, prompt=prompt, **kwargs)
     except MemoryError:
-        raise MLXInferenceError("Out of memory - try a smaller model or shorter context")
+        raise MLXInferenceError(
+            "Out of memory - try a smaller model or shorter context"
+        )
     except Exception as e:
         raise MLXInferenceError(f"Generation failed: {e}")
 ```
@@ -606,7 +609,9 @@ for r in stream_generate(model, tokenizer, prompt="Hello"):
 
 # Chat format
 messages = [{"role": "user", "content": "Hello"}]
-prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+prompt = tokenizer.apply_chat_template(
+    messages, tokenize=False, add_generation_prompt=True
+)
 response = generate(model, tokenizer, prompt=prompt)
 ```
 

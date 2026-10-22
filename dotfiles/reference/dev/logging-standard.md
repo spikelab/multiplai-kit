@@ -86,6 +86,7 @@ For scripts that run as subprocesses with shell-level output capture (like `extr
 ```python
 from datetime import datetime, timezone
 
+
 def _log(level: str, session_id: str, msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sid = session_id[:8] if session_id else "--------"

@@ -93,7 +93,7 @@ uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 
 # Sanity-check the kit venv is wired up
-.venv/bin/python -m pytest evals/unit/ -q
+.venv/bin/python -m pytest evals/unit/ -q -n auto
 ```
 
 ## Running Evals
@@ -101,8 +101,12 @@ uv pip install --python .venv/bin/python -r requirements.txt
 Evals live at `evals/` (project root, not inside dotfiles/) and cover the kit's **own live code** only — the hook helpers and `multiplai.conf` loading. Free, fast, no API key. See `evals/README.md`.
 
 ```bash
-# From the repo root
-.venv/bin/python -m pytest evals/ -q
+# From the repo root (-n auto: pytest-xdist, in requirements.txt)
+.venv/bin/python -m pytest evals/ -q -n auto
+
+# Lint and format check (ruff 0.17.1 is pinned in ruff.toml; CI runs both)
+uvx ruff@0.17.1 check .
+uvx ruff@0.17.1 format --check .
 ```
 
 | File | Covers |
@@ -224,7 +228,7 @@ don't re-add the full list there.
 Run the kit's unit tests after any change to live kit code:
 
 ```bash
-.venv/bin/python -m pytest evals/ -q
+.venv/bin/python -m pytest evals/ -q -n auto
 ```
 
 > The old dev-instance + smoke-test harness (`make-dev-instance.sh`,

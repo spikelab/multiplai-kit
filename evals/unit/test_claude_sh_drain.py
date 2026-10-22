@@ -54,7 +54,6 @@ import shutil
 import subprocess
 
 import pytest
-
 from _kitpaths import KIT_ROOT
 from test_claude_sh_env import kit  # noqa: F401 — `kit` is a fixture
 
@@ -126,21 +125,34 @@ class DrainRun:
 def _install_plugin(kit, version="0.11.0", with_script=True):
     """A plugin cache entry plus the manifest Claude Code writes beside it."""
     install_path = (
-        kit.root / "dotfiles" / "plugins" / "cache" / "multiplai" /
-        "multiplai-context" / version
+        kit.root
+        / "dotfiles"
+        / "plugins"
+        / "cache"
+        / "multiplai"
+        / "multiplai-context"
+        / version
     )
     (install_path / "scripts").mkdir(parents=True)
     if with_script:
         (install_path / "scripts" / "drain_extractions.py").write_text("# stub\n")
     manifest = kit.root / "dotfiles" / "plugins" / "installed_plugins.json"
-    manifest.write_text(json.dumps({
-        "version": 2,
-        "plugins": {
-            "multiplai-context@multiplai": [
-                {"scope": "user", "installPath": str(install_path), "version": version}
-            ]
-        },
-    }))
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "plugins": {
+                    "multiplai-context@multiplai": [
+                        {
+                            "scope": "user",
+                            "installPath": str(install_path),
+                            "version": version,
+                        }
+                    ]
+                },
+            }
+        )
+    )
     return install_path
 
 
@@ -317,11 +329,13 @@ def test_drain_container_mounts_exactly_what_it_needs(drainkit):
     d = _run(drainkit, "--shell", "-c", "true")
 
     dotfiles = drainkit.root / "dotfiles"
-    assert sorted(d.values_after("-v")) == sorted([
-        f"{drainkit.workspace}:{drainkit.workspace}",
-        f"{dotfiles}:{dotfiles}",
-        f"{creds}:{dotfiles}/.credentials.json",
-    ])
+    assert sorted(d.values_after("-v")) == sorted(
+        [
+            f"{drainkit.workspace}:{drainkit.workspace}",
+            f"{dotfiles}:{dotfiles}",
+            f"{creds}:{dotfiles}/.credentials.json",
+        ]
+    )
 
 
 def test_drain_container_env_is_exactly_workspace_and_config_dir(drainkit):
@@ -340,15 +354,23 @@ def test_drain_container_env_is_exactly_workspace_and_config_dir(drainkit):
     d = _run(drainkit, "--shell", "-c", "true")
 
     dotfiles = drainkit.root / "dotfiles"
-    assert sorted(d.values_after("-e")) == sorted([
-        f"WORKSPACE={drainkit.workspace}",
-        f"CLAUDE_CONFIG_DIR={dotfiles}",
-    ])
+    assert sorted(d.values_after("-e")) == sorted(
+        [
+            f"WORKSPACE={drainkit.workspace}",
+            f"CLAUDE_CONFIG_DIR={dotfiles}",
+        ]
+    )
     # And no secret value reaches the drain's argv in any position. The .env
     # fixture carries GH_TOKEN and TAVILY_API_KEY; both must stay host-side.
     joined = "\0".join(d.argv)
-    for leak in ("anthropic_api_key", "sk-ant-from-env-file",
-                 "GH_TOKEN", "token-from-env-file", "TAVILY", "tvly-from-file"):
+    for leak in (
+        "anthropic_api_key",
+        "sk-ant-from-env-file",
+        "GH_TOKEN",
+        "token-from-env-file",
+        "TAVILY",
+        "tvly-from-file",
+    ):
         assert leak not in joined, f"{leak!r} leaked into the drain container"
 
 
@@ -370,8 +392,12 @@ def test_drain_never_changes_the_exit_status(drainkit):
     _queue_marker(drainkit)
 
     d = _run(
-        drainkit, "--shell", "-c", "true",
-        MAIN_RUN_STATUS="7", DRAIN_RUN_STATUS="42",
+        drainkit,
+        "--shell",
+        "-c",
+        "true",
+        MAIN_RUN_STATUS="7",
+        DRAIN_RUN_STATUS="42",
     )
 
     assert d.ran, "precondition: the failing drain run must actually be attempted"
@@ -445,14 +471,21 @@ def test_container_resolution_follows_the_manifest(payloadkit):
     install_path = _install_plugin(payloadkit)
     # A newer cached version that the manifest does NOT point at must lose.
     newer = (
-        payloadkit.root / "dotfiles" / "plugins" / "cache" / "multiplai" /
-        "multiplai-context" / "0.12.0" / "scripts"
+        payloadkit.root
+        / "dotfiles"
+        / "plugins"
+        / "cache"
+        / "multiplai"
+        / "multiplai-context"
+        / "0.12.0"
+        / "scripts"
     )
     newer.mkdir(parents=True)
     (newer / "drain_extractions.py").write_text("# newer, NOT installed\n")
 
     proc = _run_payload(
-        payloadkit, payloadkit.payload,
+        payloadkit,
+        payloadkit.payload,
         [payloadkit.payload_bin, "/usr/bin", "/bin"],
         payloadkit.uv_argv_out,
     )
@@ -474,7 +507,8 @@ def test_plugin_absent_is_silent_in_the_container(payloadkit):
     """Vanilla Claude Code with no multiplai-context installed: the container
     finds no manifest, exits 0, runs nothing, says nothing."""
     proc = _run_payload(
-        payloadkit, payloadkit.payload,
+        payloadkit,
+        payloadkit.payload,
         [payloadkit.payload_bin, "/usr/bin", "/bin"],
         payloadkit.uv_argv_out,
     )
@@ -489,7 +523,8 @@ def test_older_plugin_without_the_script_is_silent(payloadkit):
     _install_plugin(payloadkit, version="0.10.0", with_script=False)
 
     proc = _run_payload(
-        payloadkit, payloadkit.payload,
+        payloadkit,
+        payloadkit.payload,
         [payloadkit.payload_bin, "/usr/bin", "/bin"],
         payloadkit.uv_argv_out,
     )
@@ -511,7 +546,9 @@ def test_missing_uv_in_the_image_is_silent(payloadkit):
     jq.chmod(0o755)
 
     proc = _run_payload(
-        payloadkit, payloadkit.payload, [payloadkit.payload_bin],
+        payloadkit,
+        payloadkit.payload,
+        [payloadkit.payload_bin],
         payloadkit.uv_argv_out,
     )
 
@@ -557,14 +594,16 @@ def _run_drain_block(tmp_path, sanitized_bin):
     creds = tmp_path / "gcreds.json"
     creds.write_text("{}")
 
-    script = "\n".join([
-        f'WORKSPACE="{ws}"',
-        f'DOTFILES_DIR="{tmp_path}/gdotfiles"',
-        'IMAGE_NAME="claude-multiplai:local"',
-        f'CREDS_FILE="{creds}"',
-        _drain_block(),
-        "post_exit_drain",
-    ])
+    script = "\n".join(
+        [
+            f'WORKSPACE="{ws}"',
+            f'DOTFILES_DIR="{tmp_path}/gdotfiles"',
+            'IMAGE_NAME="claude-multiplai:local"',
+            f'CREDS_FILE="{creds}"',
+            _drain_block(),
+            "post_exit_drain",
+        ]
+    )
     # Absolute interpreter path: with a sanitized PATH in env, execvpe would
     # otherwise fail to find bash itself.
     return subprocess.run(

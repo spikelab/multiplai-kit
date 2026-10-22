@@ -44,9 +44,11 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
 def hash_password(password: str) -> str:
     """Hash a password for storage."""
     return pwd_context.hash(password)
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
@@ -59,6 +61,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 # src/myapp/schemas/user.py
 from pydantic import BaseModel, field_validator
 import re
+
 
 class UserCreate(BaseModel):
     email: str
@@ -112,6 +115,7 @@ from myapp.repositories.user import UserRepository
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+
 @router.post("/login")
 async def login(
     request: Request,
@@ -131,6 +135,7 @@ async def login(
     request.session["user_id"] = user.id
     return {"message": "Logged in"}
 
+
 @router.post("/logout")
 async def logout(request: Request):
     request.session.clear()
@@ -142,6 +147,7 @@ async def logout(request: Request):
 ```python
 # src/myapp/api/deps.py
 from fastapi import Depends, HTTPException, Request
+
 
 async def get_current_user(
     request: Request,
@@ -157,6 +163,7 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
 
     return user
+
 
 async def get_current_active_user(
     user: User = Depends(get_current_user),
@@ -188,6 +195,7 @@ from myapp.config import settings
 
 ALGORITHM = "HS256"
 
+
 def create_access_token(
     data: dict,
     expires_delta: timedelta | None = None,
@@ -200,12 +208,14 @@ def create_access_token(
     to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
 
+
 def create_refresh_token(data: dict) -> str:
     """Create a JWT refresh token (longer lived)."""
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=7)
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
+
 
 def decode_token(token: str) -> dict:
     """Decode and validate a JWT token."""
@@ -237,6 +247,7 @@ from myapp.core.security import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+
 @router.post("/token")
 async def login_for_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -257,6 +268,7 @@ async def login_for_token(
         "refresh_token": refresh_token,
         "token_type": "bearer",
     }
+
 
 @router.post("/refresh")
 async def refresh_token(
@@ -287,6 +299,7 @@ from fastapi.security import OAuth2PasswordBearer
 from myapp.core.security import decode_token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -323,9 +336,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from myapp.database import Base
 
+
 class UserRole(str, Enum):
     USER = "user"
     ADMIN = "admin"
+
 
 class User(Base):
     __tablename__ = "users"
@@ -355,10 +370,12 @@ class User(Base):
 from datetime import datetime
 from pydantic import BaseModel, EmailStr
 
+
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
     full_name: str | None = None
+
 
 class UserResponse(BaseModel):
     id: int
@@ -369,6 +386,7 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
 
 class UserUpdate(BaseModel):
     full_name: str | None = None
@@ -386,8 +404,10 @@ class UserUpdate(BaseModel):
 from functools import wraps
 from fastapi import HTTPException
 
+
 def require_role(*allowed_roles: UserRole):
     """Dependency factory for role-based access."""
+
     async def role_checker(
         user: User = Depends(get_current_active_user),
     ) -> User:
@@ -397,7 +417,9 @@ def require_role(*allowed_roles: UserRole):
                 detail="Insufficient permissions",
             )
         return user
+
     return role_checker
+
 
 # Usage
 @router.delete("/users/{user_id}")
@@ -420,16 +442,19 @@ async def delete_user(
 # More granular permissions
 from enum import Flag, auto
 
+
 class Permission(Flag):
     READ = auto()
     WRITE = auto()
     DELETE = auto()
     ADMIN = READ | WRITE | DELETE
 
+
 ROLE_PERMISSIONS = {
     UserRole.USER: Permission.READ,
     UserRole.ADMIN: Permission.ADMIN,
 }
+
 
 def require_permission(permission: Permission):
     async def permission_checker(
@@ -439,6 +464,7 @@ def require_permission(permission: Permission):
         if not (user_perms & permission):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         return user
+
     return permission_checker
 ```
 
@@ -492,12 +518,14 @@ from myapp.core.oauth import oauth
 
 router = APIRouter(prefix="/auth", tags=["oauth"])
 
+
 @router.get("/login/{provider}")
 async def oauth_login(request: Request, provider: str):
     """Redirect to OAuth provider."""
     client = oauth.create_client(provider)
     redirect_uri = request.url_for("oauth_callback", provider=provider)
     return await client.authorize_redirect(request, redirect_uri)
+
 
 @router.get("/callback/{provider}")
 async def oauth_callback(
@@ -520,12 +548,14 @@ async def oauth_callback(
     user = await repo.get_by_email(user_info["email"])
 
     if not user:
-        user = await repo.create(User(
-            email=user_info["email"],
-            full_name=user_info.get("name"),
-            is_verified=True,  # OAuth emails are verified
-            hashed_password="",  # No password for OAuth users
-        ))
+        user = await repo.create(
+            User(
+                email=user_info["email"],
+                full_name=user_info.get("name"),
+                is_verified=True,  # OAuth emails are verified
+                hashed_password="",  # No password for OAuth users
+            )
+        )
 
     # Create JWT tokens
     access_token = create_access_token(data={"sub": str(user.id)})
@@ -549,6 +579,7 @@ For service-to-service or developer APIs.
 import secrets
 from sqlalchemy import String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 
 class APIKey(Base):
     __tablename__ = "api_keys"
@@ -580,6 +611,7 @@ from fastapi.security import APIKeyHeader
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+
 async def get_api_key_user(
     api_key: str | None = Security(api_key_header),
     db: AsyncSession = Depends(get_db),
@@ -591,8 +623,7 @@ async def get_api_key_user(
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
     result = await db.execute(
-        select(APIKey)
-        .where(APIKey.key_hash == key_hash, APIKey.is_active == True)
+        select(APIKey).where(APIKey.key_hash == key_hash, APIKey.is_active == True)
     )
     api_key_obj = result.scalar_one_or_none()
 
@@ -604,6 +635,7 @@ async def get_api_key_user(
     await db.commit()
 
     return api_key_obj.user
+
 
 async def get_current_user_or_api_key(
     token_user: User | None = Depends(get_current_user_optional),
@@ -786,7 +818,11 @@ uv add itsdangerous
 
 ```python
 from fastapi import Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, APIKeyHeader
+from fastapi.security import (
+    OAuth2PasswordBearer,
+    OAuth2PasswordRequestForm,
+    APIKeyHeader,
+)
 from passlib.context import CryptContext
 import jwt
 ```

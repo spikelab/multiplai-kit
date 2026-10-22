@@ -58,8 +58,8 @@ import signal
 import subprocess
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 HOOKS_DIR = KIT_ROOT / "dotfiles" / "hooks"
 AUTH_HOOK = HOOKS_DIR / "gh-app-auth.sh"
 REFRESH_HOOK = HOOKS_DIR / "gh-app-refresh.sh"
@@ -243,7 +243,9 @@ def session(tmp_path):
 
 
 def _now():
-    return int(subprocess.run(["date", "+%s"], capture_output=True, text=True).stdout.strip())
+    return int(
+        subprocess.run(["date", "+%s"], capture_output=True, text=True).stdout.strip()
+    )
 
 
 # --- inert unless the session is in App mode ---------------------------------
@@ -276,7 +278,10 @@ def test_auth_hook_stores_the_token_through_a_pipe(session):
     result = session.run("gh-app-auth.sh")
     assert result.returncode == 0
     assert session.mint_attempts == 1
-    assert session.gh_invocations == ["auth login --with-token --hostname github.com", "auth setup-git"]
+    assert session.gh_invocations == [
+        "auth login --with-token --hostname github.com",
+        "auth setup-git",
+    ]
     assert session.gh_stdin.read_text().strip() == "ghs_stub_token"
 
 
@@ -308,7 +313,10 @@ def test_auth_hook_clears_an_inherited_environment_token(session):
     forwards none, but a stray one must not silently block the store."""
     result = session.run("gh-app-auth.sh", GH_TOKEN="ghp_stray")
     assert result.returncode == 0
-    assert session.gh_invocations == ["auth login --with-token --hostname github.com", "auth setup-git"]
+    assert session.gh_invocations == [
+        "auth login --with-token --hostname github.com",
+        "auth setup-git",
+    ]
 
 
 def test_auth_hook_skips_the_mint_while_the_cached_token_is_fresh(session):
@@ -399,7 +407,9 @@ def test_remint_inside_the_skew_window(session):
     assert session.mint_attempts == 1
 
 
-@pytest.mark.parametrize("sidecar", [None, "", "not-a-number", "  ", "99999999999999999999x"])
+@pytest.mark.parametrize(
+    "sidecar", [None, "", "not-a-number", "  ", "99999999999999999999x"]
+)
 def test_unreadable_sidecar_counts_as_expired(session, sidecar):
     """Never treat an unparseable cache as valid — that is a live 401 waiting to
     happen, and the failure is silent until someone runs a `gh` command."""
@@ -462,7 +472,9 @@ def test_stale_or_unreadable_backoff_marker_does_not_block_the_retry(session, ma
     """The marker self-expires by timestamp, and an unparseable one counts as
     absent — backoff must never turn into a permanent lockout."""
     session.write_sidecar("acme", "0")
-    session.write_fail_marker("acme", str(_now() - 1) if marker == "expired" else marker)
+    session.write_fail_marker(
+        "acme", str(_now() - 1) if marker == "expired" else marker
+    )
     session.run("gh-app-refresh.sh")
     assert session.mint_attempts == 1
 
@@ -616,7 +628,8 @@ def test_setup_git_cannot_read_the_hooks_stdin():
     that waits on it would hang the session start — the 2026-07-30 failure mode,
     reached by a different route."""
     line = [
-        ln for ln in AUTH_HOOK.read_text().splitlines()
+        ln
+        for ln in AUTH_HOOK.read_text().splitlines()
         if "gh auth setup-git" in ln and not ln.lstrip().startswith("#")
     ]
     assert len(line) == 1, f"expected one setup-git call site, got {line}"
@@ -636,11 +649,16 @@ def test_settings_only_runs_setup_git_outside_app_mode():
         for h in group["hooks"]
         if "setup-git" in h.get("command", "")
     ]
-    assert len(commands) == 1, f"expected one standalone setup-git entry, got {commands}"
+    assert len(commands) == 1, (
+        f"expected one standalone setup-git entry, got {commands}"
+    )
     # Polarity matters: App mode must skip (the auth hook runs setup-git
     # itself), PAT mode must run it (that call writes the credential
     # helper), and a token-less start must stay quiet.
-    assert '[ -n "${GH_TOKEN_APP:-}" ] || [ -z "${GH_TOKEN:-}" ] || gh auth setup-git' in commands[0], commands[0]
+    assert (
+        '[ -n "${GH_TOKEN_APP:-}" ] || [ -z "${GH_TOKEN:-}" ] || gh auth setup-git'
+        in commands[0]
+    ), commands[0]
     assert "|| exit 0" not in commands[0], commands[0]
 
 
@@ -649,7 +667,8 @@ def test_hooks_source_the_shared_store_helper(hook):
     """Both hooks run the ONE copy of the mint/store block. A hook that grows
     its own inline copy re-opens the drift that let the 2026-07-30 hang ship."""
     code = [
-        ln for ln in hook.read_text().splitlines()
+        ln
+        for ln in hook.read_text().splitlines()
         if ln.strip() and not ln.lstrip().startswith("#")
     ]
     sourcing = [ln for ln in code if "hooks/gh-store-token" in ln]
@@ -663,7 +682,8 @@ def test_the_minter_is_never_piped_straight_into_gh(hook):
     and tested before it goes anywhere near `gh`; a pipe straight off the minter
     reintroduces the hang no matter what the surrounding logic says."""
     code = [
-        ln for ln in hook.read_text().splitlines()
+        ln
+        for ln in hook.read_text().splitlines()
         if ln.strip() and not ln.lstrip().startswith("#")
     ]
     # Rejoin backslash continuations: the broken form spanned two physical lines,
@@ -808,11 +828,7 @@ def _bound_probe_layout(tmp_path, *, with_bounded=True):
     # only if gh-tok sourced the library and routed the mint through it.
     log = tmp_path / "timeout-argv.log"
     stub = bindir / "timeout"
-    stub.write_text(
-        "#!/usr/bin/env bash\n"
-        f'printf "%s\\n" "$*" >> {log}\n'
-        "exit 7\n"
-    )
+    stub.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> {log}\nexit 7\n')
     stub.chmod(0o755)
     return real, bindir, log
 
@@ -839,7 +855,9 @@ def test_gh_tok_actually_reaches_the_shared_bound(tmp_path):
     """
     script, bindir, log = _bound_probe_layout(tmp_path)
     result = _run_bound_probe(script, bindir, tmp_path)
-    assert result.returncode != 0, "the stub minter fails; gh-tok must not report success"
+    assert result.returncode != 0, (
+        "the stub minter fails; gh-tok must not report success"
+    )
     assert log.exists(), f"the bound was never reached: {result.stderr}"
     recorded = log.read_text().strip()
     assert "multiplai-gh-token --json acme" in recorded
@@ -903,7 +921,9 @@ def test_refresh_guard_forks_zero_processes():
     assert "--- renew" in body, "renew section banner is gone; the slice is wrong"
     guard = body.split("--- renew")[0]
     code = [
-        ln for ln in guard.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
+        ln
+        for ln in guard.splitlines()
+        if ln.strip() and not ln.lstrip().startswith("#")
     ]
     joined = "\n".join(code)
     assert "EPOCHSECONDS" in joined, "guard does not use the builtin clock"
@@ -1014,8 +1034,7 @@ def test_gh_tok_bounds_both_mint_routes():
     all. Both routes must go through `bounded` (GNU timeout / perl alarm)."""
     body = GH_TOK.read_text()
     code = [
-        ln for ln in body.splitlines()
-        if ln.strip() and not ln.lstrip().startswith("#")
+        ln for ln in body.splitlines() if ln.strip() and not ln.lstrip().startswith("#")
     ]
     # Rejoin backslash continuations — the ssh route spans two physical lines.
     logical, buf = [], ""

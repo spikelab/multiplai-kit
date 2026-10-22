@@ -39,7 +39,18 @@ jobs:
           uv pip install --python .venv/bin/python -r requirements.txt
 
       - name: Run evals
-        run: .venv/bin/python -m pytest evals/ -q
+        run: .venv/bin/python -m pytest evals/ -q -n auto
+
+  lint:
+    name: ruff (check + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: ruff check
+        run: uvx ruff@0.17.1 check --output-format=github .
+      - name: ruff format
+        run: uvx ruff@0.17.1 format --check .
 
   # The two install rungs, end-to-end on Linux. The kit was developed on macOS
   # (OrbStack); these jobs are what keep native Linux (docker-ce) a supported

@@ -34,8 +34,8 @@ import subprocess
 import time
 
 import pytest
-
 from _kitpaths import KIT_ROOT
+
 SCRIPT = KIT_ROOT / "dotfiles" / "scripts" / "fleet-viewed.sh"
 WS_LIB = KIT_ROOT / "dotfiles" / "scripts" / "lib" / "resolve-workspace.sh"
 
@@ -120,6 +120,7 @@ def _assert_silent(r):
 
 # --- the marker ---------------------------------------------------------------
 
+
 def test_it_writes_the_three_line_marker(run):
     r = run("%12")
     _assert_silent(r)
@@ -186,6 +187,7 @@ def test_a_second_view_overwrites_rather_than_appends(run):
 
 # --- where it writes ----------------------------------------------------------
 
+
 def test_the_workspace_falls_back_to_the_dotfile(run, tmp_path):
     """A tmux hook inherits the *tmux server's* environment, which was started
     long before any launcher exported `WORKSPACE`.
@@ -238,7 +240,9 @@ def test_the_marker_beside_the_script_resolves_the_workspace(tmp_path):
     proc = subprocess.run(
         [str(script), "%7"],
         env={"PATH": f"{stub_dir}:/usr/bin:/bin", "HOME": str(tmp_path / "home")},
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
 
     assert proc.returncode == 0
@@ -254,6 +258,7 @@ def test_it_creates_the_marker_directory(run):
 
 
 # --- silence on every failure path --------------------------------------------
+
 
 def test_no_workspace_at_all_is_silent(run):
     r = run("%12", ws=None)
@@ -299,6 +304,7 @@ def test_an_unwritable_data_dir_is_silent(run, tmp_path):
 
 
 # --- pruning ------------------------------------------------------------------
+
 
 def test_a_marker_older_than_seven_days_is_removed(run):
     r = run("%1")

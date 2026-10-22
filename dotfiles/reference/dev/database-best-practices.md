@@ -67,15 +67,18 @@ SQLAlchemy is the de facto standard for Python database access. Use SQLAlchemy 2
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
+
 class Base(DeclarativeBase):
     """Base class for all models."""
+
     pass
+
 
 # Sync engine
 engine = create_engine(
     settings.database_url,
     echo=settings.debug,  # Log SQL in development
-    pool_pre_ping=True,   # Verify connections before use
+    pool_pre_ping=True,  # Verify connections before use
 )
 
 SessionLocal = sessionmaker(
@@ -83,6 +86,7 @@ SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
 )
+
 
 def get_db():
     """Dependency for FastAPI."""
@@ -104,8 +108,10 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
+
 class Base(DeclarativeBase):
     pass
+
 
 # Use asyncpg for PostgreSQL
 engine = create_async_engine(
@@ -119,6 +125,7 @@ async_session = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Async dependency for FastAPI."""
@@ -141,6 +148,7 @@ from sqlalchemy import String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from myapp.database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -169,15 +177,18 @@ class User(Base):
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+
 # Get by ID
 async def get_user(db: AsyncSession, user_id: int) -> User | None:
     result = await db.execute(select(User).where(User.id == user_id))
     return result.scalar_one_or_none()
 
+
 # Get by field
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     result = await db.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()
+
 
 # List with pagination
 async def list_users(
@@ -186,12 +197,10 @@ async def list_users(
     limit: int = 100,
 ) -> list[User]:
     result = await db.execute(
-        select(User)
-        .offset(skip)
-        .limit(limit)
-        .order_by(User.created_at.desc())
+        select(User).offset(skip).limit(limit).order_by(User.created_at.desc())
     )
     return list(result.scalars().all())
+
 
 # Create
 async def create_user(db: AsyncSession, user_data: UserCreate) -> User:
@@ -200,6 +209,7 @@ async def create_user(db: AsyncSession, user_data: UserCreate) -> User:
     await db.commit()
     await db.refresh(user)
     return user
+
 
 # Update
 async def update_user(
@@ -212,6 +222,7 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
     return user
+
 
 # Delete
 async def delete_user(db: AsyncSession, user: User) -> None:
@@ -235,6 +246,7 @@ from myapp.database import Base
 
 ModelT = TypeVar("ModelT", bound=Base)
 
+
 class BaseRepository(Generic[ModelT]):
     """Base repository with common CRUD operations."""
 
@@ -243,9 +255,7 @@ class BaseRepository(Generic[ModelT]):
         self.model = model
 
     async def get(self, id: int) -> ModelT | None:
-        result = await self.db.execute(
-            select(self.model).where(self.model.id == id)
-        )
+        result = await self.db.execute(select(self.model).where(self.model.id == id))
         return result.scalar_one_or_none()
 
     async def list(
@@ -253,9 +263,7 @@ class BaseRepository(Generic[ModelT]):
         skip: int = 0,
         limit: int = 100,
     ) -> list[ModelT]:
-        result = await self.db.execute(
-            select(self.model).offset(skip).limit(limit)
-        )
+        result = await self.db.execute(select(self.model).offset(skip).limit(limit))
         return list(result.scalars().all())
 
     async def create(self, obj: ModelT) -> ModelT:
@@ -276,20 +284,17 @@ from sqlalchemy import select
 from myapp.models import User
 from myapp.repositories.base import BaseRepository
 
+
 class UserRepository(BaseRepository[User]):
     def __init__(self, db: AsyncSession):
         super().__init__(db, User)
 
     async def get_by_email(self, email: str) -> User | None:
-        result = await self.db.execute(
-            select(User).where(User.email == email)
-        )
+        result = await self.db.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
     async def get_active_users(self) -> list[User]:
-        result = await self.db.execute(
-            select(User).where(User.is_active == True)
-        )
+        result = await self.db.execute(select(User).where(User.is_active == True))
         return list(result.scalars().all())
 ```
 
@@ -365,8 +370,10 @@ alembic history
 
 Revision ID: 001
 """
+
 from alembic import op
 import sqlalchemy as sa
+
 
 def upgrade() -> None:
     op.create_table(
@@ -376,6 +383,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
     )
     op.create_index("ix_users_email", "users", ["email"])
+
 
 def downgrade() -> None:
     op.drop_index("ix_users_email")
@@ -402,11 +410,11 @@ from sqlalchemy.pool import QueuePool
 engine = create_engine(
     database_url,
     poolclass=QueuePool,
-    pool_size=5,           # Maintained connections
-    max_overflow=10,       # Additional connections when needed
-    pool_timeout=30,       # Seconds to wait for connection
-    pool_recycle=1800,     # Recycle connections after 30 min
-    pool_pre_ping=True,    # Verify connection before use
+    pool_size=5,  # Maintained connections
+    max_overflow=10,  # Additional connections when needed
+    pool_timeout=30,  # Seconds to wait for connection
+    pool_recycle=1800,  # Recycle connections after 30 min
+    pool_pre_ping=True,  # Verify connection before use
 )
 ```
 
@@ -440,6 +448,7 @@ from sqlalchemy.pool import StaticPool
 
 from myapp.database import Base
 
+
 @pytest.fixture
 def db():
     """Fresh database for each test."""
@@ -469,6 +478,7 @@ from sqlalchemy.pool import StaticPool
 
 from myapp.database import Base
 
+
 @pytest_asyncio.fixture
 async def db():
     """Async database session for tests."""
@@ -480,9 +490,7 @@ async def db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async_session = sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as session:
         yield session
 
@@ -497,11 +505,13 @@ async def db():
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+
 @pytest.fixture(scope="session")
 def postgres():
     """Real PostgreSQL for integration tests."""
     with PostgresContainer("postgres:15") as pg:
         yield pg.get_connection_url()
+
 
 @pytest.fixture
 def db(postgres):
@@ -528,6 +538,7 @@ from datetime import datetime
 from sqlalchemy import DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
+
 class SoftDeleteMixin:
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
 
@@ -535,9 +546,11 @@ class SoftDeleteMixin:
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
 
+
 class User(Base, SoftDeleteMixin):
     __tablename__ = "users"
     # ... fields
+
 
 # Query active only
 select(User).where(User.deleted_at.is_(None))
@@ -550,10 +563,9 @@ from datetime import datetime
 from sqlalchemy import DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column
 
+
 class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
@@ -564,8 +576,10 @@ class TimestampMixin:
 ```python
 from sqlalchemy.orm import Mapped, mapped_column
 
+
 class OptimisticLockMixin:
     version: Mapped[int] = mapped_column(default=1)
+
 
 # Usage
 async def update_with_lock(db: AsyncSession, user: User, updates: dict):

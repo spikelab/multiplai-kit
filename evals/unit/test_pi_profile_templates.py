@@ -39,7 +39,9 @@ def test_default_models_hold_both_providers():
 
 def test_glm_carries_the_catalog_reasoning_fields():
     """Copied from pi-ai 1.2.0's built-in OpenRouter catalog entry for z-ai/glm-5.3."""
-    models = _json(DEFAULT / "agent" / "models.json")["providers"]["openrouter"]["models"]
+    models = _json(DEFAULT / "agent" / "models.json")["providers"]["openrouter"][
+        "models"
+    ]
     glm = next(m for m in models if m["id"] == GLM)
     assert glm["reasoning"] is True
     assert glm["compat"]["thinkingFormat"] == "openrouter"
@@ -58,7 +60,9 @@ def test_required_env_lists_both_keys():
 
 def test_packages_add_the_deepseek_cache_to_shared():
     """The bootstrap installs `_shared/packages.txt`, then this list."""
-    assert _listed(DEFAULT / "packages.txt") == ["npm:@rohaquinlop/pi-deepseek-cache@0.5.1"]
+    assert _listed(DEFAULT / "packages.txt") == [
+        "npm:@rohaquinlop/pi-deepseek-cache@0.5.1"
+    ]
     assert _listed(PROFILES / "_shared" / "packages.txt"), "shared list is empty"
 
 

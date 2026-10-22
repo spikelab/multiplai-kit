@@ -24,7 +24,8 @@ def _run(home: Path, conf: str | None, var: str) -> str:
     script.write_text(f'import os; print(os.environ.get("{var}", "UNSET"))\n')
     result = subprocess.run(
         ["bash", str(RUN_HOOK_PYTHON), str(script)],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         env={
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "CLAUDE_MULTIPLAI_HOME": str(home),
@@ -56,20 +57,26 @@ class TestConfigDefaults:
 
 class TestConfigOverrides:
     def test_model_override(self, tmp_path):
-        out = _run(tmp_path, 'MULTIPLAI_MODEL="claude-haiku-4-5-20251001"\n',
-                   "MULTIPLAI_MODEL")
+        out = _run(
+            tmp_path, 'MULTIPLAI_MODEL="claude-haiku-4-5-20251001"\n', "MULTIPLAI_MODEL"
+        )
         assert out == "claude-haiku-4-5-20251001"
 
     def test_debug_override(self, tmp_path):
         assert _run(tmp_path, "MULTIPLAI_DEBUG=true\n", "MULTIPLAI_DEBUG") == "true"
 
     def test_effort_override(self, tmp_path):
-        assert _run(tmp_path, "MULTIPLAI_EFFORT=medium\n", "MULTIPLAI_EFFORT") == "medium"
+        assert (
+            _run(tmp_path, "MULTIPLAI_EFFORT=medium\n", "MULTIPLAI_EFFORT") == "medium"
+        )
 
     def test_log_level_is_exported(self, tmp_path):
         # Regression: MULTIPLAI_LOG_LEVEL was set in conf but not exported, so
         # the log-level knob silently did nothing for hook-invoked scripts.
-        assert _run(tmp_path, "MULTIPLAI_LOG_LEVEL=DEBUG\n", "MULTIPLAI_LOG_LEVEL") == "DEBUG"
+        assert (
+            _run(tmp_path, "MULTIPLAI_LOG_LEVEL=DEBUG\n", "MULTIPLAI_LOG_LEVEL")
+            == "DEBUG"
+        )
 
 
 class TestConfMalformed:
@@ -80,7 +87,9 @@ class TestConfMalformed:
         assert _run(tmp_path, "# a comment\n# another\n", "MULTIPLAI_MODEL") == ""
 
     def test_inline_comment_stripped(self, tmp_path):
-        out = _run(tmp_path, "MULTIPLAI_EFFORT=medium  # trailing note\n", "MULTIPLAI_EFFORT")
+        out = _run(
+            tmp_path, "MULTIPLAI_EFFORT=medium  # trailing note\n", "MULTIPLAI_EFFORT"
+        )
         assert out == "medium"
 
 
@@ -93,7 +102,7 @@ class TestConfSecurity:
         (tmp_path / "canary").unlink(missing_ok=True)
         out = _run(
             tmp_path,
-            f'MULTIPLAI_MODEL=$(touch {tmp_path}/canary)\n',
+            f"MULTIPLAI_MODEL=$(touch {tmp_path}/canary)\n",
             "MULTIPLAI_MODEL",
         )
         assert not (tmp_path / "canary").exists(), "conf value was executed"
@@ -106,7 +115,7 @@ class TestConfSecurity:
         (tmp_path / "canary2").unlink(missing_ok=True)
         _run(
             tmp_path,
-            f'MULTIPLAI_A[$(touch {tmp_path}/canary2)]=x\n',
+            f"MULTIPLAI_A[$(touch {tmp_path}/canary2)]=x\n",
             "MULTIPLAI_MODEL",
         )
         assert not (tmp_path / "canary2").exists(), "conf key subscript was executed"
@@ -116,7 +125,7 @@ class TestConfSecurity:
         (tmp_path / "canary3").unlink(missing_ok=True)
         _run(
             tmp_path,
-            f'MULTIPLAI_DEBUG=touch {tmp_path}/canary3\n',
+            f"MULTIPLAI_DEBUG=touch {tmp_path}/canary3\n",
             "MULTIPLAI_DEBUG",
         )
         assert not (tmp_path / "canary3").exists(), "MULTIPLAI_DEBUG was executed"

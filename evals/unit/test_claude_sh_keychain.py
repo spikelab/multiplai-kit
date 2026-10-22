@@ -53,10 +53,10 @@ def _security(kit, items, log=None):
         body.append(f'printf \'%s\\n\' "$@" >> "{log}"')
     # argv is: find-generic-password -a <user> -s <item> -w
     body.append('item=""')
-    body.append('while [ $# -gt 0 ]; do')
+    body.append("while [ $# -gt 0 ]; do")
     body.append('  [ "$1" = "-s" ] && { item="$2"; shift; }')
-    body.append('  shift')
-    body.append('done')
+    body.append("  shift")
+    body.append("done")
     body.append('case "$item" in')
     for name, value in items.items():
         body.append(f"  {name}) printf '{value}\\n'; exit 0 ;;")
@@ -74,8 +74,9 @@ def test_any_variable_resolves_from_the_keychain(kit):
     """The rule is the suffix, not a list of blessed names."""
     _pretend_macos(kit)
     _security(kit, {"anthropic-key": "sk-ant-from-keychain"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'ANTHROPIC_API_KEY_KEYCHAIN="anthropic-key"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace) + 'ANTHROPIC_API_KEY_KEYCHAIN="anthropic-key"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -89,13 +90,15 @@ def test_a_resolved_variable_actually_reaches_the_container(kit):
     on no keep-list, so nothing else would carry it across."""
     _pretend_macos(kit)
     _security(kit, {"tavily-key": "tvly-from-keychain"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'TAVILY_API_KEY_KEYCHAIN="tavily-key"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace) + 'TAVILY_API_KEY_KEYCHAIN="tavily-key"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
-    assert result.forwarded_bare("TAVILY_API_KEY"), \
+    assert result.forwarded_bare("TAVILY_API_KEY"), (
         "resolved on the host and then dropped — the whole point of the forward list"
+    )
     assert result.resolved("TAVILY_API_KEY") == "tvly-from-keychain"
 
 
@@ -104,8 +107,9 @@ def test_the_value_never_reaches_argv(kit):
     it from this process's environment, so it stays out of `ps`."""
     _pretend_macos(kit)
     _security(kit, {"tavily-key": "tvly-from-keychain"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'TAVILY_API_KEY_KEYCHAIN="tavily-key"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace) + 'TAVILY_API_KEY_KEYCHAIN="tavily-key"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -118,8 +122,9 @@ def test_the_keychain_variable_itself_is_never_forwarded(kit):
     nowhere. Denied dynamically now, rather than one hardcoded name."""
     _pretend_macos(kit)
     _security(kit, {"tavily-key": "tvly-from-keychain"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'TAVILY_API_KEY_KEYCHAIN="tavily-key"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace) + 'TAVILY_API_KEY_KEYCHAIN="tavily-key"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -131,8 +136,10 @@ def test_several_variables_resolve_in_one_launch(kit):
     last value, and one lookup for all of them is the obvious wrong shortcut."""
     _pretend_macos(kit)
     _security(kit, {"a-item": "value-a", "b-item": "value-b"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace)
+        + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -148,8 +155,10 @@ def test_an_explicit_value_wins(kit):
     `FOO=x ./claude.sh` working as a per-launch override."""
     _pretend_macos(kit)
     _security(kit, {"a-item": "from-keychain"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'ALPHA_KEY="from-the-file"\nALPHA_KEY_KEYCHAIN="a-item"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace)
+        + 'ALPHA_KEY="from-the-file"\nALPHA_KEY_KEYCHAIN="a-item"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -163,8 +172,10 @@ def test_security_is_not_run_for_a_variable_that_is_already_set(kit, tmp_path):
     _pretend_macos(kit)
     log = tmp_path / "security-argv"
     _security(kit, {"a-item": "from-keychain"}, log)
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'ALPHA_KEY="from-the-file"\nALPHA_KEY_KEYCHAIN="a-item"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace)
+        + 'ALPHA_KEY="from-the-file"\nALPHA_KEY_KEYCHAIN="a-item"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -180,14 +191,17 @@ def test_every_failed_lookup_is_reported_in_one_warning(kit):
     message listing the names; not one message per variable."""
     _pretend_macos(kit)
     _security(kit, {})  # every item missing
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace)
+        + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
     assert result.status == 0, "a missing optional secret must not stop a launch"
-    assert result.output.count("did not resolve") == 1, \
+    assert result.output.count("did not resolve") == 1, (
         f"one warning per variable, not one warning:\n{result.output}"
+    )
     assert "ALPHA_KEY_KEYCHAIN" in result.output
     assert "BETA_KEY_KEYCHAIN" in result.output
     assert "a-item" in result.output and "b-item" in result.output
@@ -198,8 +212,10 @@ def test_a_partial_failure_reports_only_what_failed(kit):
     naming a variable that resolved fine sends the reader after a non-problem."""
     _pretend_macos(kit)
     _security(kit, {"a-item": "value-a"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace)
+        + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -213,8 +229,10 @@ def test_a_failed_lookup_never_prints_a_value(kit):
     A resolved sibling's value has no business in that message."""
     _pretend_macos(kit)
     _security(kit, {"a-item": "secret-value-a"})
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace)
+        + 'ALPHA_KEY_KEYCHAIN="a-item"\nBETA_KEY_KEYCHAIN="b-item"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true")
 
@@ -254,8 +272,10 @@ def test_app_mode_still_resolves_every_other_variable(kit):
     minter.mkdir(parents=True, exist_ok=True)
     (minter / "multiplai-gh-token").write_text("#!/bin/sh\nexit 0\n")
     (minter / "multiplai-gh-token").chmod(0o755)
-    kit.write_env(BASE.format(ws=kit.workspace)
-                  + 'GH_TOKEN_KEYCHAIN="gh-item"\nALPHA_KEY_KEYCHAIN="a-item"\n')
+    kit.write_env(
+        BASE.format(ws=kit.workspace)
+        + 'GH_TOKEN_KEYCHAIN="gh-item"\nALPHA_KEY_KEYCHAIN="a-item"\n'
+    )
 
     result = kit.launch("--shell", "-c", "true", GH_TOKEN_APP="acme")
 

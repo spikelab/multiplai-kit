@@ -80,6 +80,7 @@ If still unclear, ask the user.
 Your workspace root is defined in `$CLAUDE_CONFIG_DIR/.workspace`. If working inside it, read the `CLAUDE.md` at the workspace root for the full directory map, project registry (which projects have their own git/venv), routing rules, and key file locations. Use `git -C PROJECTS/<name>` for sub-projects with their own repos. Never `cd` into a sub-project — stay at root and use paths.
 
 # Tool usage
+- **HTML pages:** before building an HTML page or report, load the `multiplai-dev:design-system` skill and style the page with the design system it names (its `path` command); without that skill, follow artifact-design alone.
 - **PDF generation:** `md2pdf` for prose, Typst directly for designed artifacts. NEVER install weasyprint, LaTeX, md-to-pdf, or headless-browser converters. Full guidance → `dev.md` § Document Tooling.
 - **Bound your output. That is the rule — not "which tool".** Measured over 111,780 real tool calls (`RESOURCES/claude-perf-analysis/`): `Read` is **72% of every byte of tool output ever pulled into a context window**, and a bounded shell probe returns ~640 B where `Read` returns ~5.6 KB. The old rule here ("never use Bash for file ops") was ignored in 99% of sessions and was mostly wrong to begin with — 97% of shell greps are composite pipelines `Grep` cannot express. What actually matters:
   - Prefer a **bounded probe** to a whole-file read: `sed -n '40,90p' f`, `grep -n PAT -A5 f`, `| head -30`, `-c`. Chain several into one call.
